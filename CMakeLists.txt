@@ -8,6 +8,28 @@ if( COMMAND cmake_policy )
 endif( COMMAND cmake_policy )
 
 list( APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR} )
+
+# [Vita] PS Vita build (VitaSDK toolchain file sets VITA).
+if( VITA OR DEFINED ENV{VITASDK} AND CMAKE_SYSTEM_NAME STREQUAL "Generic" AND CMAKE_C_COMPILER MATCHES "arm-vita-eabi" )
+	set( VITA ON )
+	include( "$ENV{VITASDK}/share/vita.cmake" REQUIRED )
+	# The engine assumes int-sized enums and signed char (struct layouts and
+	# netcode must match the PC builds).
+	set( VITA_COMMON_FLAGS "-D__unix__=1 -fno-short-enums -fsigned-char -mcpu=cortex-a9 -mfpu=neon -g" )
+	set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${VITA_COMMON_FLAGS}" )
+	set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${VITA_COMMON_FLAGS}" )
+	# Compat headers for POSIX pieces newlib lacks.
+	include_directories( BEFORE SYSTEM "${CMAKE_CURRENT_SOURCE_DIR}/src/vita/include" )
+	set( NO_ASM ON )
+	set( NO_GTK ON )
+	set( NO_LIBSECRET ON )
+	set( DYN_FLUIDSYNTH OFF )
+	set( RELEASE_WITH_DEBUG_FILE OFF CACHE BOOL "" FORCE )
+	set( NO_STRIP ON CACHE BOOL "" FORCE )
+	set( FORCE_INTERNAL_ZLIB ON CACHE BOOL "" FORCE )
+	set( FORCE_INTERNAL_JPEG ON CACHE BOOL "" FORCE )
+	set( FORCE_INTERNAL_BZIP2 ON CACHE BOOL "" FORCE )
+endif()
 include( FindPackageHandleStandardArgs )
 
 # Generator expression are available some time in CMake 2.8. Due to
@@ -240,10 +262,12 @@ endif( RELEASE_WITH_DEBUG_FILE )
 
 # [BB] Library that allows to map IP addresses to country names.
 add_subdirectory( GeoIP )
+if( NOT VITA )
 # [BB]
 add_subdirectory( masterserver )
 # [BB] Library for the database backend.
 add_subdirectory( sqlite )
+endif( NOT VITA )
 add_subdirectory( lzma )
 add_subdirectory( tools )
 add_subdirectory( dumb )
@@ -263,9 +287,9 @@ endif ( NOT NO_SOUND )
 
 if( NOT WIN32 AND NOT APPLE )
 	# [BB] We don't need output_sdl (only used for sound), if we are just building the server.
-	if ( NOT SERVERONLY )
+	if ( NOT SERVERONLY AND NOT VITA )
 		add_subdirectory( output_sdl )
-	endif ( NOT SERVERONLY )
+	endif ( NOT SERVERONLY AND NOT VITA )
 endif( NOT WIN32 AND NOT APPLE )
 
 if( NOT CMAKE_CROSSCOMPILING )

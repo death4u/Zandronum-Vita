@@ -6,7 +6,9 @@ if( NOT CMAKE_CROSSCOMPILING )
 endif( NOT CMAKE_CROSSCOMPILING )
 
 # Lemon wants lempar.c in its directory
-if( NOT NO_GENERATOR_EXPRESSIONS )
+# (an imported lemon from a native build already has it next to it)
+if( CMAKE_CROSSCOMPILING )
+elseif( NOT NO_GENERATOR_EXPRESSIONS )
 add_custom_command( TARGET lemon
 	POST_BUILD
 	COMMAND echo $<TARGET_FILE_DIR:lemon>

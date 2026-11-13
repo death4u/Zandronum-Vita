@@ -887,6 +887,16 @@ FString NicePath(const char *path)
 	{
 		return ExpandEnvVars(path);
 	}
+#ifdef __vita__
+	// [Vita] There is no home directory; ~ is ux0:data.
+	if (path[1] == '/' || path[1] == '\0')
+	{
+		FString where("ux0:data");
+		where += ExpandEnvVars(path + 1);
+		return where;
+	}
+	return ExpandEnvVars(path);
+#else
 
 	passwd *pwstruct;
 	const char *slash;
@@ -916,6 +926,7 @@ FString NicePath(const char *path)
 		where += ExpandEnvVars(slash);
 	}
 	return where;
+#endif // __vita__
 #endif
 }
 

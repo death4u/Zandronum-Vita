@@ -134,7 +134,12 @@ int GetRevisionNumber();
 // [SB] Used for the libsecret schema.
 #define DOMAIN_NAME_REVERSE "com.zandronum"
 
-#if defined(__APPLE__) || defined(_WIN32)
+#if defined(__vita__)
+#define GAME_DIR GAMENAMELOWERCASE
+#ifndef SHARE_DIR
+#define SHARE_DIR "app0:/"
+#endif
+#elif defined(__APPLE__) || defined(_WIN32)
 #define GAME_DIR GAMENAME
 #else
 #define GAME_DIR ".config/" GAMENAMELOWERCASE

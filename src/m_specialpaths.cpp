@@ -466,6 +466,68 @@ FString M_GetSavegamesPath()
 	return path;
 }
 
+#elif defined(__vita__)
+
+// [Vita] Everything the user owns (config, saves, screenshots, IWADs, logs)
+// lives in ux0:data/zandronum/. VITA_DATA_DIR ends with a slash.
+#define VITA_DATA_DIR "ux0:data/zandronum/"
+
+static void VitaEnsureDir(const char *path)
+{
+	struct stat info;
+	if (stat(path, &info) == -1)
+		mkdir(path, 0777);
+}
+
+FString GetUserFile (const char *file)
+{
+	VitaEnsureDir("ux0:data/zandronum");
+	FString path = VITA_DATA_DIR;
+	path += file;
+	return path;
+}
+
+FString M_GetCachePath(bool create)
+{
+	FString path = VITA_DATA_DIR "cache";
+	if (create)
+		CreatePath(path);
+	return path;
+}
+
+FString M_GetAutoexecPath()
+{
+	return GetUserFile("autoexec.cfg");
+}
+
+FString M_GetCajunPath(const char *botfilename)
+{
+	FString path = GetUserFile(botfilename);
+	if (!FileExists(path))
+	{
+		path = "app0:/";
+		path << botfilename;
+		if (!FileExists(path))
+			path = "";
+	}
+	return path;
+}
+
+FString M_GetConfigPath(bool for_reading)
+{
+	return GetUserFile(GAMENAMELOWERCASE ".ini");
+}
+
+FString M_GetScreenshotsPath()
+{
+	return VITA_DATA_DIR "screenshots/";
+}
+
+FString M_GetSavegamesPath()
+{
+	return VITA_DATA_DIR "saves/";
+}
+
 #else // Linux, et al.
 
 

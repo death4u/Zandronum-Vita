@@ -16,7 +16,12 @@ endif( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" S
 include_directories( ${CMAKE_CURRENT_BINARY_DIR} )
 add_definitions( -DINFNAN_CHECK -DMULTIPLE_THREADS )
 
-if( NOT MSVC AND NOT APPLE )
+if( VITA )
+	# [Vita] arithchk/qnan cannot run on the build host for ARM, so use the
+	# values they print on a little-endian ARM EABI target.
+	file( WRITE ${CMAKE_CURRENT_BINARY_DIR}/arith.h "#define IEEE_8087\n#define Arith_Kind_ASL 1\n#define NANCHECK\n" )
+	file( WRITE ${CMAKE_CURRENT_BINARY_DIR}/gd_qnan.h "#define f_QNAN 0x7fc00000\n#define d_QNAN0 0x0\n#define d_QNAN1 0x7ff80000\n#define ld_QNAN0 0x0\n#define ld_QNAN1 0x7ff80000\n" )
+elseif( NOT MSVC AND NOT APPLE )
 	if( NOT CMAKE_CROSSCOMPILING )
 		add_executable( arithchk arithchk.c )
 	endif( NOT CMAKE_CROSSCOMPILING )

@@ -7,6 +7,16 @@
 // Very small deadzone so that floating point magic doesn't happen
 #define MIN_DEADZONE 0.000001f
 
+#ifdef __vita__
+// [Vita] The sticks rest a little off-centre; ignore the inner 15%.
+#define DEFAULT_DEADZONE 0.15f
+// Pitch turns faster than yaw at full deflection, so tone it down.
+#define DEFAULT_PITCH_SCALE 0.6f
+#else
+#define DEFAULT_DEADZONE MIN_DEADZONE
+#define DEFAULT_PITCH_SCALE 1.0f
+#endif
+
 class SDLInputJoystick: public IJoystickConfig
 {
 public:
@@ -87,7 +97,7 @@ public:
 	}
 	bool IsAxisDeadZoneDefault(int axis)
 	{
-		return Axes[axis].DeadZone <= MIN_DEADZONE;
+		return Axes[axis].DeadZone == DEFAULT_DEADZONE;
 	}
 	bool IsAxisMapDefault(int axis)
 	{
@@ -97,7 +107,12 @@ public:
 	}
 	bool IsAxisScaleDefault(int axis)
 	{
-		return Axes[axis].Multiplier == 1.0f;
+		return Axes[axis].Multiplier == DefaultScale(axis);
+	}
+
+	float DefaultScale(int axis)
+	{
+		return (axis < 5 && DefaultAxes[axis] == JOYAXIS_Pitch) ? DEFAULT_PITCH_SCALE : 1.0f;
 	}
 
 	void SetDefaultConfig()
@@ -109,8 +124,8 @@ public:
 				info.Name.Format("Axis %d", i+1);
 			else
 				info.Name.Format("Hat %d (%c)", (i-NumAxes)/2 + 1, (i-NumAxes)%2 == 0 ? 'x' : 'y');
-			info.DeadZone = MIN_DEADZONE;
-			info.Multiplier = 1.0f;
+			info.DeadZone = DEFAULT_DEADZONE;
+			info.Multiplier = DefaultScale(i);
 			info.Value = 0.0;
 			info.ButtonValue = 0;
 			if(i >= 5)
@@ -218,7 +233,12 @@ protected:
 	int					NumAxes;
 	int					NumHats;
 };
+#ifdef __vita__
+// [Vita] Axes are LX, LY, RX, RY: left stick moves, right stick looks.
+const EJoyAxis SDLInputJoystick::DefaultAxes[5] = {JOYAXIS_Side, JOYAXIS_Forward, JOYAXIS_Yaw, JOYAXIS_Pitch, JOYAXIS_None};
+#else
 const EJoyAxis SDLInputJoystick::DefaultAxes[5] = {JOYAXIS_Side, JOYAXIS_Forward, JOYAXIS_Pitch, JOYAXIS_Yaw, JOYAXIS_Up};
+#endif
 
 class SDLInputJoystickManager
 {

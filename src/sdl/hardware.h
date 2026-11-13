@@ -49,6 +49,12 @@ typedef semaphore_t Semaphore;
 	semaphore_signal(sem);
 #define SEMAPHORE_INIT(sem, shared, value) \
 	semaphore_create(mach_task_self(), &sem, shared, value);
+#elif defined(__vita__)
+// [Vita] No POSIX timers: the FPS limiter is off and vsync paces frames.
+typedef int Semaphore;
+#define SEMAPHORE_WAIT(sem)
+#define SEMAPHORE_SIGNAL(sem)
+#define SEMAPHORE_INIT(sem, shared, value)
 #else
 #include <semaphore.h>
 typedef sem_t Semaphore;

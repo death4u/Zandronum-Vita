@@ -380,6 +380,9 @@ bool gameisdead;
 #ifdef __APPLE__
 void Mac_I_FatalError(const char* errortext);
 #endif
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
 
 void STACK_ARGS I_FatalError (const char *error, ...)
 {
@@ -399,6 +402,9 @@ void STACK_ARGS I_FatalError (const char *error, ...)
 #ifdef __APPLE__
 		Mac_I_FatalError(errortext);
 #endif // __APPLE__		
+#ifdef __vita__
+		Vita_FatalError(errortext);
+#endif
 		
 		// Record error to log (if logging)
 		if (Logfile)
@@ -651,7 +657,12 @@ int I_PickIWad (WadStuff *wads, int numwads, bool showwin, int defaultiwad)
 		return defaultiwad;
 	}
 
-#if !defined(__APPLE__)
+#ifdef __vita__
+	// [Vita] No GUI picker yet: use the preferred/first IWAD.
+	return defaultiwad >= 0 ? defaultiwad : 0;
+#endif
+
+#if !defined(__APPLE__) && !defined(__vita__)
 	const char *str;
 	if((str=getenv("KDE_FULL_SESSION")) && strcmp(str, "true") == 0)
 	{

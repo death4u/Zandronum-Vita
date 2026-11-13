@@ -259,10 +259,16 @@ else( WIN32 )
 	endif( )
 	
 	# Non-Windows version also needs SDL
+	if( VITA )
+		# [Vita] SDL 1.2 (Northfear/SDL-1.2-vita) from the VitaSDK sysroot.
+		set( SDL_INCLUDE_DIR "$ENV{VITASDK}/arm-vita-eabi/include/SDL" )
+		set( SDL_LIBRARY SDL )
+	else( VITA )
 	find_package( SDL )
 	if( NOT SDL_FOUND )
 		message( SEND_ERROR "SDL is required for building." )
 	endif( NOT SDL_FOUND )
+	endif( VITA )
 	set( ZDOOM_LIBS ${ZDOOM_LIBS} "${SDL_LIBRARY}" )
 	# [BB] Don't put the SDL path in inverted commas. At least on FreeBSD 8.1 this
 	# variable contains two directories.
@@ -568,6 +574,11 @@ if( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" STRE
 		endif ()
 	endif ()
 
+	if( VITA )
+		# [Vita] newlib hides strcasecmp, alloca, usleep... under strict ISO modes.
+		string( REPLACE "-std=c++14" "-std=gnu++14" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" )
+	endif( VITA )
+
 	# With standard Apple tools -stdlib=libc++ needs to be specified in order to get
 	# C++11 support using SDKs 10.7 and 10.8.
 	if ( APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" )
@@ -796,6 +807,10 @@ if( WIN32 )
 else( WIN32 )
 	set( SYSTEM_SOURCES_DIR sdl )
 	set( SYSTEM_SOURCES ${PLAT_SDL_SOURCES} )
+	if( VITA )
+		list( REMOVE_ITEM SYSTEM_SOURCES sdl/crashcatcher.c )
+		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} vita/vita_system.cpp vita/vita_compat.cpp )
+	endif( VITA )
 	if( APPLE )
 		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} ${PLAT_MAC_SOURCES} )
 		set( OTHER_SYSTEM_SOURCES ${PLAT_WIN32_SOURCES} )
@@ -1474,7 +1489,18 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "SunOS")
 endif(${CMAKE_SYSTEM_NAME} STREQUAL "SunOS")
 
 # [BB] Added GeoIP, huffman & sqlite
+if( VITA )
+	# [Vita] SQLite comes from the system SceSqlite module.
+	target_link_libraries( zdoom ${ZDOOM_LIBS} gdtoa dumb lzma GeoIP
+		SceSqlite_stub
+		SceGxm_stub SceDisplay_stub SceCtrl_stub SceAppMgr_stub SceAppUtil_stub
+		SceAudio_stub SceAudioIn_stub SceIofilemgr_stub SceCommonDialog_stub
+		SceTouch_stub SceHid_stub SceMotion_stub ScePower_stub SceProcessmgr_stub
+		SceKernelDmacMgr_stub SceSysmodule_stub SceNet_stub SceNetCtl_stub
+		SceRtc_stub SceLibKernel_stub pthread m stdc++ )
+else( VITA )
 target_link_libraries( zdoom ${ZDOOM_LIBS} gdtoa dumb lzma GeoIP sqlite3 )
+endif( VITA )
 include_directories( .
 	g_doom
 	g_heretic
@@ -1542,12 +1568,12 @@ if( MSVC )
 	endif( NO_GENERATOR_EXPRESSIONS )
 endif( MSVC )
 
-if( NOT WIN32 )
+if( NOT WIN32 AND NOT VITA )
 	FILE( WRITE ${CMAKE_CURRENT_BINARY_DIR}/link-make "if [ ! -e ${ZDOOM_OUTPUT_DIR}/${ZDOOM_EXE_NAME} ]; then ln -sf ${CMAKE_CURRENT_BINARY_DIR}/${ZDOOM_EXE_NAME} ${ZDOOM_OUTPUT_DIR}/${ZDOOM_EXE_NAME}; fi" )
 	add_custom_command( TARGET zdoom POST_BUILD
 		COMMAND chmod +x ${CMAKE_CURRENT_BINARY_DIR}/link-make
 		COMMAND /bin/sh -c ${CMAKE_CURRENT_BINARY_DIR}/link-make )
-endif( NOT WIN32 )
+endif( NOT WIN32 AND NOT VITA )
 if( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" )
 	# GCC misoptimizes this file
 	set_source_files_properties( oplsynth/fmopl.cpp PROPERTIES COMPILE_FLAGS "-fno-tree-dominator-opts -fno-tree-fre" )
@@ -1654,3 +1680,32 @@ source_group("Network\\Misc" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/ne
 source_group("Network\\Server" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/sv_.+")
 source_group("Network\\Protocol\\Specs" REGULAR_EXPRESSION "^${CMAKE_SOURCE_DIR}/protocolspec/.+\\.txt$")
 source_group("Network\\Protocol\\Generator" REGULAR_EXPRESSION "^${CMAKE_SOURCE_DIR}/protocolspec/generator/.+")
+
+# [Vita] eboot.bin and the installable VPK. The engine pk3s ship inside the
+# VPK (app0:/); IWADs, config and saves live in ux0:data/zandronum/.
+if( VITA )
+	set( VITA_APP_NAME "Zandronum" )
+	set( VITA_TITLEID "ZAND00001" )
+	set( VITA_VERSION "01.00" )
+	# Extended memory mode (more main memory for the 192 MB heap).
+	set( VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12" )
+	# UNSAFE: the game reads and writes ux0:data/zandronum/.
+	set_target_properties( zdoom PROPERTIES LINK_FLAGS "-Wl,-q -Wl,--wrap=malloc -Wl,--wrap=realloc" )
+	vita_create_self( eboot.bin zdoom UNSAFE )
+	vita_create_vpk( zandronum.vpk ${VITA_TITLEID} eboot.bin
+		VERSION ${VITA_VERSION}
+		NAME ${VITA_APP_NAME}
+		FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/icon0.png sce_sys/icon0.png
+		FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
+		FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
+		FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
+		FILE ${ZDOOM_OUTPUT_DIR}/zandronum.pk3 zandronum.pk3
+		FILE ${ZDOOM_OUTPUT_DIR}/brightmaps.pk3 brightmaps.pk3
+		FILE ${ZDOOM_OUTPUT_DIR}/skulltag_actors.pk3 skulltag_actors.pk3
+	)
+	if( TARGET zandronum.vpk-vpk )
+		add_dependencies( zandronum.vpk-vpk pk3 brightmaps_pk3 skulltag_actors_pk3 )
+	else()
+		add_dependencies( zandronum.vpk pk3 brightmaps_pk3 skulltag_actors_pk3 )
+	endif()
+endif( VITA )

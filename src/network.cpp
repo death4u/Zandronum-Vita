@@ -51,7 +51,7 @@
 #include "networkheaders.h"
 
 // [BB] Special things necessary for NETWORK_GetLocalAddress() under Linux.
-#ifdef __unix__
+#if defined(__unix__) && !defined(__vita__)
 #include <net/if.h>
 #define inaddrr(x) (*(struct in_addr *) &ifr->x[sizeof sa.sin_port])
 #define IFRSIZE   ((int)(size * sizeof (struct ifreq)))
@@ -999,7 +999,7 @@ NETADDRESS_s NETWORK_GetLocalAddress( void )
 		Printf( "NETWORK_GetLocalAddress: Error getting socket name: %s", strerror( errno ));
 	}
 
-#ifdef __unix__
+#if defined(__unix__) && !defined(__vita__)
 	// [BB] The "gethostname -> gethostbyname" trick didn't reveal the local IP.
 	// Now we need to resort to something more complicated.
 	if ( ok == false )

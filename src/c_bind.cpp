@@ -122,11 +122,29 @@ static const FBinding DefBindings[] =
 	{ "pgup", "vote_yes" },
 	{ "pgdn", "vote_no" },
 
+#ifdef __vita__
+	// [Vita] SDL exposes the built-in pad as joystick 0 with buttons
+	// Triangle, Circle, Cross, Square, L, R, Down, Left, Up, Right, Select,
+	// Start = joy1..joy12. Halo-style layout.
+	{ "joy1", "weapnext" },		// Triangle: next weapon (wraps)
+	{ "joy2", "+crouch" },		// Circle
+	{ "joy3", "+jump" },		// Cross
+	{ "joy4", "+use" },			// Square
+	{ "joy5", "+altattack" },	// L
+	{ "joy6", "+attack" },		// R
+	{ "joy7", "+reload" },		// D-pad down
+	{ "joy8", "weapprev" },		// D-pad left
+	{ "joy9", "togglemap" },	// D-pad up
+	{ "joy10", "weapnext" },	// D-pad right
+	{ "joy11", "+showscores" },	// Select
+	{ "joy12", "menu_main" },	// Start
+#else
 	// Generic joystick buttons
 	{ "joy1", "+attack" },
 	{ "joy2", "+strafe" },
 	{ "joy3", "+speed" },
 	{ "joy4", "+use" },
+#endif
 
 	// Xbox 360 / PS2 controllers
 	{ "pad_a", "+use" },

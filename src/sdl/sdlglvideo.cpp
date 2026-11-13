@@ -460,7 +460,7 @@ void SDLGLFB::NewRefreshRate ()
 
 void SDLGLFB::SwapBuffers()
 {
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__vita__)
 	if (vid_maxfps && !cl_capfps)
 	{
 		SEMAPHORE_WAIT(FPSLimitSemaphore)

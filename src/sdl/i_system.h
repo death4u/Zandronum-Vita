@@ -152,6 +152,9 @@ int I_FindAttr (findstate_t *fileinfo);
 #define FA_DIREC	8
 #define FA_ARCH		16
 
+#ifdef __vita__
+#include <string.h>	// newlib provides strlwr
+#else
 static inline char *strlwr(char *str)
 {
 	char *ptr = str;
@@ -162,5 +165,6 @@ static inline char *strlwr(char *str)
 	}
 	return str;
 }
+#endif
 
 #endif

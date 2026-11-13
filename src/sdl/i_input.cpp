@@ -474,6 +474,43 @@ void MessagePump (const SDL_Event &sev)
 			if(event.data1 != 0)
 				D_PostEvent(&event);
 		}
+#ifdef __vita__
+		else
+		{
+			// [Vita] Menus, console and chat only take GUI events, so turn
+			// the pad into the keys they understand.
+			static const BYTE VitaGUIKeys[12] =
+			{
+				0,				// Triangle (reserved for the on-screen keyboard)
+				GK_ESCAPE,		// Circle: back
+				GK_RETURN,		// Cross: accept
+				GK_BACKSPACE,	// Square
+				GK_PGUP,		// L
+				GK_PGDN,		// R
+				GK_DOWN,		// D-pad
+				GK_LEFT,
+				GK_UP,
+				GK_RIGHT,
+				0,				// Select
+				GK_ESCAPE,		// Start: close the menu
+			};
+			int button = sev.jbutton.button;
+			if (button >= 0 && button < 12 && VitaGUIKeys[button] != 0)
+			{
+				event.type = EV_GUI_Event;
+				event.subtype = sev.type == SDL_JOYBUTTONDOWN ? EV_GUI_KeyDown : EV_GUI_KeyUp;
+				event.data1 = VitaGUIKeys[button];
+				event.data2 = 0;
+				event.data3 = 0;
+				D_PostEvent(&event);
+			}
+			else if (button == 0 && sev.type == SDL_JOYBUTTONDOWN && menuactive == MENU_Off)
+			{
+				// Triangle in the console or chat: type with the system keyboard.
+				SDL_VITA_ShowScreenKeyboard("", false);
+			}
+		}
+#endif
 		break;
 	}
 }

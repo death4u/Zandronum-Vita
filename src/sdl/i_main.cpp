@@ -240,9 +240,15 @@ static void unprotect_rtext()
 void I_StartupJoysticks();
 void I_ShutdownJoysticks();
 
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
+
 int main (int argc, char **argv)
 {
-#if !defined (__APPLE__)
+#ifdef __vita__
+	Vita_EarlyInit();
+#elif !defined (__APPLE__)
 	{
 		int s[4] = { SIGSEGV, SIGILL, SIGFPE, SIGBUS };
 		cc_install_handlers(argc, argv, 4, s, GAMENAMELOWERCASE "-crash.log", DoomSpecificInfo);
@@ -251,7 +257,9 @@ int main (int argc, char **argv)
  	
 	// [SB] Moved ZDoom's version info down below for Zan's --version
 
+#ifndef __vita__
 	seteuid (getuid ());
+#endif
     std::set_new_handler (NewFailure);
 
 #if defined(__MACH__) && !defined(NOASM)
@@ -284,6 +292,9 @@ int main (int argc, char **argv)
 #ifdef SERVER_ONLY
 	Args->AppendArg( "-host" );
 #endif
+#ifdef __vita__
+	Vita_BootLog("SDL_Init");
+#endif
 	if ( Args->CheckParm( "-host" ))
 	{
 		if (SDL_Init (SDL_INIT_TIMER|SDL_INIT_NOPARACHUTE) == -1)
@@ -297,6 +308,9 @@ int main (int argc, char **argv)
 		if (SDL_Init (SDL_INIT_VIDEO|SDL_INIT_TIMER|SDL_INIT_NOPARACHUTE|SDL_INIT_JOYSTICK) == -1)
 		{
 			fprintf (stderr, "Could not initialize SDL:\n%s\n", SDL_GetError());
+#ifdef __vita__
+			Vita_FatalError(SDL_GetError());
+#endif
 			return -1;
 		}
 	}
@@ -369,6 +383,10 @@ int main (int argc, char **argv)
 		atexit (call_terms);
 		atterm (I_Quit);
 
+#ifdef __vita__
+		Vita_BootLog("SDL ready, starting engine");
+		progdir = "app0:/";
+#else
 		// Should we even be doing anything with progdir on Unix systems?
 		char program[PATH_MAX];
 		if (realpath (argv[0], program) == NULL)
@@ -383,6 +401,7 @@ int main (int argc, char **argv)
 		{
 			progdir = "./";
 		}
+#endif
 
 		I_StartupJoysticks();
 		C_InitConsole (80*8, 25*8, false);
@@ -393,6 +412,9 @@ int main (int argc, char **argv)
 		I_ShutdownJoysticks();
 		if (error.GetMessage ())
 			fprintf (stderr, "%s\n", error.GetMessage ());
+#ifdef __vita__
+		Vita_FatalError(error.GetMessage () ? error.GetMessage () : "Unknown error");
+#endif
 		exit (-1);
     }
     catch (...)

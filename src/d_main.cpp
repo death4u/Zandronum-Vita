@@ -34,6 +34,7 @@
 #define mkdir(a,b) _mkdir (a)
 #else
 #include <sys/stat.h>
+#include <limits.h>
 #endif
 
 #ifdef HAVE_FPU_CONTROL
@@ -49,10 +50,17 @@
 #include <math.h>
 #include <assert.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 // [BB] network.h has to be included before stats.h under Linux.
 // The reason should be investigated.
 #include "network.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+#define VITA_CP(x) Vita_Checkpoint(x)
+#else
+#define VITA_CP(x)
+#endif
 
 #include "doomerrors.h"
 
@@ -1351,7 +1359,7 @@ void D_DoomLoop ()
 					gametic++;
 					maketic++;
 					GC::CheckGC ();
-					Net_NewMakeTic ();
+					Net_NewMakeTic (); VITA_CP("Net_NewMakeTic ();");
 				}
 				else
 				{
@@ -1867,6 +1875,7 @@ bool D_AddFile (TArray<FString> &wadfiles, const char *file, bool check, int pos
 		if (f == NULL)
 		{
 			Printf ("Can't find '%s'\n", file);
+			VITA_CP("Can't find '%s'");
 			return false;
 		}
 		file = f;
@@ -2358,6 +2367,7 @@ static FString CheckGameInfo(TArray<FString> & pwads)
 	}
 	t = I_FPSTime() - t;
 	Printf("Gameinfo scan took %d ms\n", t);
+	VITA_CP("Gameinfo scan took %d ms");
 	return "";
 }
 
@@ -2442,6 +2452,7 @@ static void D_DoomInit()
 		rngseed = staticrngseed = atoi(v);
 		use_staticrng = true;
 		Printf("D_DoomInit: Static RNGseed %d set.\n", rngseed);
+		VITA_CP("D_DoomInit: Static RNGseed %d set.");
 	}
 	else
 	{
@@ -2463,6 +2474,7 @@ static void D_DoomInit()
 	FRandom::StaticClearRandom ();
 
 	Printf ("M_LoadDefaults: Load system defaults.\n");
+	VITA_CP("M_LoadDefaults: Load system defaults.");
 	M_LoadDefaults ();			// load before initing other systems
 
 }
@@ -2546,6 +2558,7 @@ static void CheckCmdLine()
 	const char *v;
 
 	Printf ("Checking cmd-line parameters...\n");
+	VITA_CP("Checking cmd-line parameters...");
 	if (Args->CheckParm ("-nomonsters"))	flags |= DF_NO_MONSTERS;
 	if (Args->CheckParm ("-respawn"))		flags |= DF_MONSTERS_RESPAWN;
 	if (Args->CheckParm ("-fast"))			flags |= DF_FAST_MONSTERS;
@@ -2676,6 +2689,7 @@ static void CheckCmdLine()
 		if (!P_CheckMapData(mapvalue))
 		{
 			Printf ("Can't find map %s\n", mapvalue.GetChars());
+			VITA_CP("Can't find map %s");
 		}
 		else
 		{
@@ -2687,6 +2701,7 @@ static void CheckCmdLine()
 	if (devparm)
 	{
 		Printf ("%s", GStrings("D_DEVSTR"));
+		VITA_CP("%s");
 	}
 
 	// turbo option  // [RH] (now a cvar)
@@ -2695,6 +2710,7 @@ static void CheckCmdLine()
 	{
 		double amt = atof(v);
 		Printf ("turbo scale: %.0f%%\n", amt);
+		VITA_CP("turbo scale: %.0f%%");
 		turbo = (float)amt;
 	}
 
@@ -2703,6 +2719,7 @@ static void CheckCmdLine()
 	{
 		double time = strtod (v, NULL);
 		Printf ("Levels will end after %g minute%s.\n", time, time > 1 ? "s" : "");
+		VITA_CP("Levels will end after %g minute%s.");
 		timelimit = (float)time;
 	}
 
@@ -2710,6 +2727,7 @@ static void CheckCmdLine()
 	if (v)
 	{
 		Printf ("Austin Virtual Gaming: Levels will end after 20 minutes\n");
+		VITA_CP("Austin Virtual Gaming: Levels will end a");
 		timelimit = 20.f;
 	}
 
@@ -2853,6 +2871,7 @@ void D_DoomMain (void)
 		pwads.ShrinkToFit();
 
 		Printf ("W_Init: Init WADfiles.\n");
+		VITA_CP("W_Init: Init WADfiles.");
 		Wads.InitMultipleFiles (/*allwads*/); // [BB] Removed argument.
 		allwads.Clear();
 		allwads.ShrinkToFit();
@@ -2921,6 +2940,7 @@ void D_DoomMain (void)
 		if (!restart)
 		{
 			Printf ("I_Init: Setting up machine state.\n");
+			VITA_CP("I_Init: Setting up machine state.");
 			I_Init ();
 			I_CreateRenderer();
 		}
@@ -2929,6 +2949,7 @@ void D_DoomMain (void)
 		if ( NETWORK_GetState( ) != NETSTATE_SERVER )
 		{
 			Printf ("V_Init: allocate screen.\n");
+			VITA_CP("V_Init: allocate screen.");
 			V_Init (!!restart);
 		}
 		// [BB] We still need to initialize the palette for the ACS
@@ -2946,9 +2967,11 @@ void D_DoomMain (void)
 		G15_Construct ();
 
 		Printf ("S_Init: Setting up sound.\n");
+		VITA_CP("S_Init: Setting up sound.");
 		S_Init ();
 
 		Printf ("ST_Init: Init startup screen.\n");
+		VITA_CP("ST_Init: Init startup screen.");
 		if (!restart)
 		{
 			StartScreen = FStartupScreen::CreateInstance (TexMan.GuesstimateNumTextures() + 5);
@@ -2967,10 +2990,12 @@ void D_DoomMain (void)
 
 		// [RH] Parse any SNDINFO lumps
 		Printf ("S_InitData: Load sound definitions.\n");
+		VITA_CP("S_InitData: Load sound definitions.");
 		S_InitData ();
 
 		// [RH] Parse through all loaded mapinfo lumps
 		Printf ("G_ParseMapInfo: Load map definitions.\n");
+		VITA_CP("G_ParseMapInfo: Load map definitions.");
 		G_ParseMapInfo (iwad_info->MapInfo);
 		ReadStatistics();
 
@@ -2981,11 +3006,13 @@ void D_DoomMain (void)
 		SECTINFO_Load();
 
 		Printf ("Texman.Init: Init texture manager.\n");
+		VITA_CP("Texman.Init: Init texture manager.");
 		TexMan.Init();
 		C_InitConback();
 
 		// [CW] Parse any TEAMINFO lumps.
 		Printf ("ParseTeamInfo: Load team definitions.\n");
+		VITA_CP("ParseTeamInfo: Load team definitions.");
 		//TeamLibrary.ParseTeamInfo ();
 		// [BB] At the moment Skulltag still doesn't use the new ZDoom TeamLibrary class.
 		TEAMINFO_Init ();
@@ -3008,10 +3035,12 @@ void D_DoomMain (void)
 		StartScreen->Progress ();
 
 		Printf ("R_Init: Init %s refresh subsystem.\n", gameinfo.ConfigName.GetChars());
+		VITA_CP("R_Init: Init %s refresh subsystem.");
 		StartScreen->LoadingStatus ("Loading graphics", 0x3f);
 		R_Init ();
 
 		Printf ("DecalLibrary: Load decals.\n");
+		VITA_CP("DecalLibrary: Load decals.");
 		DecalLibrary.ReadAllDecals ();
 
 		// [RH] Add any .deh and .bex files on the command line.
@@ -3029,6 +3058,7 @@ void D_DoomMain (void)
 				if (stricmp (key, "Path") == 0 && FileExists (value))
 				{
 					Printf ("Applying patch %s\n", value);
+					VITA_CP("Applying patch %s");
 					D_LoadDehFile(value);
 				}
 			}
@@ -3068,9 +3098,11 @@ void D_DoomMain (void)
 		GameConfig->ReadRevealedBotsAndSkins( );
 
 		Printf ("M_Init: Init menus.\n");
+		VITA_CP("M_Init: Init menus.");
 		M_Init ();
 
 		Printf ("P_Init: Init Playloop state.\n");
+		VITA_CP("P_Init: Init Playloop state.");
 		StartScreen->LoadingStatus ("Init game engine", 0x3f);
 		AM_StaticInit();
 		P_Init ();
@@ -3094,43 +3126,46 @@ void D_DoomMain (void)
 			if (str != NULL && str[0] != '\0')
 			{
 				Printf ("%s\n", str);
+				VITA_CP("%s");
 			}
 		}
 
 		if (!restart)
 		{
 			Printf ("D_CheckNetGame: Checking network game status.\n");
+			VITA_CP("D_CheckNetGame: Checking network game st");
 			StartScreen->LoadingStatus ("Checking network game status.", 0x3f);
 			D_CheckNetGame ();
 		}
 
 		// [BC] 
 		Printf( "Initializing network subsystem.\n" );
+		VITA_CP("Initializing network subsystem.");
 		if ( Args->CheckParm( "-host" ))
 			SERVER_Construct( );
 		else
 		{
-			CLIENT_Construct( );
-			CLIENT_PREDICT_Construct( );
-			CLIENTSTATISTICS_Construct( );
+			CLIENT_Construct( ); VITA_CP("CLIENT_Construct( );");
+			CLIENT_PREDICT_Construct( ); VITA_CP("CLIENT_PREDICT_Construct( );");
+			CLIENTSTATISTICS_Construct( ); VITA_CP("CLIENTSTATISTICS_Construct( );");
 		}
 
 		// [BB]
-		DATABASE_Construct( );
+		DATABASE_Construct( ); VITA_CP("DATABASE_Construct( );");
 
 		// [BC] Initialize the browser module.
-		BROWSER_Construct( );
+		BROWSER_Construct( ); VITA_CP("BROWSER_Construct( );");
 
 		// [RH] Lock any cvars that should be locked now that we're
 		// about to begin the game.
-		FBaseCVar::EnableNoSet ();
+		FBaseCVar::EnableNoSet (); VITA_CP("FBaseCVar::EnableNoSet ();");
 
-		delete iwad_man;	// now we won't need this anymore
+		delete iwad_man;	// now we won't need this anymore VITA_CP("delete iwad_man;	// now we won");
 
 		// [RH] Run any saved commands from the command line or autoexec.cfg now.
 		gamestate = GS_FULLCONSOLE;
 		Net_NewMakeTic ();
-		DThinker::RunThinkers ();
+		DThinker::RunThinkers (); VITA_CP("DThinker::RunThinkers ();");
 		gamestate = GS_STARTUP;
 
 		if (!restart)
@@ -3161,8 +3196,8 @@ void D_DoomMain (void)
 					throw CNoRunExit();
 				}
 
-				V_Init2();
-				UpdateJoystickMenu(NULL);
+				V_Init2(); VITA_CP("V_Init2();");
+				UpdateJoystickMenu(NULL); VITA_CP("UpdateJoystickMenu(NULL);");
 
 				v = Args->CheckValue ("-loadgame");
 				if (v)

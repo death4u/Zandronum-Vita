@@ -22,7 +22,12 @@ EXTERN_CVAR(Bool, joy_xinput)
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
-CUSTOM_CVAR(Bool, use_joystick, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINITCALL)
+#ifdef __vita__
+#define USE_JOYSTICK_DEFAULT true	// [Vita] the pad is the main input
+#else
+#define USE_JOYSTICK_DEFAULT false
+#endif
+CUSTOM_CVAR(Bool, use_joystick, USE_JOYSTICK_DEFAULT, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINITCALL)
 {
 #ifdef _WIN32
 	joy_ps2raw.Callback();

@@ -255,7 +255,7 @@ void I_ClosestResolution (int *width, int *height, int bits)
 EXTERN_CVAR(Int, vid_maxfps);
 EXTERN_CVAR(Bool, cl_capfps);
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__vita__)
 Semaphore FPSLimitSemaphore;
 
 static void FPSLimitNotify(sigval val)

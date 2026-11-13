@@ -26,6 +26,12 @@
 #include <stdio.h>
 
 #include "i_system.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+#define VITA_CP(x) Vita_Checkpoint(x)
+#else
+#define VITA_CP(x)
+#endif
 #include "x86.h"
 #include "i_video.h"
 #include "r_state.h"
@@ -153,8 +159,14 @@ static DWORD Col2RGB8_2[63][256];
 // There's also only one, not four.
 DFrameBuffer *screen;
 
+#ifdef __vita__
+// [Vita] 16:9 like the 960x544 screen; SDL scales it up to fill the display.
+CVAR (Int, vid_defwidth, 640, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+CVAR (Int, vid_defheight, 360, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+#else
 CVAR (Int, vid_defwidth, 640, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Int, vid_defheight, 480, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+#endif
 CVAR (Int, vid_defbits, 8, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Bool, vid_fps, false, 0)
 CVAR (Bool, ticker, false, 0)
@@ -1606,13 +1618,17 @@ void V_Init2()
 		delete s;
 	}
 
+	VITA_CP("V_Init2 start");
 	I_InitGraphics();
+	VITA_CP("I_InitGraphics");
 	I_ClosestResolution (&width, &height, 8);
+	VITA_CP("I_ClosestResolution");
 
 	if (!Video->SetResolution (width, height, 8))
 		I_FatalError ("Could not set resolution to %d x %d x %d", width, height, 8);
 	else
 		Printf ("Resolution: %d x %d\n", SCREENWIDTH, SCREENHEIGHT);
+	VITA_CP("SetResolution");
 
 	screen->SetGamma (gamma);
 	Renderer->RemapVoxels();

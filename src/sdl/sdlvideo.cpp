@@ -14,6 +14,9 @@
 #include "r_swrenderer.h"
 
 #include <SDL.h>
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
 
 // MACROS ------------------------------------------------------------------
 
@@ -207,7 +210,11 @@ bool SDLVideo::NextMode (int *width, int *height, bool *letterbox)
 	if (IteratorBits != 8)
 		return false;
 	
+#ifdef __vita__
+	if (true)	// [Vita] any mode works; SDL scales it to the screen
+#else
 	if (!IteratorFS)
+#endif
 	{
 		if ((unsigned)IteratorMode < sizeof(WinModes)/sizeof(WinModes[0]))
 		{
@@ -332,8 +339,21 @@ SDLFB::SDLFB (int width, int height, bool fullscreen)
 		(vid_asyncblit ? SDL_ASYNCBLIT : 0)|SDL_HWSURFACE|SDL_HWPALETTE|SDL_DOUBLEBUF|SDL_ANYFORMAT|
 		(fullscreen ? SDL_FULLSCREEN : 0));
 
+#ifdef __vita__
+	if (Screen == NULL)
+		Vita_BootLog("SDL_SetVideoMode(%d, %d, %d) failed: %s", width, height, (int)vid_displaybits, SDL_GetError());
+#endif
 	if (Screen == NULL)
 		return;
+
+#ifdef __vita__
+	// [Vita] Scale the frame to the 960x544 display, keeping its aspect ratio.
+	{
+		float scale = MIN(960.f / width, 544.f / height);
+		float w = width * scale, h = height * scale;
+		SDL_VITA_SetVideoModeScaling((int)((960 - w) / 2), (int)((544 - h) / 2), w, h);
+	}
+#endif
 
 	for (i = 0; i < 256; i++)
 	{
@@ -402,7 +422,7 @@ void SDLFB::Update ()
 
 	DrawRateStuff ();
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__vita__)
 	if(vid_maxfps && !cl_capfps)
 	{
 		SEMAPHORE_WAIT(FPSLimitSemaphore)

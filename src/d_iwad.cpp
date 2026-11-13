@@ -433,6 +433,11 @@ int FIWadManager::IdentifyVersion (TArray<FString> &wadfiles, const char *iwad, 
 				}
 			}
 		}
+#ifdef __vita__
+		// [Vita] Always look in the data folder, whatever the ini says.
+		CheckIWAD("ux0:data/zandronum", &wads[0]);
+		CheckIWAD("ux0:data/zandronum/iwads", &wads[0]);
+#endif
 #ifdef _WIN32
 		FString steam_path = I_GetSteamPath();
 		if (steam_path.IsNotEmpty())
@@ -525,6 +530,11 @@ int FIWadManager::IdentifyVersion (TArray<FString> &wadfiles, const char *iwad, 
 	}
 #else
 	{
+#ifdef __vita__
+		I_FatalError ("No game IWAD found.\n\n"
+					  "Copy doom2.wad, doom.wad or freedoom2.wad into\n"
+					  "ux0:data/zandronum/ and start the game again.");
+#endif
 		I_FatalError ("Cannot find a game IWAD (doom.wad, doom2.wad, heretic.wad, etc.).\n"
 					  "Did you install " GAMENAME " properly? You can do either of the following:\n"
 					  "\n"
@@ -536,6 +546,9 @@ int FIWadManager::IdentifyVersion (TArray<FString> &wadfiles, const char *iwad, 
 					  "1. Place one or more of these wads in ~/Library/Application Support/" GAMENAMELOWERCASE "/\n"
 					  "2. Edit your ~/Library/Preferences/" GAMENAMELOWERCASE ".ini and add the directories\n"
 					  "of your iwads to the list beneath [IWADSearch.Directories]");
+#elif defined(__vita__)
+					  "Copy doom2.wad, doom.wad, freedoom2.wad (or another IWAD)\n"
+					  "into ux0:data/zandronum/ and start the game again.");
 #else
 					  "1. Place one or more of these wads in ~/.config/" GAMENAMELOWERCASE "/.\n"
 					  "2. Edit your ~/.config/" GAMENAMELOWERCASE "/" GAMENAMELOWERCASE ".ini and add the directories of your\n"
