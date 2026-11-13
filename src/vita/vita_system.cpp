@@ -217,3 +217,88 @@ extern "C" void Vita_Checkpoint(const char *stage)
 		(unsigned)mi.arena / 1024, (unsigned)mi.uordblks / 1024, (unsigned)mi.fordblks / 1024,
 		sane ? "" : "  <-- HEAP CORRUPT");
 }
+
+// ---------------------------------------------------------------------------
+// Networking: never block start-up on DNS.
+//
+// newlib's gethostbyname calls sceNetResolverStartNtoa with no timeout, which
+// can wait a very long time on hardware (the engine resolves its own host
+// name at start-up, and server addresses later). This wrapper (linked with
+// --wrap=gethostbyname) answers numeric addresses and localhost directly,
+// fails at once when Wi-Fi isn't connected, and otherwise resolves with a
+// short timeout.
+// ---------------------------------------------------------------------------
+#include <netdb.h>
+#include <arpa/inet.h>
+
+extern "C" struct hostent *__real_gethostbyname(const char *name);
+
+static bool Vita_NetConnected(void)
+{
+	int state = 0;
+	return sceNetCtlInetGetState(&state) >= 0 && state == SCE_NETCTL_STATE_CONNECTED;
+}
+
+extern "C" struct hostent *__wrap_gethostbyname(const char *name)
+{
+	static struct hostent ent;
+	static char sname[256];
+	static struct in_addr addr;
+	static char *addrlist[2] = { (char *)&addr, NULL };
+
+	if (name == NULL)
+		return NULL;
+
+	bool found = false;
+	if (strcmp(name, "localhost") == 0)
+	{
+		addr.s_addr = htonl(0x7F000001);
+		found = true;
+	}
+	else if (inet_aton(name, &addr))
+	{
+		found = true;
+	}
+	else if (!Vita_NetConnected())
+	{
+		Vita_BootLog("resolve %s: not connected", name);
+		return NULL;
+	}
+	else
+	{
+		int rid = sceNetResolverCreate("zandronum", NULL, 0);
+		if (rid >= 0)
+		{
+			SceNetInAddr sa;
+			// Timeout is in microseconds.
+			int err = sceNetResolverStartNtoa(rid, name, &sa, 3 * 1000 * 1000, 1, 0);
+			sceNetResolverDestroy(rid);
+			if (err >= 0)
+			{
+				addr.s_addr = sa.s_addr;
+				found = true;
+			}
+			Vita_BootLog("resolve %s: 0x%08X", name, err);
+		}
+	}
+	if (!found)
+		return NULL;
+
+	strncpy(sname, name, sizeof(sname) - 1);
+	ent.h_name = sname;
+	ent.h_aliases = NULL;
+	ent.h_addrtype = AF_INET;
+	ent.h_length = sizeof(struct in_addr);
+	ent.h_addr_list = addrlist;
+	return &ent;
+}
+
+// The console's IP address on the current network, or 127.0.0.1.
+extern "C" void Vita_GetLocalIP(char *buf, int size)
+{
+	SceNetCtlInfo info;
+	if (Vita_NetConnected() && sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_IP_ADDRESS, &info) >= 0)
+		snprintf(buf, size, "%s", info.ip_address);
+	else
+		snprintf(buf, size, "127.0.0.1");
+}

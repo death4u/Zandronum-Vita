@@ -82,6 +82,9 @@
 #include "i_system.h"
 #include "sv_main.h"
 #include "m_random.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
 #include "network.h"
 #include "sbar.h"
 #include "v_video.h"
@@ -980,7 +983,10 @@ NETADDRESS_s NETWORK_GetLocalAddress( void )
 	struct sockaddr_in	SocketAddress;
 	int					iNameLength;
 
-#ifndef __WINE__
+#if defined(__vita__)
+	// [Vita] Ask the network controller instead of resolving our host name.
+	Vita_GetLocalIP( szBuffer, 512 );
+#elif !defined(__WINE__)
 	gethostname( szBuffer, 512 );
 #endif
 	szBuffer[512-1] = 0;

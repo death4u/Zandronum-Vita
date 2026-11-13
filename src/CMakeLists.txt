@@ -1690,7 +1690,7 @@ if( VITA )
 	# Extended memory mode (more main memory for the 192 MB heap).
 	set( VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12" )
 	# UNSAFE: the game reads and writes ux0:data/zandronum/.
-	set_target_properties( zdoom PROPERTIES LINK_FLAGS "-Wl,-q -Wl,--wrap=malloc -Wl,--wrap=realloc -Wl,--defsym=__sce_headroom=0x4000" )
+	set_target_properties( zdoom PROPERTIES LINK_FLAGS "-Wl,-q -Wl,--wrap=malloc -Wl,--wrap=realloc -Wl,--wrap=gethostbyname -Wl,--defsym=__sce_headroom=0x4000" )
 	vita_create_self( eboot.bin zdoom UNSAFE )
 	vita_create_vpk( zandronum.vpk ${VITA_TITLEID} eboot.bin
 		VERSION ${VITA_VERSION}
