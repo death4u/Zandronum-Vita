@@ -48,6 +48,9 @@
 #include "cmdlib.h"
 #include "c_dispatch.h"
 #include "w_wad.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
 #include "w_zip.h"
 #include "m_crc32.h"
 #include "v_text.h"
@@ -307,6 +310,9 @@ void FWadCollection::AddFile (const char *filename, FileReader *wadinfo, bool bL
 		wadinfo->bLoadedAutomatically = bLoadedAutomatically;
 
 	Printf (" adding %s", filename);
+#ifdef __vita__
+	Vita_BootLog("loading %s", filename);
+#endif
 	startlump = NumLumps;
 
 	FResourceFile *resfile;

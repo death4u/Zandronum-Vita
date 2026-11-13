@@ -248,6 +248,7 @@ int main (int argc, char **argv)
 {
 #ifdef __vita__
 	Vita_EarlyInit();
+	Vita_RunLauncher(&argc, &argv);
 #elif !defined (__APPLE__)
 	{
 		int s[4] = { SIGSEGV, SIGILL, SIGFPE, SIGBUS };

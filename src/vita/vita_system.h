@@ -17,6 +17,10 @@ void Vita_EarlyInit(void);
 
 // Shows a fatal error on screen and waits for the user to close it.
 void Vita_FatalError(const char *text);
+
+// Start-up launcher: lets the user pick the IWAD and mods, then replaces
+// argv with the original arguments plus -iwad/-file/-deh (and args.txt).
+void Vita_RunLauncher(int *argc, char ***argv);
 void Vita_Checkpoint(const char *stage);
 
 #ifdef __cplusplus
