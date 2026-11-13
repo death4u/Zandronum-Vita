@@ -299,8 +299,13 @@ static bool NameLess(const Entry &ea, const Entry &eb)
 // Remembered choice
 // ---------------------------------------------------------------------------
 
-static void LoadConfig(std::string &iwad, std::vector<std::string> &mods)
+// launcher.cfg format version. Version 2 added the built-in Skulltag actors
+// entry; older files get it ticked by default.
+#define LAUNCHER_CFG_VERSION 2
+
+static void LoadConfig(std::string &iwad, std::vector<std::string> &mods, int &version)
 {
+	version = 0;
 	FILE *f = fopen(LAUNCHER_CFG, "r");
 	if (f == NULL) return;
 	char line[1024];
@@ -310,6 +315,7 @@ static void LoadConfig(std::string &iwad, std::vector<std::string> &mods)
 		while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = 0;
 		if (strncmp(line, "iwad=", 5) == 0) iwad = line + 5;
 		else if (strncmp(line, "mod=", 4) == 0) mods.push_back(line + 4);
+		else if (strncmp(line, "version=", 8) == 0) version = atoi(line + 8);
 	}
 	fclose(f);
 }
@@ -318,6 +324,7 @@ static void SaveConfig(const std::string &iwad, const std::vector<std::string> &
 {
 	FILE *f = fopen(LAUNCHER_CFG, "w");
 	if (f == NULL) return;
+	fprintf(f, "version=%d\n", LAUNCHER_CFG_VERSION);
 	fprintf(f, "iwad=%s\n", iwad.c_str());
 	for (size_t i = 0; i < mods.size(); ++i)
 		fprintf(f, "mod=%s\n", mods[i].c_str());
@@ -341,10 +348,36 @@ static void BuildArgs(int *argc, char ***argv, const std::string &iwad, const st
 		args.push_back(iwad);
 	}
 	std::vector<std::string> files, dehs;
+	// Skulltag's own resources (skulltag_actors, skulltag_content/_data and
+	// the like) go first, as PC launchers do, since mods build on them.
+	// skulltag_content already contains Skulltag's actors, so the built-in
+	// skulltag_actors.pk3 is left out when it is ticked.
+	bool havecontent = false;
 	for (size_t i = 0; i < mods.size(); ++i)
 	{
-		std::string ext = Extension(mods[i]);
-		(ext == "deh" || ext == "bex" ? dehs : files).push_back(mods[i]);
+		size_t slash = mods[i].find_last_of("/:");
+		std::string base = Lower(slash == std::string::npos ? mods[i] : mods[i].substr(slash + 1));
+		if (base.compare(0, 16, "skulltag_content") == 0)
+			havecontent = true;
+	}
+	for (int pass = 0; pass < 2; ++pass)
+	{
+		for (size_t i = 0; i < mods.size(); ++i)
+		{
+			if (havecontent && mods[i] == "app0:/skulltag_actors.pk3")
+			{
+				if (pass == 0)
+					Vita_BootLog("launcher: skulltag_content ticked, leaving out the built-in skulltag_actors.pk3");
+				continue;
+			}
+			size_t slash = mods[i].find_last_of("/:");
+			std::string base = Lower(slash == std::string::npos ? mods[i] : mods[i].substr(slash + 1));
+			bool st = base.compare(0, 9, "skulltag_") == 0;
+			if (st != (pass == 0))
+				continue;
+			std::string ext = Extension(mods[i]);
+			(ext == "deh" || ext == "bex" ? dehs : files).push_back(mods[i]);
+		}
 	}
 	if (!files.empty())
 	{
@@ -409,12 +442,24 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 		(files[i].IsIWAD ? iwads : mods).push_back(files[i]);
 	std::sort(iwads.begin(), iwads.end(), NameLess);
 	std::sort(mods.begin(), mods.end(), NameLess);
+
+	// Skulltag's actors ship inside the VPK (as with PC Zandronum, they are
+	// not loaded unless asked for). Many Zandronum mods build on them, so they
+	// come first in the list and always load before the other mods.
+	{
+		Entry st;
+		st.Path = "app0:/skulltag_actors.pk3";
+		st.Name = "skulltag_actors.pk3 (built in)";
+		st.IsIWAD = false;
+		mods.insert(mods.begin(), st);
+	}
 	Vita_BootLog("launcher: %u IWADs, %u mods", (unsigned)iwads.size(), (unsigned)mods.size());
 
 	// Restore the last choice where the files still exist.
 	std::string lastiwad;
 	std::vector<std::string> lastmods;
-	LoadConfig(lastiwad, lastmods);
+	int cfgversion;
+	LoadConfig(lastiwad, lastmods, cfgversion);
 	int iwadsel = iwads.empty() ? -1 : 0;
 	for (size_t i = 0; i < iwads.size(); ++i)
 		if (iwads[i].Path == lastiwad) iwadsel = (int)i;
@@ -422,6 +467,12 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 	for (size_t j = 0; j < lastmods.size(); ++j)
 		for (size_t i = 0; i < mods.size(); ++i)
 			if (mods[i].Path == lastmods[j]) order.push_back((int)i);
+	if (cfgversion < 2 && std::find(order.begin(), order.end(), 0) == order.end())
+		order.insert(order.begin(), 0);	// first run with this launcher: tick Skulltag actors
+	{	// the built-in always loads first
+		std::vector<int>::iterator it = std::find(order.begin(), order.end(), 0);
+		if (it != order.end() && it != order.begin()) { order.erase(it); order.insert(order.begin(), 0); }
+	}
 
 	if (!FbInit())
 	{
@@ -511,6 +562,7 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 				int m = cursor - 1 - (int)iwads.size();
 				std::vector<int>::iterator it = std::find(order.begin(), order.end(), m);
 				if (it != order.end()) order.erase(it);
+				else if (m == 0) order.insert(order.begin(), m);	// built-in loads first
 				else order.push_back(m);
 			}
 		}

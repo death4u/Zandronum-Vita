@@ -1335,6 +1335,10 @@ int G_GetJoinMenuKey()
 
 const char* G_DescribeJoinMenuKey()
 {
+#ifdef __vita__
+	// [Vita] Cross (joy3) joins as well; it's the only option without a keyboard.
+	return "Cross";
+#endif
 	const char* names[] = { "Space", "Enter" };
 	if ( static_cast<unsigned>( joinmenukey ) < countof( names ))
 		return names[joinmenukey];
@@ -1395,7 +1399,13 @@ bool G_Responder (event_t *ev)
 
 		// [RC] If the player hits the spacebar, and they aren't in the game, ask them if they'd like to join.
 		// [BB] This "eats" the key, therefore we must return true here.
-		if ( ( ev->type == EV_KeyDown ) && ( ev->data1 == G_GetJoinMenuKey() ) && players[consoleplayer].bSpectating )
+		if ( ( ev->type == EV_KeyDown ) && players[consoleplayer].bSpectating &&
+			(( ev->data1 == G_GetJoinMenuKey() )
+#ifdef __vita__
+			// [Vita] Cross on the pad (SDL joystick button 2 = joy3).
+			|| ( ev->data1 == KEY_FIRSTJOYBUTTON + 2 )
+#endif
+			))
 		{
 			C_DoCommand( "menu_join" );
 			return true;
