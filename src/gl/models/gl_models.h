@@ -174,10 +174,13 @@ class FMD3Model : public FModel
 		float s,t;
 	};
 
+	// [Vita] Vertices stay in the file's 16-bit fixed point (1/64 unit) and
+	// are expanded per draw: a quarter of the memory of float xyz + normal,
+	// which matters for mods with hundreds of MB of models. The normals were
+	// never used for drawing.
 	struct MD3Vertex
 	{
-		float x,y,z;
-		float nx,ny,nz;
+		short x,y,z;
 	};
 
 	struct MD3Triangle
@@ -227,7 +230,7 @@ class FMD3Model : public FModel
 	MD3Frame * frames;
 	MD3Surface * surfaces;
 
-	void RenderTriangles(MD3Surface * surf, MD3Vertex * vert);
+	void RenderTriangles(MD3Surface * surf, const float * xyz);
 
 public:
 	FMD3Model() { }

@@ -67,7 +67,12 @@
 #include <fcntl.h>
 
 //GL headers
-#if defined(__APPLE__)
+#if defined(__vita__)
+// [Vita] vitaGL plus the GL extension enums/typedefs and a small GLU.
+#include <GL/gl.h>
+#include <GL/glu.h>
+#include "gl/api/glext.h"
+#elif defined(__APPLE__)
 #include <GL/glew.h>
 #include <OpenGL/OpenGL.h>
 #elif defined(__unix__)

@@ -7,6 +7,8 @@
 #define __EXTERN extern
 #endif
 
+// [Vita] vitaGL exports all of these directly; nothing to load at run time.
+#ifndef __vita__
 __EXTERN PFNGLBLENDEQUATIONPROC glBlendEquation;
 
 // ARB_SHADER_OBJECTS
@@ -98,3 +100,4 @@ __EXTERN PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer;
 __EXTERN PFNGLTEXBUFFERARBPROC glTexBufferARB;
 
 #undef __EXTERN
+#endif // !__vita__

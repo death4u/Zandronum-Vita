@@ -47,6 +47,9 @@
 #include "v_text.h"
 #include "doomstat.h"
 #include "m_argv.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
 #ifndef NO_GL
 #include "sdlglvideo.h"
 #endif
@@ -147,6 +150,17 @@ static void I_DeleteRenderer()
 void I_CreateRenderer()
 {
 	currentrenderer = vid_renderer;
+#if defined(__vita__) && !defined(NO_GL)
+	// [Vita] vitaGL compiles its shaders with Sony's libshacccg.suprx, which
+	// each user extracts from their own console (ShaRKBR33D). Without it the
+	// OpenGL renderer can't draw, so fall back to the software renderer.
+	if (currentrenderer == 1 && !Vita_HaveShaderCompiler())
+	{
+		Printf(TEXTCOLOR_RED "ur0:data/libshacccg.suprx not found: using the software renderer.\n");
+		Vita_BootLog("libshacccg.suprx not found: software renderer");
+		currentrenderer = 0;
+	}
+#endif
 	if (Renderer == NULL)
 	{
 #ifndef NO_GL

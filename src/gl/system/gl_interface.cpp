@@ -130,7 +130,9 @@ static bool CheckExtension(const char *ext)
 static void InitContext()
 {
 	gl.flags=0;
+#ifndef __vita__
 	glBlendEquation = glBlendEquationDummy;
+#endif
 
 #ifdef _WIN32 // [BB] Detect some kinds of glBegin hooking.
 	for ( int i = 0; i < 4; ++i )
@@ -148,6 +150,18 @@ void gl_LoadExtensions()
 {
 	InitContext();
 	CollectExtensions();
+
+#ifdef __vita__
+	// [Vita] vitaGL: fixed-function path (shader model 0), immediate-mode
+	// geometry and non-power-of-two textures. Textures are capped at 1024
+	// pixels so a mod's huge hi-res images fit in the Vita's memory.
+	gl.shadermodel = 0;
+	gl.vendorstring = (char*)glGetString(GL_VENDOR);
+	gl.flags |= RFL_NPOT_TEXTURE;
+	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &gl.max_texturesize);
+	if (gl.max_texturesize <= 0 || gl.max_texturesize > 1024) gl.max_texturesize = 1024;
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#else
 
 	const char *version = (const char*)glGetString(GL_VERSION);
 
@@ -341,6 +355,7 @@ void gl_LoadExtensions()
 	glActiveTexture = (PFNGLACTIVETEXTUREPROC)myGetProcAddress("glActiveTextureARB");
 	glMultiTexCoord2f = (PFNGLMULTITEXCOORD2FPROC) myGetProcAddress("glMultiTexCoord2fARB");
 	glMultiTexCoord2fv = (PFNGLMULTITEXCOORD2FVPROC) myGetProcAddress("glMultiTexCoord2fvARB");
+#endif // !__vita__
 }
 
 //==========================================================================

@@ -300,6 +300,14 @@ endif( X64 )
 
 # Check if we have OpenGL
 # [BB] Only if necessary
+if( VITA AND NOT NO_GL )
+	# [Vita] OpenGL comes from vitaGL; GLU (scaling, tesselation) from
+	# vita/vita_glu.cpp on top of libtess2.
+	set( OPENGL_FOUND ON )
+	set( OPENGL_GLU_FOUND ON )
+	set( OPENGL_LIBRARIES "" )
+	set( OPENGL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vita/libtess2" )
+endif( VITA AND NOT NO_GL )
 if( NOT NO_GL )
 	if( NOT OPENGL_FOUND )
 		message( FATAL_ERROR "OpenGL is required for building." )
@@ -810,6 +818,11 @@ else( WIN32 )
 	if( VITA )
 		list( REMOVE_ITEM SYSTEM_SOURCES sdl/crashcatcher.c )
 		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} vita/vita_system.cpp vita/vita_compat.cpp vita/vita_launcher.cpp sound/vitasound.cpp )
+		if( NOT NO_GL )
+			set( SYSTEM_SOURCES ${SYSTEM_SOURCES} vita/vita_glu.cpp
+				vita/libtess2/bucketalloc.c vita/libtess2/dict.c vita/libtess2/geom.c
+				vita/libtess2/mesh.c vita/libtess2/priorityq.c vita/libtess2/sweep.c vita/libtess2/tess.c )
+		endif( NOT NO_GL )
 	endif( VITA )
 	if( APPLE )
 		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} ${PLAT_MAC_SOURCES} )
@@ -1490,8 +1503,11 @@ endif(${CMAKE_SYSTEM_NAME} STREQUAL "SunOS")
 
 # [BB] Added GeoIP, huffman & sqlite
 if( VITA )
+	if( NOT NO_GL )
+		set( VITA_GL_LIBS vitaGL vitashark SceShaccCgExt mathneon taihen_stub SceShaccCg_stub SceIme_stub SceKernelThreadMgr_stub )
+	endif( NOT NO_GL )
 	# [Vita] SQLite comes from the system SceSqlite module.
-	target_link_libraries( zdoom ${ZDOOM_LIBS} gdtoa dumb lzma GeoIP
+	target_link_libraries( zdoom ${ZDOOM_LIBS} ${VITA_GL_LIBS} gdtoa dumb lzma GeoIP
 		SceSqlite_stub
 		SceGxm_stub SceDisplay_stub SceCtrl_stub SceAppMgr_stub SceAppUtil_stub
 		SceAudio_stub SceAudioIn_stub SceIofilemgr_stub SceCommonDialog_stub

@@ -39,6 +39,7 @@
 
 #include "gl/system/gl_system.h"
 #include "w_wad.h"
+#include "i_system.h"
 #include "cmdlib.h"
 #include "sc_man.h"
 #include "m_crc32.h"
@@ -182,31 +183,130 @@ static int ModelFrameHash(FSpriteModelFrame * smf)
 	return hash ^ 0xffffffff;
 }
 
+
+#ifdef __vita__
 //===========================================================================
 //
-// FindModel
+// [Vita] Models are loaded the first time they are drawn instead of at
+// start-up, and the least recently drawn ones are freed again when the
+// loaded total goes over gl_vita_modelbudget. Mods like HaloDoom ship far
+// more model data (hundreds of MB) than the Vita has memory, but only a
+// small part of it is on screen at any time.
 //
 //===========================================================================
 
-static FModel * FindModel(const char * path, const char * modelfile)
+CVAR(Int, gl_vita_modelbudget, 48, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)	// MB of model files kept loaded
+
+class FLazyModel : public FModel
 {
-	FModel * model = NULL;
-	FString fullname;
+public:
+	FString mPath;
+	int mLump;
+	int mSize;			// lump size, used as the cost of keeping it loaded
+	FModel *mReal;
+	bool mFailed;
+	unsigned mLastUse;	// I_MSTime() of the last draw
 
-	fullname.Format("%s%s", path, modelfile);
-	int lump = Wads.CheckNumForFullName(fullname);
-
-	if (lump<0)
+	FLazyModel(const char *path, int lump) : mPath(path), mLump(lump), mReal(NULL), mFailed(false), mLastUse(0)
 	{
-		Printf("FindModel: '%s' not found\n", fullname.GetChars());
+		mSize = Wads.LumpLength(lump);
+	}
+	~FLazyModel() { Unload(); }
+
+	bool Load(const char *, int, const char *, int) { return true; }
+
+	int FindFrame(const char *name)
+	{
+		// Only "Frame" (by name) in MODELDEF needs this; it loads the model once.
+		FModel *m = Get();
+		int f = m ? m->FindFrame(name) : -1;
+		return f;
+	}
+
+	void RenderFrame(FTexture *skin, int frame, int cm, int translation)
+	{
+		FModel *m = Get();
+		if (m == NULL) return;
+		m->PushSpriteMDLFrame(curSpriteMDLFrame, curMDLIndex);
+		m->RenderFrame(skin, frame, cm, translation);
+	}
+
+	void RenderFrameInterpolated(FTexture *skin, int frame, int frame2, double inter, int cm, int translation)
+	{
+		FModel *m = Get();
+		if (m == NULL) return;
+		m->PushSpriteMDLFrame(curSpriteMDLFrame, curMDLIndex);
+		m->RenderFrameInterpolated(skin, frame, frame2, inter, cm, translation);
+	}
+
+	void CleanGLData() { if (mReal) mReal->CleanGLData(); }
+
+	void Unload()
+	{
+		if (mReal != NULL)
+		{
+			delete mReal;
+			mReal = NULL;
+			LoadedBytes -= mSize;
+		}
+	}
+
+	FModel *Get();
+
+	static int LoadedBytes;
+	static TArray<FLazyModel *> All;
+	static void Trim(FLazyModel *keep);
+};
+
+int FLazyModel::LoadedBytes;
+TArray<FLazyModel *> FLazyModel::All;
+
+static FModel *LoadModelLump(const char *path, int lump, const char *fullname);
+
+FModel *FLazyModel::Get()
+{
+	mLastUse = I_MSTime();
+	if (mReal != NULL || mFailed) return mReal;
+	Trim(this);
+	mReal = LoadModelLump(mPath.GetChars(), mLump, mFileName.GetChars());
+	if (mReal == NULL)
+	{
+		mFailed = true;
 		return NULL;
 	}
+	LoadedBytes += mSize;
+	return mReal;
+}
 
-	for(int i = 0; i< (int)Models.Size(); i++)
+void FLazyModel::Trim(FLazyModel *keep)
+{
+	const int budget = MAX(8, (int)gl_vita_modelbudget) << 20;
+	// Free the least recently drawn models until the new one fits. Models
+	// drawn in the last half second stay, so a busy scene can't thrash.
+	while (LoadedBytes + keep->mSize > budget)
 	{
-		if (!Models[i]->mFileName.CompareNoCase(fullname)) return Models[i];
+		FLazyModel *oldest = NULL;
+		for (unsigned i = 0; i < All.Size(); i++)
+		{
+			FLazyModel *m = All[i];
+			if (m == keep || m->mReal == NULL) continue;
+			if (oldest == NULL || m->mLastUse < oldest->mLastUse) oldest = m;
+		}
+		if (oldest == NULL || I_MSTime() - oldest->mLastUse < 500) break;
+		oldest->Unload();
 	}
+}
+#endif // __vita__
 
+//===========================================================================
+//
+// LoadModelLump: reads and parses one model file
+//
+//===========================================================================
+
+static FModel *LoadModelLump(const char *path, int lump, const char *fullname)
+{
+	FModel * model = NULL;
 	int len = Wads.LumpLength(lump);
 	FMemLump lumpd = Wads.ReadLump(lump);
 	char * buffer = (char*)lumpd.GetMem();
@@ -242,10 +342,50 @@ static FModel * FindModel(const char * path, const char * modelfile)
 		}
 		else
 		{
-			Printf("LoadModel: Unknown model format in '%s'\n", fullname.GetChars());
+			Printf("LoadModel: Unknown model format in '%s'\n", fullname);
 			return NULL;
 		}
 	}
+
+	return model;
+}
+
+//===========================================================================
+//
+// FindModel
+//
+//===========================================================================
+
+static FModel * FindModel(const char * path, const char * modelfile)
+{
+	FModel * model = NULL;
+	FString fullname;
+
+	fullname.Format("%s%s", path, modelfile);
+	int lump = Wads.CheckNumForFullName(fullname);
+
+	if (lump<0)
+	{
+		Printf("FindModel: '%s' not found\n", fullname.GetChars());
+		return NULL;
+	}
+
+	for(int i = 0; i< (int)Models.Size(); i++)
+	{
+		if (!Models[i]->mFileName.CompareNoCase(fullname)) return Models[i];
+	}
+
+#ifdef __vita__
+	{
+		FLazyModel *lazy = new FLazyModel(path, lump);
+		lazy->mFileName = fullname;
+		FLazyModel::All.Push(lazy);
+		model = lazy;
+	}
+#else
+	model = LoadModelLump(path, lump, fullname);
+	if (model == NULL) return NULL;
+#endif
 
 	model->mFileName = fullname;
 	Models.Push(model);
@@ -269,6 +409,9 @@ void gl_InitModels()
 
 	lastLump = 0;
 
+#ifdef __vita__
+	FLazyModel::All.Clear();
+#endif
 	for(unsigned i=0;i<Models.Size();i++)
 	{
 		delete Models[i];

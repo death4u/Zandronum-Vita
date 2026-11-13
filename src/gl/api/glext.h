@@ -447,8 +447,12 @@ GLAPI void APIENTRY glBlendEquation (GLenum mode);
 
 #ifndef GL_VERSION_1_5
 #define GL_VERSION_1_5 1
+#ifndef __vita__
 typedef khronos_ssize_t GLsizeiptr;
+#endif
+#ifndef __vita__
 typedef khronos_intptr_t GLintptr;
+#endif
 #define GL_BUFFER_SIZE                    0x8764
 #define GL_BUFFER_USAGE                   0x8765
 #define GL_QUERY_COUNTER_BITS             0x8864
@@ -543,7 +547,9 @@ GLAPI void APIENTRY glGetBufferPointerv (GLenum target, GLenum pname, void **par
 
 #ifndef GL_VERSION_2_0
 #define GL_VERSION_2_0 1
+#ifndef __vita__
 typedef char GLchar;
+#endif
 #define GL_BLEND_EQUATION_RGB             0x8009
 #define GL_VERTEX_ATTRIB_ARRAY_ENABLED    0x8622
 #define GL_VERTEX_ATTRIB_ARRAY_SIZE       0x8623
@@ -1364,7 +1370,9 @@ GLAPI void APIENTRY glUniformBlockBinding (GLuint program, GLuint uniformBlockIn
 
 #ifndef GL_VERSION_3_2
 #define GL_VERSION_3_2 1
+#ifndef __vita__
 typedef struct __GLsync *GLsync;
+#endif
 typedef khronos_uint64_t GLuint64;
 typedef khronos_int64_t GLint64;
 #define GL_CONTEXT_CORE_PROFILE_BIT       0x00000001

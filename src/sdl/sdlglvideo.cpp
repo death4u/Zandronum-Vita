@@ -27,6 +27,16 @@
 #include "gl/utility/gl_templates.h"
 #include "gl/textures/gl_material.h"
 #include "gl/system/gl_cvars.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+
+static void VitaGLDialogFrame(void)
+{
+	glClearColor(0, 0, 0, 1);
+	glClear(GL_COLOR_BUFFER_BIT);
+	vglSwapBuffers(GL_TRUE);
+}
+#endif
 
 // MACROS ------------------------------------------------------------------
 
@@ -161,6 +171,17 @@ bool SDLGLVideo::NextMode (int *width, int *height, bool *letterbox)
 	if (IteratorBits != 8)
 		return false;
 	
+#ifdef __vita__
+	// [Vita] The only GL mode is the native screen.
+	if (IteratorMode == 0)
+	{
+		*width = 960;
+		*height = 544;
+		++IteratorMode;
+		return true;
+	}
+	return false;
+#endif
 	if (!IteratorFS)
 	{
 		if ((unsigned)IteratorMode < sizeof(WinModes)/sizeof(WinModes[0]))
@@ -216,6 +237,12 @@ DFrameBuffer *SDLGLVideo::CreateFrameBuffer (int width, int height, bool fullscr
 //		flashAmount = 0;
 	}
 	
+#ifdef __vita__
+	// [Vita] vitaGL always renders at the native 960x544.
+	width = 960;
+	height = 544;
+	fullscreen = true;
+#endif
 	SDLGLFB *fb = new OpenGLFrameBuffer (0, width, height, 32, 60, fullscreen);
 	retry = 0;
 	
@@ -359,6 +386,15 @@ SDLGLFB::SDLGLFB (void *, int width, int height, int, int, bool fullscreen)
 		SDL_HWSURFACE|SDL_HWPALETTE|SDL_OPENGL | SDL_GL_DOUBLEBUFFER|SDL_ANYFORMAT|
 		(fullscreen ? SDL_FULLSCREEN : 0));
 
+#ifdef __vita__
+	if (Screen == NULL)
+		Vita_BootLog("SDL_SetVideoMode(%d, %d, OpenGL) failed: %s", width, height, SDL_GetError());
+	else
+	{
+		Vita_LoadingDone();
+		Vita_GLDialogFrame = VitaGLDialogFrame;
+	}
+#endif
 	if (Screen == NULL)
 		return;
 

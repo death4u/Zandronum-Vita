@@ -31,6 +31,13 @@ void Vita_LoadingDone(void);
 void Vita_GetLocalIP(char *buf, int size);
 void Vita_Checkpoint(const char *stage);
 
+// Set by the OpenGL renderer once vitaGL owns the screen: draws one frame
+// (clear + swap) so system dialogs such as the error box can show.
+extern void (*Vita_GLDialogFrame)(void);
+
+// Whether Sony's shader compiler (needed by vitaGL) is installed.
+int Vita_HaveShaderCompiler(void);
+
 #ifdef __cplusplus
 }
 #endif

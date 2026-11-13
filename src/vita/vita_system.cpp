@@ -21,6 +21,8 @@
 #include <SDL/SDL.h>
 
 #include "vita_system.h"
+#include <psp2/message_dialog.h>
+#include <psp2/common_dialog.h>
 
 // ---------------------------------------------------------------------------
 // Process memory. The SFO sets ATTRIBUTE2=12 (extended memory mode), which
@@ -168,7 +170,35 @@ extern "C" void Vita_FatalError(const char *text)
 		*d++ = *s;
 	}
 	*d = '\0';
+	if (Vita_GLDialogFrame != NULL)
+	{
+		// vitaGL owns the GPU: run the dialog on its frames instead of SDL's.
+		SceMsgDialogParam param;
+		SceMsgDialogUserMessageParam msgParam;
+		sceMsgDialogParamInit(&param);
+		param.mode = SCE_MSG_DIALOG_MODE_USER_MSG;
+		memset(&msgParam, 0, sizeof(msgParam));
+		msgParam.msg = (const SceChar8 *)msg;
+		msgParam.buttonType = SCE_MSG_DIALOG_BUTTON_TYPE_OK;
+		param.userMsgParam = &msgParam;
+		if (sceMsgDialogInit(&param) >= 0)
+		{
+			while (sceMsgDialogGetStatus() == SCE_COMMON_DIALOG_STATUS_RUNNING)
+				Vita_GLDialogFrame();
+			sceMsgDialogTerm();
+		}
+		return;
+	}
 	SDL_VITA_ShowMessageBox(msg);
+}
+
+void (*Vita_GLDialogFrame)(void) = NULL;
+
+extern "C" int Vita_HaveShaderCompiler(void)
+{
+	SceIoStat st;
+	return sceIoGetstat("ur0:data/libshacccg.suprx", &st) >= 0 ||
+		sceIoGetstat("ur0:data/external/libshacccg.suprx", &st) >= 0;
 }
 
 // ---------------------------------------------------------------------------

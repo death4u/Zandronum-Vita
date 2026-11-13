@@ -49,18 +49,6 @@
 
 #define MAX_QPATH 64
 
-static void UnpackVector(unsigned short packed, float & nx, float & ny, float & nz)
-{
-	// decode the lat/lng normal to a 3 float normal
-	double lat = ( packed >> 8 ) & 0xff;
-	double lng = ( packed & 0xff );
-	lat *= PI/128;
-	lng *= PI/128;
-
-	nx = cos(lat) * sin(lng);
-	ny = sin(lat) * sin(lng);
-	nz = cos(lng);
-}
 
 
 
@@ -197,10 +185,9 @@ bool FMD3Model::Load(const char * path, int, const char * buffer, int length)
 
 		for(int i=0;i<s->numVertices * numFrames;i++)
 		{
-			s->vertices[i].x = LittleShort(vt[i].x)/64.f;
-			s->vertices[i].y = LittleShort(vt[i].y)/64.f;
-			s->vertices[i].z = LittleShort(vt[i].z)/64.f * rModelAspectMod;
-			UnpackVector( LittleShort(vt[i].n), s->vertices[i].nx, s->vertices[i].ny, s->vertices[i].nz);
+			s->vertices[i].x = LittleShort(vt[i].x);
+			s->vertices[i].y = LittleShort(vt[i].y);
+			s->vertices[i].z = LittleShort(vt[i].z);
 		}
 	}
 	return true;
@@ -215,7 +202,38 @@ int FMD3Model::FindFrame(const char * name)
 	return -1;
 }
 
-void FMD3Model::RenderTriangles(MD3Surface * surf, MD3Vertex * vert)
+// Expands one frame (or a blend of two) to float xyz in GL axis order.
+static TArray<float> MD3Scratch;
+
+static float *MD3Expand(const short *v1, const short *v2, double inter, int numVertices)
+{
+	MD3Scratch.Resize(numVertices * 3);
+	float *out = &MD3Scratch[0];
+	const float s = 1.f / 64.f;
+	const float sz = s * rModelAspectMod;
+	if (v2 == NULL)
+	{
+		for (int k = 0; k < numVertices; k++, v1 += 3, out += 3)
+		{
+			out[0] = v1[0] * s;
+			out[1] = v1[2] * sz;
+			out[2] = v1[1] * s;
+		}
+	}
+	else
+	{
+		const float a = float(1 - inter), b = float(inter);
+		for (int k = 0; k < numVertices; k++, v1 += 3, v2 += 3, out += 3)
+		{
+			out[0] = (a * v1[0] + b * v2[0]) * s;
+			out[1] = (a * v1[2] + b * v2[2]) * sz;
+			out[2] = (a * v1[1] + b * v2[1]) * s;
+		}
+	}
+	return &MD3Scratch[0];
+}
+
+void FMD3Model::RenderTriangles(MD3Surface * surf, const float * xyz)
 {
 	gl_RenderState.Apply();
 	glBegin(GL_TRIANGLES);
@@ -226,7 +244,7 @@ void FMD3Model::RenderTriangles(MD3Surface * surf, MD3Vertex * vert)
 			int x = surf->tris[i].VertIndex[j];
 
 			glTexCoord2fv(&surf->texcoords[x].s);
-			glVertex3f(vert[x].x, vert[x].z, vert[x].y);
+			glVertex3fv(xyz + x * 3);
 		}
 	}
 	glEnd();
@@ -266,7 +284,7 @@ void FMD3Model::RenderFrame(FTexture * skin, int frameno, int cm, int translatio
 		FMaterial * tex = FMaterial::ValidateTexture(surfaceSkin);
 
 		tex->Bind(cm, 0, translation);
-		RenderTriangles(surf, surf->vertices + frameno * surf->numVertices);
+		RenderTriangles(surf, MD3Expand(&surf->vertices[frameno * surf->numVertices].x, NULL, 0, surf->numVertices));
 	}
 }
 
@@ -299,22 +317,8 @@ void FMD3Model::RenderFrameInterpolated(FTexture * skin, int frameno, int framen
 
 		tex->Bind(cm, 0, translation);
 
-		MD3Vertex* verticesInterpolated = new MD3Vertex[surfaces[i].numVertices];
-		MD3Vertex* vertices1 = surf->vertices + frameno * surf->numVertices;
-		MD3Vertex* vertices2 = surf->vertices + frameno2 * surf->numVertices;
-
-		// [BB] Calculate the interpolated vertices by linear interpolation.
-		for( int k = 0; k < surf->numVertices; k++ )
-		{
-			verticesInterpolated[k].x = (1-inter)*vertices1[k].x+ (inter)*vertices2[k].x;
-			verticesInterpolated[k].y = (1-inter)*vertices1[k].y+ (inter)*vertices2[k].y;
-			verticesInterpolated[k].z = (1-inter)*vertices1[k].z+ (inter)*vertices2[k].z;
-			// [BB] Apparently RenderTriangles doesn't use nx, ny, nz, so don't interpolate them.
-		}
-
-		RenderTriangles(surf, verticesInterpolated);
-
-		delete[] verticesInterpolated;
+		RenderTriangles(surf, MD3Expand(&surf->vertices[frameno * surf->numVertices].x,
+			&surf->vertices[frameno2 * surf->numVertices].x, inter, surf->numVertices));
 	}
 }
 
