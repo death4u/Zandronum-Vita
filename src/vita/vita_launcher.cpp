@@ -168,6 +168,19 @@ static bool ReadMagic(const std::string &path, char magic[4])
 	return ok;
 }
 
+// The engine's own resource files ship inside the VPK (app0:). Copies of
+// them in the data folder (e.g. from a PC install) must not be loaded again:
+// the engine refuses files that override its core lumps.
+static bool IsEngineFile(const std::string &name)
+{
+	static const char *const names[] = { "zandronum.pk3", "skulltag_actors.pk3", "brightmaps.pk3", "zdoom.pk3", "gzdoom.pk3" };
+	std::string lname = Lower(name);
+	for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+		if (lname == names[i])
+			return true;
+	return false;
+}
+
 static void ScanDir(const std::string &dir, const std::string &prefix, std::vector<Entry> &out, int depth)
 {
 	DIR *d = opendir(dir.c_str());
@@ -189,6 +202,11 @@ static void ScanDir(const std::string &dir, const std::string &prefix, std::vect
 			std::string lname = Lower(name);
 			if (depth > 0 && lname != "saves" && lname != "screenshots" && lname != "cache")
 				subdirs.push_back(name);
+			continue;
+		}
+		if (IsEngineFile(name))
+		{
+			Vita_BootLog("launcher: ignoring engine file %s", path.c_str());
 			continue;
 		}
 		std::string ext = Extension(name);
