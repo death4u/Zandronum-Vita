@@ -487,11 +487,19 @@ retry_as_fmod:
 			delete info;
 			info = NULL;
 		}
+#ifndef __vita__
 		if (info == NULL && devtype != MDEV_FMOD && snd_mididevice < 0)
 		{
 			devtype = MDEV_FMOD;
 			goto retry_as_fmod;
 		}
+#else
+		if (info == NULL && devtype != MDEV_OPL)
+		{	// [Vita] e.g. no GUS patches: fall back to the OPL synth.
+			devtype = MDEV_OPL;
+			goto retry_as_fmod;
+		}
+#endif
 #ifdef _WIN32
 		if (info == NULL && devtype != MDEV_MMAPI && snd_mididevice >= 0)
 		{

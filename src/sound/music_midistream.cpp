@@ -230,6 +230,16 @@ EMidiDevice MIDIStreamer::SelectMIDIDevice(EMidiDevice device)
 	{
 		return device;
 	}
+#ifdef __vita__
+	// [Vita] No FMOD: "default" and FMOD both mean the OPL synth; -4 (GUS)
+	// uses the internal Timidity with GUS patches if the user provides them.
+	switch (snd_mididevice)
+	{
+	case -2:
+	case -4:		return MDEV_GUS;
+	default:		return MDEV_OPL;
+	}
+#endif
 	switch (snd_mididevice)
 	{
 	case -1:		return MDEV_FMOD;
@@ -271,7 +281,11 @@ MIDIDevice *MIDIStreamer::CreateMIDIDevice(EMidiDevice devtype) const
 #endif
 
 	case MDEV_FMOD:
+#ifdef __vita__
+		return new OPLMIDIDevice;
+#else
 		return new FMODMIDIDevice;
+#endif
 
 	case MDEV_GUS:
 		return new TimidityMIDIDevice;

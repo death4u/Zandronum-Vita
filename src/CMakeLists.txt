@@ -809,7 +809,7 @@ else( WIN32 )
 	set( SYSTEM_SOURCES ${PLAT_SDL_SOURCES} )
 	if( VITA )
 		list( REMOVE_ITEM SYSTEM_SOURCES sdl/crashcatcher.c )
-		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} vita/vita_system.cpp vita/vita_compat.cpp )
+		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} vita/vita_system.cpp vita/vita_compat.cpp sound/vitasound.cpp )
 	endif( VITA )
 	if( APPLE )
 		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} ${PLAT_MAC_SOURCES} )
@@ -1690,7 +1690,7 @@ if( VITA )
 	# Extended memory mode (more main memory for the 192 MB heap).
 	set( VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12" )
 	# UNSAFE: the game reads and writes ux0:data/zandronum/.
-	set_target_properties( zdoom PROPERTIES LINK_FLAGS "-Wl,-q -Wl,--wrap=malloc -Wl,--wrap=realloc" )
+	set_target_properties( zdoom PROPERTIES LINK_FLAGS "-Wl,-q -Wl,--wrap=malloc -Wl,--wrap=realloc -Wl,--defsym=__sce_headroom=0x4000" )
 	vita_create_self( eboot.bin zdoom UNSAFE )
 	vita_create_vpk( zandronum.vpk ${VITA_TITLEID} eboot.bin
 		VERSION ${VITA_VERSION}

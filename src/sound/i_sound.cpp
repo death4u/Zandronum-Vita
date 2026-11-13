@@ -63,6 +63,9 @@ extern HINSTANCE g_hInst;
 #ifndef NO_SOUND
 #include "fmodsound.h"
 #endif
+#ifdef __vita__
+#include "vitasound.h"
+#endif
 
 #include "m_swap.h"
 #include "stats.h"
@@ -248,7 +251,26 @@ public:
 
 void I_InitSound ()
 {
-#ifdef NO_SOUND
+#if defined(NO_SOUND) && defined(__vita__)
+	// [Vita] FMOD Ex has no Vita build; use our own SDL-based mixer.
+	nosound = !!Args->CheckParm ("-nosound") || !!Args->CheckParm("-host");
+	nosfx = !!Args->CheckParm ("-nosfx") || !!Args->CheckParm("-host");
+	if (nosound)
+	{
+		GSnd = new NullSoundRenderer;
+		I_InitMusic ();
+		return;
+	}
+	GSnd = Vita_CreateSoundRenderer();
+	if (!GSnd->IsValid ())
+	{
+		I_CloseSound();
+		GSnd = new NullSoundRenderer;
+		Printf (TEXTCOLOR_RED"Sound init failed. Using nosound.\n");
+	}
+	I_InitMusic ();
+	snd_sfxvolume.Callback ();
+#elif defined(NO_SOUND)
 	GSnd = new NullSoundRenderer;
 	I_InitMusic ();
 #else
