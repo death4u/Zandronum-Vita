@@ -312,6 +312,11 @@ void FWadCollection::AddFile (const char *filename, FileReader *wadinfo, bool bL
 	Printf (" adding %s", filename);
 #ifdef __vita__
 	Vita_BootLog("loading %s", filename);
+	{
+		FString msg;
+		msg.Format("Loading %s", filename);
+		Vita_LoadingStatus(msg);
+	}
 #endif
 	startlump = NumLumps;
 

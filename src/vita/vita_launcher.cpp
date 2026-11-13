@@ -137,6 +137,44 @@ static void TextCentered(int row, unsigned color, const char *s)
 }
 
 // ---------------------------------------------------------------------------
+// Loading screen: after the launcher, the engine's start-up steps are shown
+// on the launcher framebuffer until SDL puts up the game's own display.
+// ---------------------------------------------------------------------------
+
+static bool LoadingActive = false;
+static std::vector<std::string> LoadingLines;
+
+static void DrawLoading()
+{
+	FillRect(0, 0, SCR_W, SCR_H, C_BG);
+	FillRect(0, 0, SCR_W, 3 * CHAR_H, C_PANEL);
+	TextCentered(1, C_TITLE, "ZANDRONUM - LOADING");
+	int first = (int)LoadingLines.size() - (ROWS - 5);
+	if (first < 0) first = 0;
+	for (int i = first, row = 4; i < (int)LoadingLines.size(); ++i, ++row)
+		Text(1, row, i + 1 == (int)LoadingLines.size() ? C_TEXT : C_DIM, LoadingLines[i].c_str(), COLS - 2);
+	FbFlip();
+}
+
+extern "C" void Vita_LoadingStatus(const char *line)
+{
+	if (!LoadingActive || line == NULL)
+		return;
+	std::string s = line;
+	while (!s.empty() && (s[s.size() - 1] == '\n' || s[s.size() - 1] == ' ')) s.erase(s.size() - 1);
+	if (s.empty())
+		return;
+	LoadingLines.push_back(s);
+	DrawLoading();
+}
+
+extern "C" void Vita_LoadingDone(void)
+{
+	LoadingActive = false;
+	LoadingLines.clear();
+}
+
+// ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------
 
@@ -554,7 +592,14 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 		FbFlip();
 	}
 
-	FbShutdown();
+	if (!quit)
+	{
+		LoadingActive = true;
+		LoadingLines.push_back("Starting...");
+		DrawLoading();
+	}
+	else
+		FbShutdown();
 
 	if (quit)
 	{

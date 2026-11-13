@@ -21,6 +21,11 @@ void Vita_FatalError(const char *text);
 // Start-up launcher: lets the user pick the IWAD and mods, then replaces
 // argv with the original arguments plus -iwad/-file/-deh (and args.txt).
 void Vita_RunLauncher(int *argc, char ***argv);
+
+// Start-up progress shown on the launcher's screen until the game's video
+// mode is set (then Vita_LoadingDone stops it).
+void Vita_LoadingStatus(const char *line);
+void Vita_LoadingDone(void);
 void Vita_Checkpoint(const char *stage);
 
 #ifdef __cplusplus

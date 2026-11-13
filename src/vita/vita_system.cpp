@@ -209,6 +209,10 @@ extern "C" void Vita_Checkpoint(const char *stage)
 {
 	struct mallinfo mi = mallinfo();
 	bool sane = mi.fordblks <= mi.arena && mi.uordblks <= mi.arena;
+	// Only the engine's own progress messages go on screen; code-location
+	// checkpoints and format strings stay in boot.log.
+	if (strchr(stage, '(') == NULL && strchr(stage, '%') == NULL)
+		Vita_LoadingStatus(stage);
 	Vita_BootLog("[%s] heap arena %u KB, used %u KB, free %u KB%s", stage,
 		(unsigned)mi.arena / 1024, (unsigned)mi.uordblks / 1024, (unsigned)mi.fordblks / 1024,
 		sane ? "" : "  <-- HEAP CORRUPT");

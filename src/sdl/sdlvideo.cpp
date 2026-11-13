@@ -347,6 +347,7 @@ SDLFB::SDLFB (int width, int height, bool fullscreen)
 		return;
 
 #ifdef __vita__
+	Vita_LoadingDone();
 	// [Vita] Scale the frame to the 960x544 display, keeping its aspect ratio.
 	{
 		float scale = MIN(960.f / width, 544.f / height);
