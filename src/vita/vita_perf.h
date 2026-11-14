@@ -47,7 +47,9 @@ void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us);
 
 // ACS interpreter: opcode counts and ACSF function (PCD_CALLFUNC) times.
 extern unsigned Vita_PcodeCounts[1024];
-static inline void Vita_PerfPcode(int pcd) { if (Vita_PerfDetail) Vita_PcodeCounts[pcd & 1023]++; }
+extern unsigned Vita_PcodeTotal;
+extern unsigned Vita_PerfOps;	// opcode count passed along with the next Vita_PerfThinker
+static inline void Vita_PerfPcode(int pcd) { if (Vita_PerfDetail) { Vita_PcodeCounts[pcd & 1023]++; Vita_PcodeTotal++; } }
 void Vita_PerfAcsFunc(int func, unsigned long long us);
 
 // Call right before the buffer swap (samples vitaGL's vertex pool use).

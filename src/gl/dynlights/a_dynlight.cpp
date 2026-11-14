@@ -367,6 +367,15 @@ void ADynamicLight::UpdateLocation()
 		{
 			intensity = float(m_intensity[1]);
 		}
+		else if (lighttype == PulseLight || lighttype == ColorFlickerLight || lighttype == RandomColorFlickerLight)
+		{
+			// Same for lights whose size changes every tic: link them with
+			// their largest size once instead of relinking them every tic
+			// (drawing uses the current size via GetRadius()). HaloDoom's
+			// title map has 70 pulsing lights; relinking them cost more than
+			// the rest of the game logic.
+			intensity = float(MAX(m_intensity[0], m_intensity[1]));
+		}
 		else
 		{
 			intensity = m_currentIntensity;

@@ -83,6 +83,15 @@ struct VitaSample
 	int Channels;			// 1 or 2
 	int Rate;
 	int LoopStart, LoopEnd;	// frames; LoopEnd exclusive
+
+	// Compressed sounds are decoded on a background thread (decoding a
+	// long MP3 or Ogg on the game thread stalled play for a second or
+	// more the first time it was heard). Until Ready, voices using the
+	// sample stay silent at position 0.
+	std::atomic<int> Ready;
+	BYTE *Src;				// compressed data while pending
+	int SrcLen;
+	bool Unloaded;			// UnloadSound called while it was being decoded
 };
 
 static VitaSample *MakeSample(short *data, unsigned frames, int channels, int rate)
@@ -94,7 +103,16 @@ static VitaSample *MakeSample(short *data, unsigned frames, int channels, int ra
 	s->Rate = rate;
 	s->LoopStart = 0;
 	s->LoopEnd = frames;
+	s->Src = NULL;
+	s->SrcLen = 0;
+	s->Unloaded = false;
+	s->Ready.store(1);
 	return s;
+}
+
+static inline bool SampleReady(VitaSample *s)
+{
+	return s->Ready.load(std::memory_order_acquire) != 0;
 }
 
 //==========================================================================
@@ -110,7 +128,8 @@ struct VitaVoice
 	bool Stopped;			// stopped by the game; silent until released
 	VitaSample *Sample;
 	uint64_t Pos;			// 32.32 frame position
-	uint64_t Step;			// 32.32 frames per output frame
+	uint64_t Step;			// 32.32 frames per output frame (0: sample still decoding)
+	int Pitch;
 	bool Loop;
 	bool Pausable;			// not SNDF_NOPAUSE
 	bool Is3D;
@@ -729,6 +748,15 @@ void VitaSoundRenderer::Mix(short *out, int frames)
 				continue;
 
 			VitaSample *s = v->Sample;
+			if (!SampleReady(s))
+				continue;
+			if (v->Step == 0)
+			{
+				float freq = PitchFreq(float(s->Rate), v->Pitch);
+				if (freq <= 0) freq = float(s->Rate);
+				v->Step = uint64_t(double(freq) / OUT_RATE * 4294967296.0);
+				if (v->Step == 0) v->Step = 1;
+			}
 			const short *data = s->Data;
 			uint64_t pos = v->Pos;
 			uint64_t end = uint64_t(v->Loop ? s->LoopEnd : s->Frames) << 32;
@@ -927,12 +955,9 @@ SoundHandle VitaSoundRenderer::LoadSoundRaw(BYTE *sfxdata, int length, int frequ
 	return retval;
 }
 
-SoundHandle VitaSoundRenderer::LoadSound(BYTE *sfxdata, int length)
+// Decodes a compressed (or WAV) sound to 16-bit PCM, 1 or 2 channels.
+static bool DecodeSound(BYTE *sfxdata, int length, short *&pcm_out, unsigned &frames_out, int &channels_out, int &rate_out)
 {
-	SoundHandle retval = { NULL };
-	if (length <= 0)
-		return retval;
-
 	short *pcm = NULL;
 	unsigned frames = 0;
 	int channels = 0, rate = 0;
@@ -992,8 +1017,7 @@ SoundHandle VitaSoundRenderer::LoadSound(BYTE *sfxdata, int length)
 	if (pcm == NULL || frames == 0 || channels < 1 || rate <= 0)
 	{
 		delete[] pcm;
-		DPrintf("Unsupported sound format\n");
-		return retval;
+		return false;
 	}
 	if (channels > 2)
 	{	// Keep the first two channels.
@@ -1006,6 +1030,125 @@ SoundHandle VitaSoundRenderer::LoadSound(BYTE *sfxdata, int length)
 		delete[] pcm;
 		pcm = st;
 		channels = 2;
+	}
+	pcm_out = pcm;
+	frames_out = frames;
+	channels_out = channels;
+	rate_out = rate;
+	return true;
+}
+
+//==========================================================================
+//
+// Background decoding
+//
+//==========================================================================
+
+static SDL_mutex *DecodeLock;
+static SDL_sem *DecodeSem;
+static SDL_Thread *DecodeThread;
+static TArray<VitaSample *> DecodeQueue;
+static VitaSample *DecodeCurrent;
+
+static int DecodeThreadFunc(void *)
+{
+	for (;;)
+	{
+		SDL_SemWait(DecodeSem);
+		SDL_mutexP(DecodeLock);
+		VitaSample *s = NULL;
+		if (DecodeQueue.Size() > 0)
+		{
+			s = DecodeQueue[0];
+			DecodeQueue.Delete(0);
+		}
+		DecodeCurrent = s;
+		SDL_mutexV(DecodeLock);
+		if (s == NULL)
+			continue;
+
+		short *pcm = NULL;
+		unsigned frames = 0;
+		int channels = 0, rate = 0;
+		bool ok = DecodeSound(s->Src, s->SrcLen, pcm, frames, channels, rate);
+
+		SDL_mutexP(DecodeLock);
+		DecodeCurrent = NULL;
+		delete[] s->Src;
+		s->Src = NULL;
+		if (s->Unloaded)
+		{
+			delete[] pcm;
+			delete s;
+		}
+		else if (ok)
+		{
+			s->Data = pcm;
+			s->Frames = frames;
+			s->Channels = channels;
+			s->Rate = rate;
+			s->LoopStart = 0;
+			s->LoopEnd = frames;
+			s->Ready.store(1, std::memory_order_release);
+		}
+		else
+		{
+			// Undecodable: a short silent sample, so voices can finish.
+			s->Data = new short[1];
+			s->Data[0] = 0;
+			s->Frames = 1;
+			s->Channels = 1;
+			s->Rate = 11025;
+			s->LoopStart = 0;
+			s->LoopEnd = 1;
+			s->Ready.store(1, std::memory_order_release);
+		}
+		SDL_mutexV(DecodeLock);
+	}
+	return 0;
+}
+
+CVAR(Bool, snd_vita_asyncdecode, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+SoundHandle VitaSoundRenderer::LoadSound(BYTE *sfxdata, int length)
+{
+	SoundHandle retval = { NULL };
+	if (length <= 0)
+		return retval;
+
+	bool compressed = length >= 4 && (memcmp(sfxdata, "OggS", 4) == 0 || memcmp(sfxdata, "fLaC", 4) == 0 ||
+		memcmp(sfxdata, "ID3", 3) == 0 || (sfxdata[0] == 0xFF && (sfxdata[1] & 0xE0) == 0xE0));
+	if (compressed && length >= 16384 && snd_vita_asyncdecode)
+	{
+		if (DecodeThread == NULL)
+		{
+			DecodeLock = SDL_CreateMutex();
+			DecodeSem = SDL_CreateSemaphore(0);
+			DecodeThread = SDL_CreateThread(DecodeThreadFunc, NULL);
+		}
+		if (DecodeThread != NULL)
+		{
+			VitaSample *s = MakeSample(NULL, 0, 1, 11025);
+			s->Ready.store(0);
+			s->Src = new BYTE[length];
+			memcpy(s->Src, sfxdata, length);
+			s->SrcLen = length;
+			SDL_mutexP(DecodeLock);
+			DecodeQueue.Push(s);
+			SDL_mutexV(DecodeLock);
+			SDL_SemPost(DecodeSem);
+			retval.data = s;
+			return retval;
+		}
+	}
+
+	short *pcm = NULL;
+	unsigned frames = 0;
+	int channels = 0, rate = 0;
+	if (!DecodeSound(sfxdata, length, pcm, frames, channels, rate))
+	{
+		DPrintf("Unsupported sound format\n");
+		return retval;
 	}
 	retval.data = MakeSample(pcm, frames, channels, rate);
 	return retval;
@@ -1035,6 +1178,26 @@ void VitaSoundRenderer::UnloadSound(SoundHandle sfx)
 		ended[i]->SysChannel = NULL;
 		S_ChannelEnded(ended[i]);
 	}
+	if (DecodeLock != NULL)
+	{
+		SDL_mutexP(DecodeLock);
+		if (!SampleReady(s))
+		{
+			if (DecodeCurrent == s)
+			{	// the decoder thread deletes it when it's done
+				s->Unloaded = true;
+				SDL_mutexV(DecodeLock);
+				return;
+			}
+			for (unsigned i = 0; i < DecodeQueue.Size(); ++i)
+			{
+				if (DecodeQueue[i] == s) { DecodeQueue.Delete(i); break; }
+			}
+			delete[] s->Src;
+			s->Src = NULL;
+		}
+		SDL_mutexV(DecodeLock);
+	}
 	delete[] s->Data;
 	delete s;
 }
@@ -1042,13 +1205,13 @@ void VitaSoundRenderer::UnloadSound(SoundHandle sfx)
 unsigned int VitaSoundRenderer::GetMSLength(SoundHandle sfx)
 {
 	VitaSample *s = (VitaSample *)sfx.data;
-	return s ? unsigned(uint64_t(s->Frames) * 1000 / s->Rate) : 0;
+	return s && SampleReady(s) ? unsigned(uint64_t(s->Frames) * 1000 / s->Rate) : 0;
 }
 
 unsigned int VitaSoundRenderer::GetSampleLength(SoundHandle sfx)
 {
 	VitaSample *s = (VitaSample *)sfx.data;
-	return s ? s->Frames : 0;
+	return s && SampleReady(s) ? s->Frames : 0;
 }
 
 //==========================================================================
@@ -1189,6 +1352,8 @@ bool VitaSoundRenderer::HandleChannelDelay(VitaVoice *v, FISoundChannel *reuse_c
 	// The sound is being restarted: seek to where it would be now.
 	uint64_t now = DSPClock.load();
 	VitaSample *s = v->Sample;
+	if (!SampleReady(s))
+		return true;
 	uint64_t seek = 0;
 	if (flags & SNDF_ABSTIME)
 	{
@@ -1228,7 +1393,8 @@ FISoundChannel *VitaSoundRenderer::Start(VitaSample *s, float vol, int pitch, in
 	VitaVoice nv;
 	memset(&nv, 0, sizeof(nv));
 	nv.Sample = s;
-	nv.Step = uint64_t(double(freq) / OUT_RATE * 4294967296.0);
+	nv.Pitch = pitch;
+	nv.Step = SampleReady(s) ? uint64_t(double(freq) / OUT_RATE * 4294967296.0) : 0;
 	nv.Loop = !!(flags & SNDF_LOOP);
 	nv.Pausable = !(flags & SNDF_NOPAUSE);
 	nv.Volume = vol;

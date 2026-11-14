@@ -16,6 +16,10 @@ CUSTOM_CVAR(Bool, vita_perfdetail, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 bool Vita_PerfDetail;
 
+// Without vita_perfdetail, every 5th 3-second window is profiled in detail
+// anyway, so play-test logs always say where the time goes.
+CVAR(Bool, vita_perfburst, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
 unsigned long long Vita_PerfAcc[VPERF_COUNT];
 
 #ifndef NO_GL
@@ -25,15 +29,17 @@ static unsigned LegacyPoolPeak;
 #endif
 int Vita_PerfCalls[VPERF_COUNT];
 
-struct FPerfClass { const void *Cls; const char *Name; unsigned long long Us; int Calls; };
+struct FPerfClass { const void *Cls; const char *Name; unsigned long long Us; int Calls; unsigned Ops; };
+unsigned Vita_PcodeTotal;
 static FPerfClass PerfClasses[512];
 static int NumPerfClasses;
+unsigned Vita_PerfOps;
 
 void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us)
 {
 	for (int i = 0; i < NumPerfClasses; i++)
 	{
-		if (PerfClasses[i].Cls == cls) { PerfClasses[i].Us += us; PerfClasses[i].Calls++; return; }
+		if (PerfClasses[i].Cls == cls) { PerfClasses[i].Us += us; PerfClasses[i].Calls++; PerfClasses[i].Ops += Vita_PerfOps; return; }
 	}
 	if (NumPerfClasses < 512)
 	{
@@ -41,6 +47,7 @@ void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us)
 		PerfClasses[NumPerfClasses].Name = name;
 		PerfClasses[NumPerfClasses].Us = us;
 		PerfClasses[NumPerfClasses].Calls = 1;
+		PerfClasses[NumPerfClasses].Ops = Vita_PerfOps;
 		NumPerfClasses++;
 	}
 }
@@ -124,8 +131,13 @@ void Vita_PerfFrame()
 			for (int i = 0; i < NumPerfClasses; i++)
 				if (PerfClasses[i].Us > 0 && (best < 0 || PerfClasses[i].Us > PerfClasses[best].Us)) best = i;
 			if (best < 0 || len >= sizeof(line) - 64) break;
-			len += snprintf(line + len, sizeof(line) - len, " %s %.1f (x%d)", PerfClasses[best].Name,
-				PerfClasses[best].Us * f / 1000.0, (int)(PerfClasses[best].Calls * f + 0.5));
+			if (PerfClasses[best].Ops > 0)
+				len += snprintf(line + len, sizeof(line) - len, " %s %.1f (x%d, %.0f op)", PerfClasses[best].Name,
+					PerfClasses[best].Us * f / 1000.0, (int)(PerfClasses[best].Calls * f + 0.5), PerfClasses[best].Ops * f);
+			else
+				len += snprintf(line + len, sizeof(line) - len, " %s %.1f (x%d)", PerfClasses[best].Name,
+					PerfClasses[best].Us * f / 1000.0, (int)(PerfClasses[best].Calls * f + 0.5));
+			PerfClasses[best].Ops = 0;
 			PerfClasses[best].Us = 0;
 		}
 		snprintf(line + len, sizeof(line) - len, "\n");
@@ -162,6 +174,12 @@ void Vita_PerfFrame()
 	for (int i = 0; i < VPERF_COUNT; i++) { Vita_PerfAcc[i] = 0; Vita_PerfCalls[i] = 0; }
 	frames = 0;
 	worst = 0;
+	{
+		static int window = 0;
+		window++;
+		if (!vita_perfdetail)
+			Vita_PerfDetail = vita_perfburst && (window % 5) == 4;
+	}
 #ifndef NO_GL
 	LegacyPoolPeak = 0;
 #endif

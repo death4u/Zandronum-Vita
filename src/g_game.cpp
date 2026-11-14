@@ -1465,8 +1465,25 @@ bool G_Responder (event_t *ev)
 extern FTexture *Page;
 
 
+#ifdef __vita__
+// [Vita] Test helper: adds this many bots 3 seconds into a level (the
+// command line's "+addbot" runs before the level exists).
+CVAR(Int, vita_autobots, 0, 0)
+static void Vita_AutoBots()
+{
+	static int tics = 0;
+	if (vita_autobots <= 0 || gamestate != GS_LEVEL) { tics = 0; return; }
+	if (++tics < 3 * TICRATE) return;
+	for (int i = 0; i < vita_autobots; i++) AddCommandString((char *)"addbot");
+	vita_autobots = 0;
+}
+#endif
+
 void G_Ticker ()
 {
+#ifdef __vita__
+	Vita_AutoBots();
+#endif
 	int i;
 	gamestate_t	oldgamestate;
 	int			buf;

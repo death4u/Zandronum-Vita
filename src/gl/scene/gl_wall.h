@@ -272,6 +272,9 @@ public:
 
 	bool SetupSubsectorLights(bool lightsapplied, subsector_t * sub);
 	void DrawSubsector(subsector_t * sub);
+#ifdef __vita__
+	void AddSubsectorTriangles(subsector_t * sub, TArray<float> &xyz, TArray<float> &uv);
+#endif
 	void DrawSubsectorLights(subsector_t * sub, int pass);
 	void DrawSubsectors(int pass, bool istrans);
 

@@ -1232,3 +1232,22 @@ CCMD ( menu_rconlogin )
 		M_SetLastRconAccessRequest( gametic );
 	}
 }
+
+#ifdef __vita__
+// [Vita] Test helper: start a skirmish on a map by name (vita_skirmish multi01).
+CCMD ( vita_skirmish )
+{
+	if ( argv.argc() < 2 )
+		return;
+	for ( unsigned int i = 0; i < wadlevelinfos.Size(); ++i )
+	{
+		if ( stricmp( wadlevelinfos[i].mapname, argv[1] ) == 0 )
+		{
+			menu_skirmishlevel = i;
+			M_StartSkirmishGame();
+			return;
+		}
+	}
+	Printf( "vita_skirmish: no map %s\n", argv[1] );
+}
+#endif

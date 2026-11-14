@@ -253,6 +253,30 @@ void GLFlat::DrawSubsector(subsector_t * sub)
 	flatprimitives++;
 }
 
+#ifdef __vita__
+// Appends a subsector's polygon as a triangle list.
+void GLFlat::AddSubsectorTriangles(subsector_t * sub, TArray<float> &xyz, TArray<float> &uv)
+{
+	unsigned n = sub->numlines;
+	if (n < 3) return;
+	vertex_t *v0 = sub->firstline[0].v1;
+	float z0 = plane.plane.ZatPoint(v0->fx, v0->fy) + dz;
+	for (unsigned k = 1; k + 1 < n; k++)
+	{
+		vertex_t *va = sub->firstline[k].v1, *vb = sub->firstline[k+1].v1;
+		vertex_t *vs[3] = { v0, va, vb };
+		for (int j = 0; j < 3; j++)
+		{
+			vertex_t *vt = vs[j];
+			float zc = j == 0 ? z0 : plane.plane.ZatPoint(vt->fx, vt->fy) + dz;
+			xyz.Push(vt->fx); xyz.Push(zc); xyz.Push(vt->fy);
+			uv.Push(vt->fx/64.f); uv.Push(-vt->fy/64.f);
+		}
+	}
+	flatvertices += n;
+}
+#endif
+
 //==========================================================================
 //
 //
@@ -290,6 +314,43 @@ void GLFlat::DrawSubsectors(int pass, bool istrans)
 				index += sub->numlines;
 			}
 		}
+#ifdef __vita__
+		else if (pass != GLPASS_ALL)
+		{
+			// [Vita] One draw call per flat instead of one glBegin/glEnd per
+			// subsector: every immediate-mode batch costs vitaGL a lot of CPU.
+			static TArray<float> xyz, uv;
+			xyz.Clear();
+			uv.Clear();
+			for (int i=0; i<sector->subsectorcount; i++)
+			{
+				subsector_t * sub = sector->subsectors[i];
+				if (gl_drawinfo->ss_renderflags[sub-subsectors]&renderflags || istrans)
+					AddSubsectorTriangles(sub, xyz, uv);
+			}
+			if (!(renderflags&SSRF_RENDER3DPLANES))
+			{
+				gl_subsectorrendernode * node = (renderflags&SSRF_RENDERFLOOR)?
+					gl_drawinfo->GetOtherFloorPlanes(sector->sectornum) :
+					gl_drawinfo->GetOtherCeilingPlanes(sector->sectornum);
+				for (; node; node = node->next)
+					AddSubsectorTriangles(node->sub, xyz, uv);
+			}
+			if (xyz.Size() > 0)
+			{
+				glVertexPointer(3, GL_FLOAT, 0, &xyz[0]);
+				glTexCoordPointer(2, GL_FLOAT, 0, &uv[0]);
+				glEnableClientState(GL_VERTEX_ARRAY);
+				glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+				glDrawArrays(GL_TRIANGLES, 0, xyz.Size() / 3);
+				glDisableClientState(GL_VERTEX_ARRAY);
+				glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+				flatprimitives++;
+			}
+			gl_RenderState.EnableLight(false);
+			return;
+		}
+#endif
 		else
 		{
 			//glColor3f( .5f,1.f,.5f); // these are for testing the VBO stuff.

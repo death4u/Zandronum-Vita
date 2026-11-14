@@ -39,6 +39,9 @@
 
 #include "templates.h"
 #include "vita/vita_perf.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
 #include "doomdef.h"
 #include "p_local.h"
 #include "p_spec.h"
@@ -9134,8 +9137,11 @@ int DLevelScript::RunScript ()
 		name = names.CheckKey(script);
 	}
 	unsigned long long t0 = Vita_PerfNow();
+	unsigned ops0 = Vita_PcodeTotal;
 	int result = RunScriptInner();
+	Vita_PerfOps = Vita_PcodeTotal - ops0;
 	Vita_PerfThinker((const void *)(intptr_t)(0x7F000000 ^ script), *name, Vita_PerfNow() - t0);
+	Vita_PerfOps = 0;
 	return result;
 }
 
@@ -13117,6 +13123,19 @@ DLevelScript::DLevelScript (AActor *who, line_t *where, int num, const ScriptPtr
 		new DACSThinker;
 
 	script = num;
+#ifdef __vita__
+	if (Vita_PerfDetail)
+	{
+		// Who starts which script (first time per script/activator class).
+		static TMap<QWORD, bool> seen;
+		QWORD key = ((QWORD)(DWORD)num << 32) ^ (QWORD)(size_t)(who ? who->GetClass() : NULL);
+		if (seen.CountUsed() < 300 && seen.CheckKey(key) == NULL)
+		{
+			seen[key] = true;
+			Vita_BootLog("ACS start: %s type %d, activator %s", ScriptPresentation(num).GetChars(), code->Type, who ? who->GetClass()->TypeName.GetChars() : "-");
+		}
+	}
+#endif
 	assert(code->VarCount >= code->ArgCount);
 	numlocalvars = code->VarCount;
 	localvars = new SDWORD[code->VarCount];
