@@ -52,6 +52,10 @@
 #include <stdlib.h>
 
 #include "astar.h"
+#ifdef __vita__
+#include <malloc.h>
+#include "vita/vita_system.h"
+#endif
 #include "doomstat.h"
 #include "gi.h"
 #include "m_random.h"
@@ -147,12 +151,27 @@ void ASTAR_BuildNodes( void )
 	// is the maximum number of nodes per search: length * width.
 	// [BB] This is certainly more memory than we want to assign for the bots...
 #ifdef __vita__
-	// [Vita] Big maps need far more than the Vita has (HaloDoom's MULTI03:
-	// 129 MB), which ended the game with an out-of-memory error.
-	if ( (double)sizeof ( ASTARNODE_t ) * g_lNodeListSize > 24.0 * 1024 * 1024 )
-#else
-	if ( sizeof ( ASTARNODE_t ) * g_lNodeListSize > INT_MAX )
+	// [Vita] Bot path nodes for big maps need more memory than the Vita has
+	// (HaloDoom's MULTI03: 129 MB plus per-path tables), which ended the game
+	// with an out-of-memory error. Use them only if they leave the heap
+	// enough room; otherwise bots go without A* paths on that map.
+	{
+		extern int _newlib_heap_size_user;
+		double need = (double)g_lNodeListSize * ( sizeof ( ASTARNODE_t ) + 2.0 * MAX_PATHS * sizeof ( void * ));
+		double room = (double)_newlib_heap_size_user - (double)mallinfo().uordblks - 48.0 * 1024 * 1024;
+		Vita_BootLog( "bot path nodes: %.1f MB needed, %.1f MB available", need / 1048576, room / 1048576 );
+		if ( need > room )
+		{
+			Printf ( "Map too big for bot path nodes on the Vita; bots won't use A* paths here.\n");
+			g_lNodeListSize = 0;
+			g_lNumHorizontalNodes = 0;
+			g_lNumVerticalNodes = 0;
+			g_bIsInitialized = true;
+			return;
+		}
+	}
 #endif
+	if ( sizeof ( ASTARNODE_t ) * g_lNodeListSize > INT_MAX )
 	{
 		Printf ( "Unable to allocate bot nodes. Disabling bots on this map.\n");
 		g_bIsInitialized = true;
@@ -259,6 +278,15 @@ ASTARRETURNSTRUCT_t ASTAR_Path( ULONG ulPathIdx, POS_t GoalPoint, float fMaxSear
 	StartPoint.y = pPath->pActor->y;
 
 	pPath->pGoalNode = astar_GetNodeFromPoint( GoalPoint );
+	if ( pPath->pGoalNode == NULL && g_aMasterNodeList == NULL )
+	{
+		// [Vita] No path nodes on this map (see ASTAR_BuildNodes).
+		ReturnVal.bIsGoal = false;
+		ReturnVal.pNode = NULL;
+		ReturnVal.ulFlags = 0;
+		ReturnVal.lTotalCost = 0;
+		return ( ReturnVal );
+	}
 	if ( pPath->pGoalNode == NULL )
 	{
 		Printf( "WARNING! Cannot path to location: (%d, %d)\n", GoalPoint.x / FRACUNIT, GoalPoint.y / FRACUNIT );
@@ -580,6 +608,15 @@ void ASTAR_ClearPath( LONG lPathIdx )
 {
 	ULONG	ulIdx;
 
+	// [Vita] No path nodes on this map (see ASTAR_BuildNodes).
+	if ( g_aMasterNodeList == NULL || g_aPaths[lPathIdx].paVisualizations == NULL )
+	{
+		g_aPaths[lPathIdx].bInGoalNode = false;
+		g_aPaths[lPathIdx].lStackPos = 0;
+		g_aPaths[lPathIdx].pActor = NULL;
+		return;
+	}
+
 	g_ulPriorityQueuePosition[lPathIdx] = 0;
 
 	g_aPaths[lPathIdx].bInGoalNode = false;
@@ -619,6 +656,13 @@ void ASTAR_SelectRandomMapLocation( POS_t *pPos, fixed_t X, fixed_t Y )
 	LONG	lYIdx;
 	LONG	lXNode;
 	LONG	lYNode;
+
+	if ( g_lNumHorizontalNodes <= 0 || g_lNumVerticalNodes <= 0 )
+	{
+		pPos->x = X;
+		pPos->y = Y;
+		return;
+	}
 
 	lXNode = ( X >> ASTAR_NODE_SHIFT ) - ( g_lMapXMin >> ASTAR_NODE_SHIFT );
 	lYNode = ( Y >> ASTAR_NODE_SHIFT ) - ( g_lMapYMin >> ASTAR_NODE_SHIFT );
