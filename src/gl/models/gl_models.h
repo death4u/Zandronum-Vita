@@ -35,6 +35,10 @@ public:
 	virtual void RenderFrameInterpolated(FTexture * skin, int frame, int frame2, double inter, int cm, int translation=0) = 0;
 	virtual void MakeGLData() {}
 	virtual void CleanGLData() {}
+#ifdef __vita__
+	// Bytes this model keeps in memory, or -1 if unknown (for the model budget).
+	virtual int MemSize() { return -1; }
+#endif
 
 
 
@@ -164,6 +168,9 @@ public:
 
 class FMD3Model : public FModel
 {
+#ifdef __vita__
+public:	// the loader's helpers in gl_models_md3.cpp use the surface type
+#endif
 	struct MD3Tag
 	{
 		// Currently I have no use for this
@@ -199,11 +206,19 @@ class FMD3Model : public FModel
 		MD3TexCoord * texcoords;
 		MD3Vertex * vertices;
 		unsigned short * indices16;	// [Vita] triangle list for glDrawElements
+		// [Vita] Vertices packed to 11:11:10 bits per frame within the frame's
+		// bounding box (4 bytes instead of 6): HaloDoom's third-person Spartans
+		// are 500-frame models of ~15 MB each, and only a few fit in memory.
+		unsigned * packed;
+		float * pmin;		// per frame: x, y, z of the bounding box minimum
+		float * pscale;		// per frame: x, y, z step per quantization level
 
 		MD3Surface()
 		{
 			tris=NULL;
 			skins=NULL;
+			packed=NULL;
+			pmin=pscale=NULL;
 			vertices=NULL;
 			texcoords=NULL;
 			indices16=NULL;
@@ -212,6 +227,9 @@ class FMD3Model : public FModel
 		~MD3Surface()
 		{
 			if (indices16) delete [] indices16;
+			if (packed) delete [] packed;
+			if (pmin) delete [] pmin;
+			if (pscale) delete [] pscale;
 			if (tris) delete [] tris;
 			if (vertices) delete [] vertices;
 			if (texcoords) delete [] texcoords;
@@ -242,7 +260,12 @@ public:
 
 	virtual bool Load(const char * fn, int lumpnum, const char * buffer, int length);
 #ifdef __vita__
-	bool LoadStream(const char * fn, class FileReaderBase *stream, int length);
+	bool LoadStream(const char * fn, class FileReaderBase *stream, int length, bool deferSkins = false);
+	void ResolveDeferredSkins();
+	TArray<FString> DeferredSkins;
+	FString DeferredPath;
+	int MemSize();
+	float VitaCheckPacking(const char *buffer);	// max error vs. the file (test)
 #endif
 	virtual int FindFrame(const char * name);
 	virtual void RenderFrame(FTexture * skin, int frame, int cm, int translation=0);

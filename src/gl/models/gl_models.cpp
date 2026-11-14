@@ -41,6 +41,12 @@
 #include "vita/vita_perf.h"
 #include "w_wad.h"
 #include "i_system.h"
+#ifdef __vita__
+#include <malloc.h>
+#include <atomic>
+#include <SDL.h>
+#include <SDL_thread.h>
+#endif
 #include "cmdlib.h"
 #include "sc_man.h"
 #include "m_crc32.h"
@@ -208,18 +214,25 @@ public:
 	bool mFailed;
 	unsigned mLastUse;	// I_MSTime() of the last draw
 
-	FLazyModel(const char *path, int lump) : mPath(path), mLump(lump), mReal(NULL), mFailed(false), mLastUse(0)
+	// Background loading (MD3s): 0 idle, 1 queued/loading, 2 loaded (mPending),
+	// 3 failed, 4 not streamable (load it on the game thread).
+	std::atomic<int> mAsync;
+	FMD3Model *mPending;
+
+	FLazyModel(const char *path, int lump) : mPath(path), mLump(lump), mReal(NULL), mFailed(false), mLastUse(0), mAsync(0), mPending(NULL)
 	{
-		mSize = Wads.LumpLength(lump);
+		// Until it's loaded, guess what it will cost (packed MD3s keep about
+		// half their file size).
+		mSize = Wads.LumpLength(lump) / 2;
 	}
-	~FLazyModel() { Unload(); }
+	~FLazyModel();
 
 	bool Load(const char *, int, const char *, int) { return true; }
 
 	int FindFrame(const char *name)
 	{
 		// Only "Frame" (by name) in MODELDEF needs this; it loads the model once.
-		FModel *m = Get();
+		FModel *m = Get(true);
 		int f = m ? m->FindFrame(name) : -1;
 		return f;
 	}
@@ -252,7 +265,7 @@ public:
 		}
 	}
 
-	FModel *Get();
+	FModel *Get(bool sync = false);
 
 	static int LoadedBytes;
 	static TArray<FLazyModel *> All;
@@ -264,11 +277,148 @@ TArray<FLazyModel *> FLazyModel::All;
 
 static FModel *LoadModelLump(const char *path, int lump, const char *fullname);
 
-FModel *FLazyModel::Get()
+//===========================================================================
+//
+// Background model loader. Loading a 500-frame MD3 took 0.1-2.7 s on the
+// Vita and froze the game while players switched weapons; now the model is
+// parsed on another thread and appears when it's ready (it isn't drawn
+// until then).
+//
+//===========================================================================
+
+CVAR(Bool, gl_vita_asyncmodels, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+static SDL_mutex *ModelQueueLock;
+static SDL_sem *ModelQueueSem;
+static SDL_Thread *ModelThread;
+static TArray<FLazyModel *> ModelQueue;
+static FLazyModel *ModelLoading;
+
+static int ModelThreadFunc(void *)
+{
+	for (;;)
+	{
+		SDL_SemWait(ModelQueueSem);
+		SDL_mutexP(ModelQueueLock);
+		FLazyModel *m = NULL;
+		if (ModelQueue.Size() > 0) { m = ModelQueue[0]; ModelQueue.Delete(0); }
+		ModelLoading = m;
+		SDL_mutexV(ModelQueueLock);
+		if (m == NULL) continue;
+
+		int result = 4;
+		try
+		{
+		FileReaderBase *stream = Wads.OpenLumpStream(m->mLump);
+		if (stream != NULL)
+		{
+			char magic[4];
+			bool md3 = stream->Read(magic, 4) == 4 && !memcmp(magic, "IDP3", 4);
+			delete stream;
+			if (md3 && (stream = Wads.OpenLumpStream(m->mLump)) != NULL)
+			{
+				FMD3Model *md = new FMD3Model;
+				if (md->LoadStream(m->mPath.GetChars(), stream, Wads.LumpLength(m->mLump), true))
+				{
+					m->mPending = md;
+					result = 2;
+				}
+				else
+				{
+					delete md;	// sections out of order: the game thread loads it whole
+				}
+				delete stream;
+			}
+		}
+		}
+		catch (...)
+		{
+			// e.g. a corrupt zip entry: let the game thread load (and report) it
+			if (m->mPending != NULL) { delete m->mPending; m->mPending = NULL; }
+			result = 4;
+		}
+		SDL_mutexP(ModelQueueLock);
+		ModelLoading = NULL;
+		m->mAsync.store(result, std::memory_order_release);
+		SDL_mutexV(ModelQueueLock);
+	}
+	return 0;
+}
+
+static bool QueueModelLoad(FLazyModel *m)
+{
+	if (ModelThread == NULL)
+	{
+		ModelQueueLock = SDL_CreateMutex();
+		ModelQueueSem = SDL_CreateSemaphore(0);
+		ModelThread = SDL_CreateThread(ModelThreadFunc, NULL);
+		if (ModelThread == NULL) return false;
+	}
+	// Opening the stream once here resolves the lump's position in the zip,
+	// which reads the archive through its shared file handle: that must not
+	// happen on the loader thread.
+	FileReaderBase *probe = Wads.OpenLumpStream(m->mLump);
+	if (probe == NULL) return false;
+	delete probe;
+	m->mAsync.store(1);
+	SDL_mutexP(ModelQueueLock);
+	ModelQueue.Push(m);
+	SDL_mutexV(ModelQueueLock);
+	SDL_SemPost(ModelQueueSem);
+	return true;
+}
+
+FLazyModel::~FLazyModel()
+{
+	// Don't leave the loader with a dangling pointer.
+	if (ModelQueueLock != NULL)
+	{
+		for (;;)
+		{
+			SDL_mutexP(ModelQueueLock);
+			for (unsigned i = 0; i < ModelQueue.Size(); i++)
+				if (ModelQueue[i] == this) { ModelQueue.Delete(i); break; }
+			bool busy = ModelLoading == this;
+			SDL_mutexV(ModelQueueLock);
+			if (!busy) break;
+			SDL_Delay(1);
+		}
+	}
+	if (mPending != NULL) { delete mPending; mPending = NULL; }
+	Unload();
+}
+
+FModel *FLazyModel::Get(bool sync)
 {
 	mLastUse = I_MSTime();
 	if (mReal != NULL || mFailed) return mReal;
+
+	int st = mAsync.load(std::memory_order_acquire);
+	if (st == 1)
+	{
+		if (!sync) return NULL;
+		while ((st = mAsync.load(std::memory_order_acquire)) == 1) SDL_Delay(1);
+	}
+	if (st == 2)
+	{
+		mAsync.store(0);
+		Vita_PerfCalls[VPERF_MODELLOAD]++;	// counted (with 0 ms) in the perf line
+		mPending->ResolveDeferredSkins();
+		mReal = mPending;
+		mPending = NULL;
+		int real = mReal->MemSize();
+		if (real > 0) mSize = real;
+		Trim(this);
+		LoadedBytes += mSize;
+		return mReal;
+	}
+	if (st == 3) { mAsync.store(0); mFailed = true; return NULL; }
+	bool queueable = st == 0;
+	mAsync.store(0);
+
 	Trim(this);
+	if (!sync && queueable && gl_vita_asyncmodels && QueueModelLoad(this))
+		return NULL;
 	{
 		VITA_PERF(VPERF_MODELLOAD);
 		mReal = LoadModelLump(mPath.GetChars(), mLump, mFileName.GetChars());
@@ -278,6 +428,10 @@ FModel *FLazyModel::Get()
 		mFailed = true;
 		return NULL;
 	}
+	// Account for what the model really keeps (packed MD3s are much smaller
+	// than their files), so the budget holds as many models as it can.
+	int real = mReal->MemSize();
+	if (real > 0) mSize = real;
 	LoadedBytes += mSize;
 	return mReal;
 }
@@ -287,8 +441,15 @@ void FLazyModel::Trim(FLazyModel *keep)
 	const int budget = MAX(8, (int)gl_vita_modelbudget) << 20;
 	// Free the least recently drawn models until the new one fits. Models
 	// drawn in the last half second stay, so a busy scene can't thrash.
-	while (LoadedBytes + keep->mSize > budget)
+	// Also keep the heap from running low: other allocations (textures,
+	// level data, scripts) need room too.
+	extern int _newlib_heap_size_user;
+	const int heapReserve = 32 << 20;
+	for (;;)
 	{
+		bool overBudget = LoadedBytes + keep->mSize > budget;
+		bool heapLow = (int)mallinfo().uordblks + keep->mSize > _newlib_heap_size_user - heapReserve;
+		if (!overBudget && !(heapLow && LoadedBytes > 0)) break;
 		FLazyModel *oldest = NULL;
 		for (unsigned i = 0; i < All.Size(); i++)
 		{
@@ -921,7 +1082,7 @@ void gl_PrecacheModels(BYTE *hitlist)
 	{
 		FLazyModel *lazy = static_cast<FLazyModel *>(pair->Key);
 		if (FLazyModel::LoadedBytes + lazy->mSize > budget * 3 / 4) continue;
-		if (lazy->Get() != NULL) loaded++;
+		if (lazy->Get(true) != NULL) loaded++;
 	}
 	Printf("Precached %d models (%d MB)\n", loaded, FLazyModel::LoadedBytes >> 20);
 #endif
@@ -1283,6 +1444,12 @@ CCMD(vita_testmodel)
 	struct mallinfo b = mallinfo();
 	Printf("testmodel %s: %s in %u ms, heap +%d KB, peak arena %u KB\n", argv[1], m ? "ok" : "FAILED", I_MSTime() - t, (int)(b.uordblks - a.uordblks) / 1024, (unsigned)b.arena / 1024);
 	if (m && argv.argc() > 2) { Printf("frames %d\n", m->FindFrame(argv[2])); }
+	if (m != NULL)
+	{
+		FMemLump data = Wads.ReadLump(lump);
+		if (!memcmp(data.GetMem(), "IDP3", 4))
+			Printf("testmodel: %d KB in memory, max packing error %.2f/64 unit\n", m->MemSize() >> 10, static_cast<FMD3Model *>(m)->VitaCheckPacking((const char *)data.GetMem()));
+	}
 	delete m;
 }
 #endif

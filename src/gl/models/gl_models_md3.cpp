@@ -52,6 +52,50 @@
 
 
 
+#ifdef __vita__
+// [Vita] Packs one frame of a surface (x, y, z int16 triplets) to 11:11:10 bits.
+static void MD3PackFrame(FMD3Model::MD3Surface *s, int frame, const short *xyz)
+{
+	int nv = s->numVertices;
+	float mn[3] = { 32767, 32767, 32767 }, mx[3] = { -32768, -32768, -32768 };
+	for (int i = 0; i < nv; i++)
+		for (int c = 0; c < 3; c++)
+		{
+			float v = xyz[i * 3 + c];
+			if (v < mn[c]) mn[c] = v;
+			if (v > mx[c]) mx[c] = v;
+		}
+	static const int levels[3] = { 2047, 2047, 1023 };
+	float inv[3];
+	for (int c = 0; c < 3; c++)
+	{
+		if (nv == 0) { mn[c] = 0; mx[c] = 0; }
+		float range = mx[c] - mn[c];
+		s->pmin[frame * 3 + c] = mn[c];
+		s->pscale[frame * 3 + c] = range > 0 ? range / levels[c] : 0;
+		inv[c] = range > 0 ? levels[c] / range : 0;
+	}
+	unsigned *out = s->packed + frame * nv;
+	for (int i = 0; i < nv; i++)
+	{
+		unsigned q[3];
+		for (int c = 0; c < 3; c++)
+		{
+			int v = (int)((xyz[i * 3 + c] - mn[c]) * inv[c] + 0.5f);
+			q[c] = (unsigned)clamp(v, 0, levels[c]);
+		}
+		out[i] = q[0] | (q[1] << 11) | (q[2] << 22);
+	}
+}
+
+static void MD3AllocPacked(FMD3Model::MD3Surface *s, int frames)
+{
+	s->packed = new unsigned[s->numVertices * frames];
+	s->pmin = new float[frames * 3];
+	s->pscale = new float[frames * 3];
+}
+#endif
+
 bool FMD3Model::Load(const char * path, int, const char * buffer, int length)
 {
 	#pragma pack(4)
@@ -197,6 +241,13 @@ bool FMD3Model::Load(const char * path, int, const char * buffer, int length)
 			s->vertices[i].y = LittleShort(vt[i].y);
 			s->vertices[i].z = LittleShort(vt[i].z);
 		}
+#ifdef __vita__
+		MD3AllocPacked(s, numFrames);
+		for (int f = 0; f < numFrames; f++)
+			MD3PackFrame(s, f, &s->vertices[f * s->numVertices].x);
+		delete[] s->vertices;
+		s->vertices = NULL;
+#endif
 	}
 	return true;
 }
@@ -220,7 +271,7 @@ struct MD3Stream
 	long pos;
 	bool Skip(long to)
 	{
-		static char junk[4096];
+		char junk[4096];
 		if (to < pos) return false;
 		while (pos < to)
 		{
@@ -240,7 +291,7 @@ struct MD3Stream
 };
 }
 
-bool FMD3Model::LoadStream(const char * path, FileReaderBase *stream, int length)
+bool FMD3Model::LoadStream(const char * path, FileReaderBase *stream, int length, bool deferSkins)
 {
 	#pragma pack(4)
 	struct hdr_t { DWORD Magic, Version; char Name[MAX_QPATH]; DWORD Flags, Num_Frames, Num_Tags, Num_Surfaces, Num_Skins, Ofs_Frames, Ofs_Tags, Ofs_Surfaces, Ofs_Eof; };
@@ -342,20 +393,21 @@ bool FMD3Model::LoadStream(const char * path, FileReaderBase *stream, int length
 
 			case SEC_XYZ:
 			{
-				vert_t buf[512];
-				long total = (long)nv * nFrames;
-				s->vertices = new MD3Vertex[total];
-				for (long v = 0; v < total && ok; )
+				TArray<vert_t> buf;
+				TArray<short> xyz;
+				buf.Resize(nv > 0 ? nv : 1);
+				xyz.Resize(nv * 3 > 0 ? nv * 3 : 1);
+				MD3AllocPacked(s, nFrames);
+				for (int f = 0; f < nFrames && ok; f++)
 				{
-					long n = total - v > 512 ? 512 : total - v;
-					if (!(ok = in.ReadAt(at + v * 8, buf, n * 8))) break;
-					for (long q = 0; q < n; q++)
+					if (!(ok = in.ReadAt(at + (long)f * nv * 8, &buf[0], nv * 8L))) break;
+					for (int q = 0; q < nv; q++)
 					{
-						s->vertices[v + q].x = LittleShort(buf[q].x);
-						s->vertices[v + q].y = LittleShort(buf[q].y);
-						s->vertices[v + q].z = LittleShort(buf[q].z);
+						xyz[q * 3] = LittleShort(buf[q].x);
+						xyz[q * 3 + 1] = LittleShort(buf[q].y);
+						xyz[q * 3 + 2] = LittleShort(buf[q].z);
 					}
-					v += n;
+					MD3PackFrame(s, f, &xyz[0]);
 				}
 				break;
 			}
@@ -371,26 +423,41 @@ bool FMD3Model::LoadStream(const char * path, FileReaderBase *stream, int length
 		return false;
 	}
 
-	// Skins last: loading them may read the archive.
-	unsigned name = 0;
-	for (int i = 0; i < nSurfaces; i++)
-	{
-		MD3Surface *s = &sf[i];
-		s->skins = new FTexture *[s->numSkins];
-		for (int j = 0; j < s->numSkins; j++, name++)
-		{
-			s->skins[j] = LoadSkin("", shaderNames[name]);
-			if (s->skins[j] == NULL)
-				s->skins[j] = LoadSkin(path, shaderNames[name]);
-		}
-	}
-
 	numFrames = nFrames;
 	numTags = LittleLong(hdr.Num_Tags);
 	numSurfaces = nSurfaces;
 	frames = fr;
 	surfaces = sf;
+	for (int i = 0; i < nSurfaces; i++)
+	{
+		sf[i].skins = new FTexture *[sf[i].numSkins];
+		for (int j = 0; j < sf[i].numSkins; j++) sf[i].skins[j] = NULL;
+	}
+
+	// Skins last: loading them may read the archive. A model loaded on the
+	// background thread gets them on the game thread (ResolveDeferredSkins).
+	DeferredSkins = shaderNames;
+	DeferredPath = path;
+	if (!deferSkins)
+		ResolveDeferredSkins();
 	return true;
+}
+
+void FMD3Model::ResolveDeferredSkins()
+{
+	unsigned name = 0;
+	for (int i = 0; i < numSurfaces; i++)
+	{
+		MD3Surface *s = &surfaces[i];
+		for (int j = 0; j < s->numSkins && name < DeferredSkins.Size(); j++, name++)
+		{
+			s->skins[j] = LoadSkin("", DeferredSkins[name]);
+			if (s->skins[j] == NULL)
+				s->skins[j] = LoadSkin(DeferredPath, DeferredSkins[name]);
+		}
+	}
+	DeferredSkins.Clear();
+	DeferredPath = "";
 }
 #endif
 
@@ -405,6 +472,88 @@ int FMD3Model::FindFrame(const char * name)
 
 // Expands one frame (or a blend of two) to float xyz in GL axis order.
 static TArray<float> MD3Scratch;
+
+#ifdef __vita__
+int FMD3Model::MemSize()
+{
+	int bytes = numFrames * sizeof(MD3Frame);
+	for (int i = 0; i < numSurfaces; i++)
+	{
+		MD3Surface *s = &surfaces[i];
+		bytes += s->numVertices * numFrames * 4 + numFrames * 24;
+		bytes += s->numVertices * sizeof(MD3TexCoord);
+		bytes += s->indices16 ? s->numTriangles * 6 : s->numTriangles * sizeof(MD3Triangle);
+	}
+	return bytes;
+}
+
+float FMD3Model::VitaCheckPacking(const char *buffer)
+{
+	DWORD ofsSurf = LittleLong(((DWORD *)buffer)[25]);	// header: Ofs_Surfaces at byte 100
+	const char *surf = buffer + ofsSurf;
+	float maxerr = 0;
+	for (int i = 0; i < numSurfaces; i++)
+	{
+		const DWORD *sh = (const DWORD *)(surf + 72);	// Num_Frames .. Ofs_End
+		DWORD ofsXyz = LittleLong(sh[7]), ofsEnd = LittleLong(sh[8]);
+		const short *raw = (const short *)(surf + ofsXyz);
+		MD3Surface *s = &surfaces[i];
+		for (int f = 0; f < numFrames; f++)
+		{
+			for (int v = 0; v < s->numVertices; v++)
+			{
+				unsigned w = s->packed[f * s->numVertices + v];
+				float d[3] = { s->pmin[f*3] + (w & 2047) * s->pscale[f*3], s->pmin[f*3+1] + ((w >> 11) & 2047) * s->pscale[f*3+1], s->pmin[f*3+2] + (w >> 22) * s->pscale[f*3+2] };
+				for (int c = 0; c < 3; c++)
+				{
+					float e = fabsf(d[c] - LittleShort(raw[(f * s->numVertices + v) * 4 + c]));
+					if (e > maxerr) maxerr = e;
+				}
+			}
+		}
+		surf += ofsEnd;
+	}
+	return maxerr;	// in MD3 units (1/64 map unit)
+}
+
+// Unpacks one frame (or a blend of two) to float xyz in GL axis order.
+static float *MD3ExpandPacked(FMD3Model::MD3Surface *s, int f1, int f2, double inter)
+{
+	int nv = s->numVertices;
+	MD3Scratch.Resize(nv * 3 > 0 ? nv * 3 : 3);
+	float *out = &MD3Scratch[0];
+	const float sc = 1.f / 64.f;
+	const float sz = sc * rModelAspectMod;
+	const unsigned *p1 = s->packed + f1 * nv;
+	const float *m1 = s->pmin + f1 * 3, *k1 = s->pscale + f1 * 3;
+	if (f2 < 0)
+	{
+		for (int i = 0; i < nv; i++, out += 3)
+		{
+			unsigned w = p1[i];
+			float x = m1[0] + (w & 2047) * k1[0];
+			float y = m1[1] + ((w >> 11) & 2047) * k1[1];
+			float z = m1[2] + (w >> 22) * k1[2];
+			out[0] = x * sc; out[1] = z * sz; out[2] = y * sc;
+		}
+	}
+	else
+	{
+		const unsigned *p2 = s->packed + f2 * nv;
+		const float *m2 = s->pmin + f2 * 3, *k2 = s->pscale + f2 * 3;
+		const float a = float(1 - inter), b = float(inter);
+		for (int i = 0; i < nv; i++, out += 3)
+		{
+			unsigned w = p1[i], u = p2[i];
+			float x = a * (m1[0] + (w & 2047) * k1[0]) + b * (m2[0] + (u & 2047) * k2[0]);
+			float y = a * (m1[1] + ((w >> 11) & 2047) * k1[1]) + b * (m2[1] + ((u >> 11) & 2047) * k2[1]);
+			float z = a * (m1[2] + (w >> 22) * k1[2]) + b * (m2[2] + (u >> 22) * k2[2]);
+			out[0] = x * sc; out[1] = z * sz; out[2] = y * sc;
+		}
+	}
+	return &MD3Scratch[0];
+}
+#endif
 
 static float *MD3Expand(const short *v1, const short *v2, double inter, int numVertices)
 {
@@ -500,7 +649,11 @@ void FMD3Model::RenderFrame(FTexture * skin, int frameno, int cm, int translatio
 		FMaterial * tex = FMaterial::ValidateTexture(surfaceSkin);
 
 		tex->Bind(cm, 0, translation);
+#ifdef __vita__
+		RenderTriangles(surf, MD3ExpandPacked(surf, frameno, -1, 0));
+#else
 		RenderTriangles(surf, MD3Expand(&surf->vertices[frameno * surf->numVertices].x, NULL, 0, surf->numVertices));
+#endif
 	}
 }
 
@@ -533,8 +686,12 @@ void FMD3Model::RenderFrameInterpolated(FTexture * skin, int frameno, int framen
 
 		tex->Bind(cm, 0, translation);
 
+#ifdef __vita__
+		RenderTriangles(surf, MD3ExpandPacked(surf, frameno, frameno2, inter));
+#else
 		RenderTriangles(surf, MD3Expand(&surf->vertices[frameno * surf->numVertices].x,
 			&surf->vertices[frameno2 * surf->numVertices].x, inter, surf->numVertices));
+#endif
 	}
 }
 
