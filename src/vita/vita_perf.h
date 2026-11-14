@@ -22,6 +22,7 @@ enum
 	VPERF_ACSNEW,		// starting ACS scripts (P_GetScriptGoing)
 	VPERF_FINDCVAR,		// cvar lookups by name
 	VPERF_BSP,			// part of SCENE: BSP walk, setting up walls/flats/sprites
+	VPERF_JOIN,			// part of SCENE: waiting for the logic thread (vita_parallel)
 	VPERF_COUNT
 };
 

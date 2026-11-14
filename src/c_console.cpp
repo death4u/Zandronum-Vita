@@ -79,6 +79,9 @@
 #include "st_hud.h"
 #include "r_utility.h"
 #include "p_tick.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 #define CONSOLESIZE	16384	// Number of characters to store in console
 #define CONSOLELINES 256	// Max number of lines of console text
@@ -1162,7 +1165,14 @@ int VPrintf (int printlevel, const char *format, va_list parms)
 
 	FString outline;
 	outline.VFormat (format, parms);
+#ifdef __vita__
+	Vita_PrintLock();
+	int vitares = PrintString (printlevel, outline.GetChars());
+	Vita_PrintUnlock();
+	return vitares;
+#else
 	return PrintString (printlevel, outline.GetChars());
+#endif
 }
 
 int STACK_ARGS Printf (int printlevel, const char *format, ...)

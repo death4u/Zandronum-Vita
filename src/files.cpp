@@ -37,6 +37,9 @@
 #include "i_system.h"
 #include "templates.h"
 #include "m_misc.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 //==========================================================================
 //
@@ -111,6 +114,9 @@ long FileReader::Tell () const
 
 long FileReader::Seek (long offset, int origin)
 {
+#ifdef __vita__
+	FVitaArchiveLock vitalock;
+#endif
 	if (origin == SEEK_SET)
 	{
 		offset += StartPos;
@@ -139,6 +145,12 @@ long FileReader::Read (void *buffer, long len)
 	{
 		len = Length - FilePos + StartPos;
 	}
+#ifdef __vita__
+	// FILE handles are shared between readers (and threads): make sure
+	// this reader's position is the one read from.
+	FVitaArchiveLock vitalock;
+	if (ftell(File) != FilePos) fseek(File, FilePos, SEEK_SET);
+#endif
 	len = (long)fread (buffer, 1, len, File);
 	FilePos += len;
 	return len;
@@ -147,6 +159,10 @@ long FileReader::Read (void *buffer, long len)
 char *FileReader::Gets(char *strbuf, int len)
 {
 	if (len <= 0 || FilePos >= StartPos + Length) return NULL;
+#ifdef __vita__
+	FVitaArchiveLock vitalock;
+	if (ftell(File) != FilePos) fseek(File, FilePos, SEEK_SET);
+#endif
 	char *p = fgets(strbuf, len, File);
 	if (p != NULL)
 	{

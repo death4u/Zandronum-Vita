@@ -61,6 +61,9 @@
 #include "md5.h"
 // [TP]
 #include "c_cvars.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 // [BB]
 extern TArray<FString> allwads;
@@ -1552,6 +1555,9 @@ FWadLump & FWadLump::operator= (const FWadLump &copy)
 FWadLump::FWadLump(FResourceLump *lump, bool alwayscache)
 : FileReader()
 {
+#ifdef __vita__
+	FVitaArchiveLock vitalock;
+#endif
 	FileReader *f = lump->GetReader();
 
 	if (f != NULL && f->GetFile() != NULL && !alwayscache)

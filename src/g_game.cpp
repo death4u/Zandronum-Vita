@@ -1479,6 +1479,17 @@ static void Vita_AutoBots()
 }
 #endif
 
+// [Vita] Test helper: go to the next map every N seconds.
+CVAR(Int, vita_testnextmap, 0, 0)
+void Vita_TestNextMap()
+{
+	static int tics = 0;
+	if (vita_testnextmap <= 0 || gamestate != GS_LEVEL || gameaction != ga_nothing) { if (gamestate != GS_LEVEL) tics = 0; return; }
+	if (++tics < vita_testnextmap * TICRATE) return;
+	tics = 0;
+	G_ChangeLevel(level.nextmap, 0, CHANGELEVEL_NOINTERMISSION);
+}
+
 void G_Ticker ()
 {
 #ifdef __vita__

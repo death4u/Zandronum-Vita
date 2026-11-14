@@ -51,6 +51,9 @@
 #include "gl/dynlights/gl_dynlight.h"
 #include "gl/utility/gl_convert.h"
 #include "gl/utility/gl_templates.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 EXTERN_CVAR (Float, gl_lights_size);
 EXTERN_CVAR (Bool, gl_lights_additive);
@@ -588,6 +591,9 @@ void ADynamicLight::CollectWithinRadius(subsector_t *subSec, float radius)
 
 void ADynamicLight::LinkLight()
 {
+#ifdef __vita__
+	if (Vita_DeferLight(this, false)) return;
+#endif
 	// mark the old light nodes
 	FLightNode * node;
 	
@@ -650,6 +656,9 @@ void ADynamicLight::LinkLight()
 //==========================================================================
 void ADynamicLight::UnlinkLight ()
 {
+#ifdef __vita__
+	if (Vita_DeferLight(this, true)) return;
+#endif
 	if (owned && target != NULL)
 	{
 		// Delete reference in owning actor

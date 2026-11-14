@@ -77,6 +77,9 @@
 #include "gl/utility/gl_clock.h"
 #include "gl/utility/gl_convert.h"
 #include "gl/utility/gl_templates.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 //==========================================================================
 //
@@ -529,6 +532,11 @@ void FGLRenderer::RenderScene(int recursion)
 
 	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+#ifdef __vita__
+	// Decals, portals, translucent things and the HUD read live game data.
+	Vita_LogicEnd();
+#endif
+
 	// Draw decals (not a real pass)
 	glDepthFunc(GL_LEQUAL);
 	glEnable(GL_POLYGON_OFFSET_FILL);
@@ -620,12 +628,29 @@ void FGLRenderer::RenderTranslucent()
 //-----------------------------------------------------------------------------
 EXTERN_CVAR(Bool, gl_draw_sync)
 
+#ifdef __vita__
+static bool Vita_InterpolationsRestored;
+#endif
+
 void FGLRenderer::DrawScene(bool toscreen)
 {
 	static int recursion=0;
 
 	CreateScene();
 	GLRenderer->mCurrentPortal = NULL;	// this must be reset before any portal recursion takes place.
+
+#ifdef __vita__
+	// The scene is built: from here until the decal pass, drawing only uses
+	// the draw lists, so the next frame's tics can run on the logic thread
+	// (see vita/vita_parallel.h). The game state goes back to its real
+	// (uninterpolated) values first.
+	if (recursion == 0 && toscreen && !GL_MULTIPASS_LIGHTS && Vita_ParallelAllowed())
+	{
+		interpolator.RestoreInterpolations();
+		Vita_InterpolationsRestored = true;
+		Vita_LogicBegin();
+	}
+#endif
 
 	// Up to this point in the main draw call no rendering is performed so we can wait
 	// with swapping the render buffer until now.
@@ -980,6 +1005,12 @@ sector_t * FGLRenderer::RenderViewpoint (AActor * camera, GL_IRECT * bounds, flo
 	}
 
 	gl_frameCount++;	// This counter must be increased right before the interpolations are restored.
+#ifdef __vita__
+	Vita_LogicEnd();
+	if (Vita_InterpolationsRestored)
+		Vita_InterpolationsRestored = false;	// done before the logic thread started
+	else
+#endif
 	interpolator.RestoreInterpolations ();
 	return retval;
 }

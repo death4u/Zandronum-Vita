@@ -163,6 +163,9 @@
 #include "g_shared/pwo.h"
 
 #include "win32/g15/g15.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 EXTERN_CVAR(Bool, hud_althud)
 void DrawHUD();
 
@@ -1364,11 +1367,28 @@ void D_DoomLoop ()
 				}
 				else
 				{
+#ifdef __vita__
+					// The tics may already have run on the logic thread during
+					// the last frame's drawing (vita/vita_parallel.h).
+					if (Vita_LogicDone)
+						Vita_LogicDone = false;
+					else
+#endif
 					TryRunTics (); // will run at least one tic
 				}
 				// Update display, next frame, with current state.
 				I_StartTic ();
+#ifdef __vita__
+				// Input is handled here (not by the logic thread), so menus
+				// and console commands never run alongside the renderer.
+				D_ProcessEvents ();
+				Vita_SetFrameAllowsOverlap(!singletics);
 				D_Display ();
+				Vita_SetFrameAllowsOverlap(false);
+				Vita_LogicEnd();
+#else
+				D_Display ();
+#endif
 				break;
 			}
 		}

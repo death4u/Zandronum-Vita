@@ -72,6 +72,9 @@
 #include "sv_commands.h"
 #include "team.h"
 #include "chat.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 EXTERN_CVAR (Int, disableautosave)
 EXTERN_CVAR (Int, autosavecount)
@@ -995,8 +998,13 @@ void NetUpdate (void)
 
 	for (i = 0; i < newtics; i++)
 	{
+#ifdef __vita__
+		if (!Vita_OnLogicThread())	// the main thread handles input
+#endif
+		{
 		I_StartTic ();
 		D_ProcessEvents ();
+		}
 		if ((maketic - gametic) / ticdup >= BACKUPTICS/2-1)
 			break;			// can't hold any more
 		
@@ -1928,7 +1936,16 @@ void TryRunTics (void)
 			C_Ticker ();
 			M_Ticker ();
 			I_GetTime (true);
+#ifdef __vita__
+			// Level changes and the like (gameaction) load data and touch
+			// the renderer: leave them to the main thread's next frame.
+			if (Vita_OnLogicThread() && (gameaction != ga_nothing || gamestate != GS_LEVEL))
+				break;
+#endif
 			{ VITA_PERF(VPERF_TIC); G_Ticker (); }
+#ifdef __vita__
+			{ extern void Vita_TestNextMap(); Vita_TestNextMap(); }
+#endif
 			gametic++;
 
 			NetUpdate ();	// check for new console commands

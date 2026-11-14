@@ -74,6 +74,9 @@
 #include "v_video.h"
 #include "menu/menu.h"
 #include "intermission/intermission.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 // MACROS ------------------------------------------------------------------
 
@@ -442,6 +445,10 @@ static size_t SingleStep()
 
 void Step()
 {
+#ifdef __vita__
+	// Nothing may be freed while the logic thread runs alongside drawing.
+	if (Vita_Overlap) return;
+#endif
 	size_t lim = (GCSTEPSIZE/100) * StepMul;
 	size_t olim;
 	if (lim == 0)

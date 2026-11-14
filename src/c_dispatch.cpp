@@ -67,6 +67,9 @@
 #include "menu/menu.h"
 #define NO_IMP
 #include "menu/optionmenuitems.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 // MACROS ------------------------------------------------------------------
 
@@ -586,6 +589,12 @@ void ResetButtonStates ()
 
 void C_DoCommand (const char *cmd, int keynum)
 {
+#ifdef __vita__
+	// Console commands from game logic (ACS ConsoleCommand, waiting
+	// commands...) can change video settings: while the logic thread runs
+	// alongside drawing, they wait for the main thread.
+	if (Vita_DeferCommand(cmd, keynum)) return;
+#endif
 	FConsoleCommand *com;
 	const char *end;
 	const char *beg;

@@ -38,6 +38,9 @@
 #include "cmdlib.h"
 #include "w_wad.h"
 #include "doomerrors.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 
 
@@ -209,6 +212,9 @@ FileReader *FResourceLump::NewReader()
 
 void *FResourceLump::CacheLump()
 {
+#ifdef __vita__
+	FVitaArchiveLock vitalock;
+#endif
 	if (Cache != NULL)
 	{
 		if (RefCount > 0) RefCount++;
@@ -228,6 +234,9 @@ void *FResourceLump::CacheLump()
 
 int FResourceLump::ReleaseCache()
 {
+#ifdef __vita__
+	FVitaArchiveLock vitalock;
+#endif
 	if (LumpSize > 0 && RefCount > 0)
 	{
 		if (--RefCount == 0)

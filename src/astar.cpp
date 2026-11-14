@@ -146,7 +146,13 @@ void ASTAR_BuildNodes( void )
 	// Allocate a bunch of nodes for the master node list. The size of the master node list
 	// is the maximum number of nodes per search: length * width.
 	// [BB] This is certainly more memory than we want to assign for the bots...
+#ifdef __vita__
+	// [Vita] Big maps need far more than the Vita has (HaloDoom's MULTI03:
+	// 129 MB), which ended the game with an out-of-memory error.
+	if ( (double)sizeof ( ASTARNODE_t ) * g_lNodeListSize > 24.0 * 1024 * 1024 )
+#else
 	if ( sizeof ( ASTARNODE_t ) * g_lNodeListSize > INT_MAX )
+#endif
 	{
 		Printf ( "Unable to allocate bot nodes. Disabling bots on this map.\n");
 		g_bIsInitialized = true;

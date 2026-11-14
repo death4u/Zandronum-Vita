@@ -253,6 +253,32 @@ extern "C" void *__wrap_realloc(void *old, size_t size)
 	return p;
 }
 
+// operator new: log big requests that fail with *their* caller (the malloc
+// wrapper only sees operator new itself), then behave as usual.
+#include <new>
+extern "C" void *__real__Znwj(size_t size);
+extern "C" void *__real__Znaj(size_t size);
+extern "C" void *__wrap__Znwj(size_t size)
+{
+	void *p = malloc(size ? size : 1);
+	if (p == NULL)
+	{
+		Vita_LogAllocFailure("new", size, __builtin_return_address(0));
+		throw std::bad_alloc();
+	}
+	return p;
+}
+extern "C" void *__wrap__Znaj(size_t size)
+{
+	void *p = malloc(size ? size : 1);
+	if (p == NULL)
+	{
+		Vita_LogAllocFailure("new[]", size, __builtin_return_address(0));
+		throw std::bad_alloc();
+	}
+	return p;
+}
+
 // Log a startup stage and whether the malloc heap still looks sane.
 extern "C" void Vita_Checkpoint(const char *stage)
 {

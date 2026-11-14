@@ -226,6 +226,10 @@ enum EObjectFlags
 
 template<class T> class TObjPtr;
 
+#ifdef __vita__
+extern volatile bool Vita_Overlap;
+#endif
+
 namespace GC
 {
 	enum EGCState
@@ -300,6 +304,9 @@ namespace GC
 	// Check if it's time to collect, and do a collection step if it is.
 	static inline void CheckGC()
 	{
+#ifdef __vita__
+		if (Vita_Overlap) return;	// see vita/vita_parallel.h
+#endif
 		if (AllocBytes >= Threshold)
 			Step();
 	}

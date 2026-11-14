@@ -95,7 +95,7 @@ void Vita_PerfFrame()
 		struct mallinfo mi = mallinfo();
 		char line[2048];
 		snprintf(line, sizeof(line),
-			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f, 3D %.1f (bsp %.1f, models %.1f), 2D+swap %.1f (swap %.1f)"
+			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f, 3D %.1f (bsp %.1f, models %.1f, waiting for logic %.1f), 2D+swap %.1f (swap %.1f)"
 			" | in %.0f s: %d texture uploads %.0f ms, %d model loads %.0f ms | heap %u MB"
 #ifndef NO_GL
 			", vitaGL free RAM %u MB CDRAM %u MB"
@@ -103,7 +103,7 @@ void Vita_PerfFrame()
 			"\n",
 			frames * 1e6 / period, worst / 1000.0,
 			Vita_PerfAcc[VPERF_TIC] * f / 1000.0, Vita_PerfAcc[VPERF_SCENE] * f / 1000.0, Vita_PerfAcc[VPERF_BSP] * f / 1000.0,
-			Vita_PerfAcc[VPERF_MODELS] * f / 1000.0, Vita_PerfAcc[VPERF_UPDATE] * f / 1000.0,
+			Vita_PerfAcc[VPERF_MODELS] * f / 1000.0, Vita_PerfAcc[VPERF_JOIN] * f / 1000.0, Vita_PerfAcc[VPERF_UPDATE] * f / 1000.0,
 			Vita_PerfAcc[VPERF_SWAP] * f / 1000.0,
 			period / 1e6, Vita_PerfCalls[VPERF_UPLOAD], Vita_PerfAcc[VPERF_UPLOAD] / 1000.0,
 			Vita_PerfCalls[VPERF_MODELLOAD], Vita_PerfAcc[VPERF_MODELLOAD] / 1000.0,

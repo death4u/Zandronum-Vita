@@ -41,6 +41,9 @@
 #include "w_zip.h"
 #include "i_system.h"
 #include "ancientzip.h"
+#ifdef __vita__
+#include "vita/vita_parallel.h"
+#endif
 
 #define BUFREADCOMMENT (0x400)
 
@@ -361,6 +364,9 @@ FZipFile::~FZipFile()
 
 void FZipLump::SetLumpAddress()
 {
+#ifdef __vita__
+	FVitaArchiveLock vitalock;
+#endif
 	// This file is inside a zip and has not been opened before.
 	// Position points to the start of the local file header, which we must
 	// read and skip so that we can get to the actual file data.
@@ -384,6 +390,9 @@ void FZipLump::SetLumpAddress()
 
 FileReader *FZipLump::GetReader()
 {
+#ifdef __vita__
+	FVitaArchiveLock vitalock;
+#endif
 	// Don't return the reader if this lump is encrypted
 	// In that case always force caching of the lump
 	if (Method == METHOD_STORED)
@@ -435,6 +444,9 @@ public:
 
 FileReaderBase *FZipLump::OpenStream()
 {
+#ifdef __vita__
+	FVitaArchiveLock vitalock;
+#endif
 	if (Method != METHOD_STORED && Method != METHOD_DEFLATE) return NULL;
 	if (Flags & LUMPFZIP_NEEDFILESTART) SetLumpAddress();
 	FZipLumpStream *stream = new FZipLumpStream;
