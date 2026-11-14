@@ -235,6 +235,9 @@ void OpenGLFrameBuffer::Swap()
 		//DoSetGamma();
 		needsetgamma = false;
 	}
+#ifdef __vita__
+	Vita_PerfBeforeSwap();
+#endif
 	{
 		VITA_PERF(VPERF_SWAP);
 		SwapBuffers();

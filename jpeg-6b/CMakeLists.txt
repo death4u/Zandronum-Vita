@@ -7,6 +7,11 @@ if( "${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" STREQUAL
 	set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused-parameter -fomit-frame-pointer" )
 endif( "${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" STREQUAL "Clang" )
 
+# [Vita] JPEG_ErrorExit throws a C++ exception through libjpeg's frames;
+# without unwind tables for this C code that ends in std::terminate on ARM
+# (a texture decode error or out-of-memory killed the game).
+set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions" )
+
 add_library( jpeg
     jcomapi.c
     jdapimin.c

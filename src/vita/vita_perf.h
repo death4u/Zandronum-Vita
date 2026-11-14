@@ -50,6 +50,9 @@ extern unsigned Vita_PcodeCounts[1024];
 static inline void Vita_PerfPcode(int pcd) { if (Vita_PerfDetail) Vita_PcodeCounts[pcd & 1023]++; }
 void Vita_PerfAcsFunc(int func, unsigned long long us);
 
+// Call right before the buffer swap (samples vitaGL's vertex pool use).
+void Vita_PerfBeforeSwap();
+
 // Call once per displayed frame (after the swap).
 void Vita_PerfFrame();
 

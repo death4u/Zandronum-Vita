@@ -861,8 +861,11 @@ FSpriteModelFrame * gl_FindModelFrame(const PClass * ti, int sprite, int frame, 
 //
 //===========================================================================
 
+EXTERN_CVAR(Bool, gl_precache)
+
 void gl_PrecacheModels(BYTE *hitlist)
 {
+	if (!gl_precache) return;
 	TMap<const PClass *, bool> classes;
 	{
 		AActor *actor;

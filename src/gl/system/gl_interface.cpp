@@ -179,10 +179,10 @@ void gl_LoadExtensions()
 		gl_texture_format = 7;
 		gl_texture_filter = 3;
 	}
-	if (vita_glconfig < 2)
+	if (vita_glconfig < 3)
 	{
-		gl_precache = true;
-		vita_glconfig = 2;
+		gl_precache = false;	// 0014 had it on; level loads took minutes
+		vita_glconfig = 3;
 	}
 #else
 

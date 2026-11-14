@@ -26,13 +26,13 @@
 
 // ---------------------------------------------------------------------------
 // Process memory. The SFO sets ATTRIBUTE2=12 (extended memory mode), which
-// gives the app roughly 365 MB of main memory; the newlib heap takes 256 MB
+// gives the app roughly 365 MB of main memory; the newlib heap takes 224 MB
 // of it and vitaGL/SDL's GPU pools, the network pool and thread stacks the rest.
 // Zandronum recurses deeply (BSP traversal, ACS, parsers), so the main
 // thread gets a large stack instead of the 256 KB default.
 // ---------------------------------------------------------------------------
 extern "C" {
-int _newlib_heap_size_user = 256 * 1024 * 1024;
+int _newlib_heap_size_user = 224 * 1024 * 1024;
 unsigned int sceUserMainThreadStackSize = 4 * 1024 * 1024;
 }
 
@@ -49,12 +49,16 @@ static void Vita_MkDir(const char *path)
 extern "C" void Vita_BootLog(const char *fmt, ...)
 {
 	char buf[1024];
+	// Seconds since the app started, so slow start-up steps stand out.
+	unsigned long long us = sceKernelGetProcessTimeWide();
+	int pre = snprintf(buf, sizeof(buf), "%4u.%02u ", (unsigned)(us / 1000000), (unsigned)(us / 10000 % 100));
 	va_list ap;
 	va_start(ap, fmt);
-	int len = vsnprintf(buf, sizeof(buf) - 2, fmt, ap);
+	int len = vsnprintf(buf + pre, sizeof(buf) - 2 - pre, fmt, ap);
 	va_end(ap);
 	if (len < 0)
 		return;
+	len += pre;
 	if (len > (int)sizeof(buf) - 2)
 		len = sizeof(buf) - 2;
 	buf[len++] = '\n';

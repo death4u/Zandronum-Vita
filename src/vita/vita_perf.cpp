@@ -17,6 +17,12 @@ CUSTOM_CVAR(Bool, vita_perfdetail, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 bool Vita_PerfDetail;
 
 unsigned long long Vita_PerfAcc[VPERF_COUNT];
+
+#ifndef NO_GL
+// vitaGL's immediate-mode vertex pool for the current frame.
+extern "C" float *legacy_pool, *legacy_pool_ptr;
+static unsigned LegacyPoolPeak;
+#endif
 int Vita_PerfCalls[VPERF_COUNT];
 
 struct FPerfClass { const void *Cls; const char *Name; unsigned long long Us; int Calls; };
@@ -47,6 +53,17 @@ void Vita_PerfAcsFunc(int func, unsigned long long us)
 {
 	AcsFuncUs[func & 1023] += us;
 	AcsFuncCalls[func & 1023]++;
+}
+
+void Vita_PerfBeforeSwap()
+{
+#ifndef NO_GL
+	if (legacy_pool != NULL && legacy_pool_ptr >= legacy_pool)
+	{
+		unsigned used = (unsigned)((char *)legacy_pool_ptr - (char *)legacy_pool);
+		if (used > LegacyPoolPeak) LegacyPoolPeak = used;
+	}
+#endif
 }
 
 void Vita_PerfFrame()
@@ -145,5 +162,8 @@ void Vita_PerfFrame()
 	for (int i = 0; i < VPERF_COUNT; i++) { Vita_PerfAcc[i] = 0; Vita_PerfCalls[i] = 0; }
 	frames = 0;
 	worst = 0;
+#ifndef NO_GL
+	LegacyPoolPeak = 0;
+#endif
 	periodStart = now;
 }
