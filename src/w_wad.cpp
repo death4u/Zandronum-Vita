@@ -1208,6 +1208,21 @@ FWadLump *FWadCollection::ReopenLumpNum (int lump)
 
 //==========================================================================
 //
+// OpenLumpStream
+//
+//==========================================================================
+
+FileReaderBase *FWadCollection::OpenLumpStream (int lump)
+{
+	if ((unsigned)lump >= (unsigned)LumpInfo.Size())
+	{
+		return NULL;
+	}
+	return LumpInfo[lump].lump->OpenStream();
+}
+
+//==========================================================================
+//
 // GetFileReader
 //
 // Retrieves the FileReader object to access the given WAD

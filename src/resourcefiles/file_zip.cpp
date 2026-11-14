@@ -117,6 +117,7 @@ struct FZipLump : public FResourceLump
 
 	virtual FileReader *GetReader();
 	virtual int FillCache();
+	virtual FileReaderBase *OpenStream();
 
 private:
 	void SetLumpAddress();
@@ -392,6 +393,57 @@ FileReader *FZipLump::GetReader()
 		return Owner->Reader;
 	}
 	else return NULL;	
+}
+
+//==========================================================================
+//
+// Streams a stored or deflated lump through its own file handle, so a big
+// lump (HaloDoom's 20+ MB player models) never has to be held in memory
+// whole, and other reads of the archive can't disturb the stream.
+//
+//==========================================================================
+
+class FZipLumpStream : public FileReaderBase
+{
+	FileReader File;
+	FileReaderZ *Inflate;
+	long Remaining;
+
+public:
+	FZipLumpStream() : Inflate(NULL), Remaining(0) {}
+	bool Open(const char *filename, long position, bool deflate, long size)
+	{
+		if (!File.Open(filename)) return false;
+		File.Seek(position, SEEK_SET);
+		if (deflate) Inflate = new FileReaderZ(File, true);
+		Remaining = size;
+		return true;
+	}
+	~FZipLumpStream()
+	{
+		delete Inflate;
+	}
+	long Read(void *buffer, long len)
+	{
+		if (len > Remaining) len = Remaining;
+		if (len <= 0) return 0;
+		long got = Inflate != NULL ? Inflate->Read(buffer, len) : File.Read(buffer, len);
+		if (got > 0) Remaining -= got;
+		return got;
+	}
+};
+
+FileReaderBase *FZipLump::OpenStream()
+{
+	if (Method != METHOD_STORED && Method != METHOD_DEFLATE) return NULL;
+	if (Flags & LUMPFZIP_NEEDFILESTART) SetLumpAddress();
+	FZipLumpStream *stream = new FZipLumpStream;
+	if (!stream->Open(Owner->Filename, Position, Method == METHOD_DEFLATE, LumpSize))
+	{
+		delete stream;
+		return NULL;
+	}
+	return stream;
 }
 
 //==========================================================================

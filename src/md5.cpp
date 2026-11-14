@@ -261,7 +261,69 @@ MD5Transform(DWORD buf[4], const DWORD in[16])
 #include <errno.h>
 
 // [BB]
+#ifdef __vita__
+// [Vita] Zandronum hashes every loaded file at start-up (for network games).
+// For HaloDoom's 793 MB pk3 that took ~90 s on the memory card ("Initializing
+// network subsystem"). Hashes are cached by path, size and modification time.
+#include <sys/stat.h>
+#define VITA_MD5_CACHE "ux0:data/zandronum/md5cache.txt"
+
+static bool Vita_MD5CacheKey(const char *filename, FString &key)
+{
+	struct stat st;
+	if (stat(filename, &st) != 0) return false;
+	key.Format("%lld %lld %s", (long long)st.st_size, (long long)st.st_mtime, filename);
+	return true;
+}
+
+static bool Vita_MD5CacheLookup(const FString &key, char *md5)
+{
+	FILE *f = fopen(VITA_MD5_CACHE, "r");
+	if (f == NULL) return false;
+	char line[1200];
+	bool found = false;
+	while (!found && fgets(line, sizeof(line), f))
+	{
+		size_t n = strlen(line);
+		while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r')) line[--n] = 0;
+		if (n > 33 && line[32] == ' ' && strcmp(line + 33, key.GetChars()) == 0)
+		{
+			memcpy(md5, line, 32);
+			md5[32] = 0;
+			found = true;
+		}
+	}
+	fclose(f);
+	return found;
+}
+
+static void Vita_MD5CacheStore(const FString &key, const char *md5)
+{
+	FILE *f = fopen(VITA_MD5_CACHE, "a");
+	if (f == NULL) return;
+	fprintf(f, "%s %s\n", md5, key.GetChars());
+	fclose(f);
+}
+
+static bool MD5SumOfFileUncached ( const char *Filename, char *MD5Sum );
+
 bool MD5SumOfFile ( const char *Filename, char *MD5Sum )
+{
+	FString key;
+	bool havekey = Vita_MD5CacheKey(Filename, key);
+	if (havekey && Vita_MD5CacheLookup(key, MD5Sum))
+		return true;
+	if (!MD5SumOfFileUncached(Filename, MD5Sum))
+		return false;
+	if (havekey)
+		Vita_MD5CacheStore(key, MD5Sum);
+	return true;
+}
+
+static bool MD5SumOfFileUncached ( const char *Filename, char *MD5Sum )
+#else
+bool MD5SumOfFile ( const char *Filename, char *MD5Sum )
+#endif
 {
 	FILE *file = fopen(Filename, "rb");
 	if (file == NULL)
@@ -275,6 +337,17 @@ bool MD5SumOfFile ( const char *Filename, char *MD5Sum )
 		BYTE readbuf[8192];
 		size_t len;
 
+#ifdef __vita__
+		// Big reads: the memory card is much faster with 1 MB requests.
+		BYTE *bigbuf = (BYTE *)malloc(1024 * 1024);
+		if (bigbuf != NULL)
+		{
+			while ((len = fread(bigbuf, 1, 1024 * 1024, file)) > 0)
+				md5.Update(bigbuf, (unsigned int)len);
+			free(bigbuf);
+		}
+		else
+#endif
 		while ((len = fread(readbuf, 1, sizeof(readbuf), file)) > 0)
 		{
 			md5.Update(readbuf, (unsigned int)len);

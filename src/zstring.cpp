@@ -1103,14 +1103,35 @@ void FString::StrCopy (char *to, const FString &from)
 	StrCopy (to, from.Chars, from.Len());
 }
 
+#ifdef __vita__
+extern "C" void Vita_BootLog(const char *fmt, ...);
+// Strings this big are almost always a runaway concatenation; log who builds
+// them (once per doubling) so it shows up in boot.log.
+static void Vita_CheckHugeString(size_t len, void *caller)
+{
+	static size_t next = 1024 * 1024;
+	if (len >= next)
+	{
+		while (next <= len) next *= 2;
+		Vita_BootLog("huge string: %u bytes, built from %p", (unsigned)len, caller);
+	}
+}
+#endif
+
 void FString::AllocBuffer (size_t len)
 {
+#ifdef __vita__
+	if (len >= 1024 * 1024) Vita_CheckHugeString(len, __builtin_return_address(0));
+#endif
 	Chars = (char *)(FStringData::Alloc(len) + 1);
 	Data()->Len = (unsigned int)len;
 }
 
 void FString::ReallocBuffer (size_t newlen)
 {
+#ifdef __vita__
+	if (newlen >= 1024 * 1024) Vita_CheckHugeString(newlen, __builtin_return_address(0));
+#endif
 	if (Data()->RefCount > 1)
 	{ // If more than one reference, we must use a new copy
 		FStringData *old = Data();

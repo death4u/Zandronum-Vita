@@ -312,6 +312,30 @@ static FModel *LoadModelLump(const char *path, int lump, const char *fullname)
 {
 	FModel * model = NULL;
 	int len = Wads.LumpLength(lump);
+#ifdef __vita__
+	// MD3s are parsed straight from the archive without a whole-file buffer.
+	if (len > 4)
+	{
+		FileReaderBase *stream = Wads.OpenLumpStream(lump);
+		if (stream != NULL)
+		{
+			char magic[4];
+			if (stream->Read(magic, 4) == 4 && !memcmp(magic, "IDP3", 4))
+			{
+				// LoadStream needs the stream at offset 0: reopen it.
+				delete stream;
+				stream = Wads.OpenLumpStream(lump);
+				FMD3Model *md3 = new FMD3Model;
+				bool ok = stream != NULL && md3->LoadStream(path, stream, len);
+				delete stream;
+				if (ok) return md3;
+				delete md3;
+				Printf("LoadModel: streaming '%s' failed, loading it whole\n", fullname);
+			}
+			else delete stream;
+		}
+	}
+#endif
 	FMemLump lumpd = Wads.ReadLump(lump);
 	char * buffer = (char*)lumpd.GetMem();
 
@@ -1244,3 +1268,21 @@ void gl_CleanModelData()
 		Models[i]->CleanGLData();
 	}
 }
+
+#ifdef __vita__
+#include <malloc.h>
+#include "c_dispatch.h"
+CCMD(vita_testmodel)
+{
+	if (argv.argc() < 2) return;
+	int lump = Wads.CheckNumForFullName(argv[1]);
+	if (lump < 0) { Printf("no lump %s\n", argv[1]); return; }
+	struct mallinfo a = mallinfo();
+	unsigned t = I_MSTime();
+	FModel *m = LoadModelLump("models/SpartanPlayer/", lump, argv[1]);
+	struct mallinfo b = mallinfo();
+	Printf("testmodel %s: %s in %u ms, heap +%d KB, peak arena %u KB\n", argv[1], m ? "ok" : "FAILED", I_MSTime() - t, (int)(b.uordblks - a.uordblks) / 1024, (unsigned)b.arena / 1024);
+	if (m && argv.argc() > 2) { Printf("frames %d\n", m->FindFrame(argv[2])); }
+	delete m;
+}
+#endif

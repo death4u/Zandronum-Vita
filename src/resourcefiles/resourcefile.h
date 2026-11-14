@@ -40,6 +40,9 @@ struct FResourceLump
 	virtual ~FResourceLump();
 	virtual FileReader *GetReader();
 	virtual FileReader *NewReader();
+	// Forward-only reader with its own file handle that doesn't cache the
+	// whole lump (NULL if the lump type can't do that).
+	virtual FileReaderBase *OpenStream() { return NULL; }
 	virtual int GetFileOffset() { return -1; }
 	virtual int GetIndexNum() const { return 0; }
 	void LumpNameSetup(const char *iname);

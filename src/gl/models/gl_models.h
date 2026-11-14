@@ -203,6 +203,7 @@ class FMD3Model : public FModel
 		MD3Surface()
 		{
 			tris=NULL;
+			skins=NULL;
 			vertices=NULL;
 			texcoords=NULL;
 			indices16=NULL;
@@ -236,10 +237,13 @@ class FMD3Model : public FModel
 	void RenderTriangles(MD3Surface * surf, const float * xyz);
 
 public:
-	FMD3Model() { }
+	FMD3Model() : numFrames(0), numTags(0), numSurfaces(0), frames(NULL), surfaces(NULL) { }
 	virtual ~FMD3Model();
 
 	virtual bool Load(const char * fn, int lumpnum, const char * buffer, int length);
+#ifdef __vita__
+	bool LoadStream(const char * fn, class FileReaderBase *stream, int length);
+#endif
 	virtual int FindFrame(const char * name);
 	virtual void RenderFrame(FTexture * skin, int frame, int cm, int translation=0);
 	virtual void RenderFrameInterpolated(FTexture * skin, int frame, int frame2, double inter, int cm, int translation=0);

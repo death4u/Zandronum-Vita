@@ -201,6 +201,199 @@ bool FMD3Model::Load(const char * path, int, const char * buffer, int length)
 	return true;
 }
 
+#ifdef __vita__
+//===========================================================================
+//
+// [Vita] Loads an MD3 straight from a forward-only lump stream, so the file
+// is never held in memory whole. HaloDoom's third-person Spartan models are
+// 18-25 MB each; reading one into a buffer (twice: lump cache and copy)
+// needed 40+ MB at once, and a bot switching weapons mid-game ran the heap
+// out. Returns false (model untouched) if the file's sections aren't in
+// ascending order; the caller then falls back to Load().
+//
+//===========================================================================
+
+namespace {
+struct MD3Stream
+{
+	FileReaderBase *r;
+	long pos;
+	bool Skip(long to)
+	{
+		static char junk[4096];
+		if (to < pos) return false;
+		while (pos < to)
+		{
+			long n = to - pos > (long)sizeof(junk) ? (long)sizeof(junk) : to - pos;
+			if (r->Read(junk, n) != n) return false;
+			pos += n;
+		}
+		return true;
+	}
+	bool ReadAt(long at, void *buf, long n)
+	{
+		if (!Skip(at)) return false;
+		if (r->Read(buf, n) != n) return false;
+		pos += n;
+		return true;
+	}
+};
+}
+
+bool FMD3Model::LoadStream(const char * path, FileReaderBase *stream, int length)
+{
+	#pragma pack(4)
+	struct hdr_t { DWORD Magic, Version; char Name[MAX_QPATH]; DWORD Flags, Num_Frames, Num_Tags, Num_Surfaces, Num_Skins, Ofs_Frames, Ofs_Tags, Ofs_Surfaces, Ofs_Eof; };
+	struct surf_t { DWORD Magic; char Name[MAX_QPATH]; DWORD Flags, Num_Frames, Num_Shaders, Num_Verts, Num_Triangles, Ofs_Triangles, Ofs_Shaders, Ofs_Texcoord, Ofs_XYZNormal, Ofs_End; };
+	struct shader_t { char Name[MAX_QPATH]; DWORD index; };
+	struct frame_t { float min_Bounds[3], max_Bounds[3], localorigin[3]; float radius; char Name[16]; };
+	struct vert_t { short x,y,z,n; };
+	#pragma pack()
+
+	MD3Stream in = { stream, 0 };
+	hdr_t hdr;
+	if (!in.ReadAt(0, &hdr, sizeof(hdr))) return false;
+
+	int nFrames = LittleLong(hdr.Num_Frames);
+	int nSurfaces = LittleLong(hdr.Num_Surfaces);
+	long ofsFrames = LittleLong(hdr.Ofs_Frames), ofsSurf = LittleLong(hdr.Ofs_Surfaces);
+	if (nFrames <= 0 || nSurfaces < 0 || ofsSurf < ofsFrames) return false;
+
+	MD3Frame *fr = new MD3Frame[nFrames];
+	MD3Surface *sf = new MD3Surface[nSurfaces];
+	TArray<FString> shaderNames;
+	TArray<int> shaderCounts;
+	bool ok = true;
+
+	for (int i = 0; i < nFrames && ok; i++)
+	{
+		frame_t f;
+		ok = in.ReadAt(ofsFrames + i * (long)sizeof(f), &f, sizeof(f));
+		if (ok)
+		{
+			strncpy(fr[i].Name, f.Name, 16);
+			for (int j = 0; j < 3; j++) fr[i].origin[j] = f.localorigin[j];
+		}
+	}
+
+	long surfStart = ofsSurf;
+	for (int i = 0; i < nSurfaces && ok; i++)
+	{
+		MD3Surface *s = &sf[i];
+		s->skins = NULL;
+		surf_t ss;
+		if (!(ok = in.ReadAt(surfStart, &ss, sizeof(ss)))) break;
+		s->numSkins = LittleLong(ss.Num_Shaders);
+		s->numTriangles = LittleLong(ss.Num_Triangles);
+		s->numVertices = LittleLong(ss.Num_Verts);
+		int nv = s->numVertices, nt = s->numTriangles, nsh = s->numSkins;
+
+		// The four sections, read in file order.
+		enum { SEC_SHADERS, SEC_TRIS, SEC_ST, SEC_XYZ };
+		long ofs[4] = { (long)LittleLong(ss.Ofs_Shaders), (long)LittleLong(ss.Ofs_Triangles),
+			(long)LittleLong(ss.Ofs_Texcoord), (long)LittleLong(ss.Ofs_XYZNormal) };
+		int order[4] = { 0, 1, 2, 3 };
+		for (int a = 0; a < 4; a++) for (int b = a + 1; b < 4; b++)
+			if (ofs[order[b]] < ofs[order[a]]) { int t = order[a]; order[a] = order[b]; order[b] = t; }
+
+		for (int k = 0; k < 4 && ok; k++)
+		{
+			long at = surfStart + ofs[order[k]];
+			switch (order[k])
+			{
+			case SEC_SHADERS:
+				shaderCounts.Push(nsh);
+				for (int j = 0; j < nsh && ok; j++)
+				{
+					shader_t sh;
+					if ((ok = in.ReadAt(at + j * (long)sizeof(sh), &sh, sizeof(sh))))
+					{
+						sh.Name[MAX_QPATH - 1] = 0;
+						shaderNames.Push(FString(sh.Name));
+					}
+				}
+				break;
+
+			case SEC_TRIS:
+			{
+				DWORD tri[3 * 256];
+				if (nv <= 65535) s->indices16 = new unsigned short[nt * 3];
+				else s->tris = new MD3Triangle[nt];
+				for (int t = 0; t < nt && ok; )
+				{
+					int n = nt - t > 256 ? 256 : nt - t;
+					if (!(ok = in.ReadAt(at + t * 12L, tri, n * 12L))) break;
+					for (int q = 0; q < n * 3; q++)
+					{
+						DWORD v = LittleLong(tri[q]);
+						if (s->indices16) s->indices16[t * 3 + q] = (unsigned short)v;
+						else s->tris[t + q / 3].VertIndex[q % 3] = v;
+					}
+					t += n;
+				}
+				break;
+			}
+
+			case SEC_ST:
+				s->texcoords = new MD3TexCoord[nv];
+				ok = in.ReadAt(at, s->texcoords, nv * 8L);
+				// float pairs, little-endian like the Vita
+				break;
+
+			case SEC_XYZ:
+			{
+				vert_t buf[512];
+				long total = (long)nv * nFrames;
+				s->vertices = new MD3Vertex[total];
+				for (long v = 0; v < total && ok; )
+				{
+					long n = total - v > 512 ? 512 : total - v;
+					if (!(ok = in.ReadAt(at + v * 8, buf, n * 8))) break;
+					for (long q = 0; q < n; q++)
+					{
+						s->vertices[v + q].x = LittleShort(buf[q].x);
+						s->vertices[v + q].y = LittleShort(buf[q].y);
+						s->vertices[v + q].z = LittleShort(buf[q].z);
+					}
+					v += n;
+				}
+				break;
+			}
+			}
+		}
+		surfStart += LittleLong(ss.Ofs_End);
+	}
+
+	if (!ok)
+	{
+		delete[] fr;
+		delete[] sf;
+		return false;
+	}
+
+	// Skins last: loading them may read the archive.
+	unsigned name = 0;
+	for (int i = 0; i < nSurfaces; i++)
+	{
+		MD3Surface *s = &sf[i];
+		s->skins = new FTexture *[s->numSkins];
+		for (int j = 0; j < s->numSkins; j++, name++)
+		{
+			s->skins[j] = LoadSkin("", shaderNames[name]);
+			if (s->skins[j] == NULL)
+				s->skins[j] = LoadSkin(path, shaderNames[name]);
+		}
+	}
+
+	numFrames = nFrames;
+	numTags = LittleLong(hdr.Num_Tags);
+	numSurfaces = nSurfaces;
+	frames = fr;
+	surfaces = sf;
+	return true;
+}
+#endif
+
 int FMD3Model::FindFrame(const char * name)
 {
 	for (int i=0;i<numFrames;i++)
