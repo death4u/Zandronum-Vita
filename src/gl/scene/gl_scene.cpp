@@ -59,6 +59,7 @@
 #include "gl/gl_functions.h"
 
 #include "gl/system/gl_interface.h"
+#include "gl/system/gl_cvars.h"
 #include "gl/system/gl_framebuffer.h"
 #include "gl/system/gl_cvars.h"
 #include "gl/renderer/gl_lightdata.h"
@@ -447,7 +448,7 @@ void FGLRenderer::RenderScene(int recursion)
 	gl_drawinfo->drawlists[GLDL_LIGHTFOGMASKED].Draw(pass);
 
 	// And now the multipass stuff
-	if (!gl_dynlight_shader && gl_lights)
+	if (GL_MULTIPASS_LIGHTS && !gl_dynlight_shader && gl_lights)
 	{
 		// First pass: empty background with sector light only
 
@@ -550,7 +551,13 @@ void FGLRenderer::RenderScene(int recursion)
 
 	// [BB] We may only do this when drawing the final eye.
 	GLint drawBuffer;
+#ifdef __vita__
+	// vitaGL doesn't know GL_DRAW_BUFFER and leaves the value uninitialized,
+	// which randomly skipped the missing-texture flood fill (holes in floors).
+	drawBuffer = GL_BACK;
+#else
 	glGetIntegerv ( GL_DRAW_BUFFER, &drawBuffer );
+#endif
 	if ( drawBuffer != GL_BACK_LEFT )
 	{
 		glDepthMask(false);							// don't write to Z-buffer!

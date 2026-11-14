@@ -29,6 +29,15 @@ EXTERN_CVAR(Int, gl_weaponlight)
 
 EXTERN_CVAR(Bool, gl_forcemultipass)
 
+// Without shaders, dynamic lights on walls and flats need 3-4 extra passes
+// per lit surface. That's far too slow for the Vita, so it's opt-in there.
+#ifdef __vita__
+EXTERN_CVAR(Bool, vita_multipasslights)
+#define GL_MULTIPASS_LIGHTS (vita_multipasslights)
+#else
+#define GL_MULTIPASS_LIGHTS true
+#endif
+
 EXTERN_CVAR (Bool, gl_lights);
 EXTERN_CVAR (Bool, gl_attachedlights);
 EXTERN_CVAR (Bool, gl_lights_checkside);

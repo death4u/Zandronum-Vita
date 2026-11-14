@@ -74,7 +74,10 @@ angle_t FNodeBuilder::PointToAngle (fixed_t x, fixed_t y)
 #else // [AL] !__APPLE__ || __llvm__
 	double ang = atan2 (double(y), double(x));
 #endif // [AL] __APPLE__ && !__llvm__
-	return angle_t(ang * rad2bam) << 1;
+	// Go through int: converting a negative double straight to an unsigned
+	// type saturates to 0 on ARM (x86 happens to wrap), which wrecked the
+	// GL node builder's seg sorting and left holes in maps without GL nodes.
+	return angle_t(int(ang * rad2bam)) << 1;
 }
 
 void FNodeBuilder::FindUsedVertices (vertex_t *oldverts, int max)

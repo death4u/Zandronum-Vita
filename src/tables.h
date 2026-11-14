@@ -114,7 +114,7 @@ inline double bam2rad(angle_t ang)
 }
 inline angle_t rad2bam(double ang)
 {
-	return angle_t(ang * (double(1<<30) / PI)) << 1;
+	return angle_t(int(ang * (double(1<<30) / PI))) << 1;	// via int: ARM saturates negative double->unsigned
 }
 
 #endif // __TABLES_H__

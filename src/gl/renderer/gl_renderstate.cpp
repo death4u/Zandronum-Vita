@@ -280,7 +280,10 @@ void FRenderState::Apply(bool forcenoshader)
 		{
 			glAlphaFunc = mAlphaFunc;
 			glAlphaThreshold = mAlphaThreshold;
-			::glBlendFunc(mAlphaFunc, mAlphaThreshold);
+			// [Vita] Was ::glBlendFunc(mAlphaFunc, mAlphaThreshold): desktop GL
+			// rejects those as blend factors, but vitaGL took them, which broke
+			// blending (surfaces vanished), and the alpha test was never set.
+			::glAlphaFunc(mAlphaFunc, mAlphaThreshold);
 		}
 		if (mAlphaTest != glAlphaTest)
 		{

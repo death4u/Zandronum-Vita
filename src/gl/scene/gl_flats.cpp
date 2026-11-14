@@ -466,14 +466,14 @@ inline void GLFlat::PutFlat(bool fog)
 			{ { GLDL_LIGHT, GLDL_LIGHTFOG }, { GLDL_LIGHTMASKED, GLDL_LIGHTFOGMASKED } }
 		};
 
-		bool light = gl_forcemultipass;
+		bool light = gl_forcemultipass && GL_MULTIPASS_LIGHTS;
 		bool masked = gltexture->isMasked() && ((renderflags&SSRF_RENDER3DPLANES) || stack);
 
 		if (!gl_fixedcolormap)
 		{
 			foggy = gl_CheckFog(&Colormap, lightlevel) || level.flags&LEVEL_HASFADETABLE;
 
-			if (gl_lights && !gl_dynlight_shader && GLRenderer->mLightCount)	// Are lights touching this sector?
+			if (GL_MULTIPASS_LIGHTS && gl_lights && !gl_dynlight_shader && GLRenderer->mLightCount)	// Are lights touching this sector?
 			{
 				for(int i=0;i<sector->subsectorcount;i++) if (sector->subsectors[i]->lighthead[0] != NULL)
 				{

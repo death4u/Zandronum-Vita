@@ -498,7 +498,7 @@ bool APathFollower::Interpolate ()
 				float fdz = FIXED2FLOAT(-dz);
 				float dist = (float)sqrt (fdx*fdx + fdy*fdy);
 				float ang = dist != 0.f ? (float)atan2 (fdz, dist) : 0;
-				pitch = (angle_t)(ang * 2147483648.f / PI);
+				pitch = (angle_t)(SQWORD)(ang * 2147483648.f / PI);
 			}
 		}
 		else
@@ -512,7 +512,7 @@ bool APathFollower::Interpolate ()
 					float lerped = Lerp (angle1, angle2 + 4294967296.f);
 					if (lerped >= 4294967296.f)
 					{
-						angle = (angle_t)(lerped - 4294967296.f);
+						angle = (angle_t)(SQWORD)(lerped - 4294967296.f);
 					}
 					else
 					{
@@ -524,7 +524,7 @@ bool APathFollower::Interpolate ()
 					float lerped = Lerp (angle1, angle2 - 4294967296.f);
 					if (lerped < 0.f)
 					{
-						angle = (angle_t)(lerped + 4294967296.f);
+						angle = (angle_t)(SQWORD)(lerped + 4294967296.f);
 					}
 					else
 					{
@@ -765,7 +765,7 @@ bool AMovingCamera::Interpolate ()
 			float dz = FIXED2FLOAT(z - tracer->z - tracer->height/2);
 			float dist = (float)sqrt (dx*dx + dy*dy);
 			float ang = dist != 0.f ? (float)atan2 (dz, dist) : 0;
-			pitch = (angle_t)(ang * 2147483648.f / PI);
+			pitch = (angle_t)(SQWORD)(ang * 2147483648.f / PI);
 		}
 
 		return true;

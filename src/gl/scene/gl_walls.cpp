@@ -152,11 +152,11 @@ void GLWall::PutWall(bool translucent)
 		};
 
 		bool masked;
-		bool light = gl_forcemultipass;
+		bool light = gl_forcemultipass && GL_MULTIPASS_LIGHTS;
 
 		if (!gl_fixedcolormap)
 		{
-			if (gl_lights && !gl_dynlight_shader)
+			if (GL_MULTIPASS_LIGHTS && gl_lights && !gl_dynlight_shader)
 			{
 				if (seg->sidedef == NULL)
 				{

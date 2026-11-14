@@ -181,7 +181,7 @@ void AAimingCamera::Tick ()
 			float dz = FIXED2FLOAT(z - tracer->z - tracer->height/2);
 			float dist = (float)sqrt (dx*dx + dy*dy);
 			float ang = dist != 0.f ? (float)atan2 (dz, dist) : 0;
-			int desiredpitch = (angle_t)(ang * 2147483648.f / PI);
+			int desiredpitch = (angle_t)(SQWORD)(ang * 2147483648.f / PI);
 			if (abs (desiredpitch - pitch) < MaxPitchChange)
 			{
 				pitch = desiredpitch;

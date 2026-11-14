@@ -175,29 +175,24 @@ extern "C" void Vita_LoadingDone(void)
 {
 	LoadingActive = false;
 	LoadingLines.clear();
+
+	// The game's renderer has its own display buffers now. Black out the
+	// launcher's and detach them from the display from this (the main)
+	// thread, so nothing the system restores after an overlay (PS button,
+	// PS+Select screenshot) can bring back the old loading screen.
+	if (FbBlock[0] >= 0 && FbBlock[1] >= 0)
+	{
+		for (int i = 0; i < 2; ++i)
+			memset(Fb[i], 0, FB_SIZE);
+		sceDisplaySetFrameBuf(NULL, SCE_DISPLAY_SETBUF_NEXTFRAME);
+	}
 }
 
-// Called for every frame the game shows. Once the game's own display has
-// been up for a while, the launcher framebuffers are freed: as long as they
-// existed, the system could switch back to them after an overlay (PS button,
-// PS+Select screenshot) and the old loading screen reappeared.
+// Called for every frame the game shows. The launcher framebuffers are kept
+// (black): 0015 freed them here, and the system killed the game when it went
+// back to them after PS / PS+Select.
 extern "C" void Vita_FrameShown(void)
 {
-	static int frames = 0;
-	if (FbBlock[0] < 0 && FbBlock[1] < 0)
-		return;
-	if (++frames < 30 || LoadingActive)
-		return;
-	for (int i = 0; i < 2; ++i)
-	{
-		if (FbBlock[i] >= 0)
-		{
-			sceKernelFreeMemBlock(FbBlock[i]);
-			FbBlock[i] = -1;
-			Fb[i] = NULL;
-		}
-	}
-	Vita_BootLog("launcher framebuffers released");
 }
 
 // ---------------------------------------------------------------------------
