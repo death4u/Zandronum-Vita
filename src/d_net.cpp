@@ -959,8 +959,18 @@ void NetUpdate (void)
 	// catch up: running all the missed tics makes the next frame even
 	// slower (a mod with heavy scripts went down to 1 fps that way). The
 	// game runs in slow motion instead and stays responsive.
-	if ((NETWORK_GetState() == NETSTATE_SINGLE || NETWORK_GetState() == NETSTATE_SINGLE_MULTIPLAYER) && vita_maxtics > 0 && newtics > vita_maxtics)
-		newtics = vita_maxtics;
+	// NetUpdate also runs in the middle of a frame (while rendering, loading
+	// etc.), so the limit is on the tics built but not yet run, not on the
+	// tics added per call; otherwise a slow frame still queued up a dozen
+	// tics (seen on hardware: ~13 tics per frame in a HaloDoom skirmish).
+	if ((NETWORK_GetState() == NETSTATE_SINGLE || NETWORK_GetState() == NETSTATE_SINGLE_MULTIPLAYER) && vita_maxtics > 0)
+	{
+		int pending = (maketic - gametic) / ticdup;
+		int room = vita_maxtics - pending;
+		if (room < 0) room = 0;
+		if (newtics > room)
+			newtics = room;
+	}
 #endif
 
 	if (newtics <= 0)	// nothing new to update
