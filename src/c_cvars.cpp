@@ -37,6 +37,7 @@
 #include <assert.h>
 
 #include "cmdlib.h"
+#include "vita/vita_perf.h"
 #include "configfile.h"
 #include "c_console.h"
 #include "c_dispatch.h"
@@ -88,6 +89,8 @@ bool FBaseCVar::m_DoNoSet = false;
 bool FBaseCVar::m_UseCallback = false;
 
 FBaseCVar *CVars = NULL;
+static void CVarHashInvalidate ();
+static void CVarHashAdd (FBaseCVar *var);
 
 int cvar_defflags;
 
@@ -126,6 +129,7 @@ FBaseCVar::FBaseCVar (const char *var_name, DWORD flags, void (*callback)(FBaseC
 		Name = copystring (var_name);
 		m_Next = CVars;
 		CVars = this;
+		CVarHashAdd (this);
 	}
 
 	if (var)
@@ -164,6 +168,7 @@ FBaseCVar::~FBaseCVar ()
 			else
 				CVars = m_Next;
 		}
+		CVarHashInvalidate ();
 		C_RemoveTabCommand(Name);
 		delete[] Name;
 	}
@@ -1613,13 +1618,101 @@ void C_ForgetCVars (void)
 	CVarBackups.Clear();
 }
 
+//==========================================================================
+//
+// [Vita] Hash index for FindCVar. Mods call GetCVar from ACS many times per
+// tic (HaloDoom: ~100), and walking 1000+ cvars with stricmp each time was a
+// measurable part of the frame on the Vita. The index is rebuilt lazily
+// whenever a cvar is created or destroyed; the first (newest) cvar with a
+// name wins, like the list walk.
+//
+//==========================================================================
+
+static FBaseCVar **CVarHash;
+static unsigned CVarHashSize;	// power of two, 0 = needs rebuild
+
+static unsigned CVarHashName (const char *name)
+{
+	unsigned h = 2166136261u;
+	for (; *name; name++)
+	{
+		unsigned char c = (unsigned char)*name;
+		if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+		h = (h ^ c) * 16777619u;
+	}
+	return h;
+}
+
+static void CVarHashInvalidate ()
+{
+	CVarHashSize = 0;
+}
+
+static unsigned CVarHashCount;
+
+static void CVarHashAdd (FBaseCVar *var)
+{
+	// A new cvar is the newest, so it replaces an older one of the same name.
+	if (CVarHashSize == 0 || ++CVarHashCount * 2 > CVarHashSize)
+	{
+		CVarHashSize = 0;
+		return;
+	}
+	unsigned i = CVarHashName (var->GetName()) & (CVarHashSize - 1);
+	while (CVarHash[i] != NULL)
+	{
+		if (stricmp (CVarHash[i]->GetName(), var->GetName()) == 0) break;
+		i = (i + 1) & (CVarHashSize - 1);
+	}
+	CVarHash[i] = var;
+}
+
+static void CVarHashBuild ()
+{
+	unsigned count = 0;
+	for (FBaseCVar *var = CVars; var != NULL; var = var->GetNext()) count++;
+	unsigned size = 64;
+	while (size < count * 4) size <<= 1;
+	CVarHashCount = count;
+	delete[] CVarHash;
+	CVarHash = new FBaseCVar *[size];
+	memset (CVarHash, 0, sizeof(FBaseCVar *) * size);
+	for (FBaseCVar *var = CVars; var != NULL; var = var->GetNext())
+	{
+		if (var->GetName() == NULL) continue;
+		unsigned i = CVarHashName (var->GetName()) & (size - 1);
+		bool dup = false;
+		while (CVarHash[i] != NULL)
+		{
+			if (stricmp (CVarHash[i]->GetName(), var->GetName()) == 0) { dup = true; break; }
+			i = (i + 1) & (size - 1);
+		}
+		if (!dup) CVarHash[i] = var;
+	}
+	CVarHashSize = size;
+}
+
 FBaseCVar *FindCVar (const char *var_name, FBaseCVar **prev)
 {
+	VITA_PERF(VPERF_FINDCVAR);
 	FBaseCVar *var;
 	FBaseCVar *dummy;
 
 	if (var_name == NULL)
 		return NULL;
+
+	if (prev == NULL)
+	{
+		// Fast path; callers that need the predecessor (for unlinking) walk the list.
+		if (CVarHashSize == 0) CVarHashBuild ();
+		unsigned i = CVarHashName (var_name) & (CVarHashSize - 1);
+		while ((var = CVarHash[i]) != NULL)
+		{
+			if (stricmp (var->GetName(), var_name) == 0) return var;
+			i = (i + 1) & (CVarHashSize - 1);
+		}
+		return NULL;
+	}
 
 	if (prev == NULL)
 		prev = &dummy;

@@ -38,6 +38,7 @@
 #include <assert.h>
 
 #include "templates.h"
+#include "vita/vita_perf.h"
 #include "doomdef.h"
 #include "p_local.h"
 #include "p_spec.h"
@@ -9119,6 +9120,32 @@ static bool CharArrayParms(int &capacity, int &offset, int &a, FACSStackMemory& 
 
 int DLevelScript::RunScript ()
 {
+#ifdef __vita__
+	// [Vita] Profile ACS time per script (see vita/vita_perf).
+	static TMap<int, const char *> names;
+	const char **name = names.CheckKey(script);
+	if (name == NULL)
+	{
+		FString pres = ScriptPresentation(script);
+		pres.Substitute(" ", "_");
+		names[script] = strdup(pres.GetChars());
+		name = names.CheckKey(script);
+	}
+	unsigned long long t0 = Vita_PerfNow();
+	int result = RunScriptInner();
+	Vita_PerfThinker((const void *)(intptr_t)(0x7F000000 ^ script), *name, Vita_PerfNow() - t0);
+	return result;
+}
+
+int DLevelScript::RunScriptInner ()
+{
+#else
+	return RunScriptInner();
+}
+
+int DLevelScript::RunScriptInner ()
+{
+#endif
 	DACSThinker *controller = DACSThinker::ActiveThinker;
 	ACSLocalVariables locals(localvars, numlocalvars);
 	ACSLocalArrays noarrays;
@@ -9244,6 +9271,9 @@ int DLevelScript::RunScript ()
 		{
 			pcd = NEXTWORD;
 		}
+#ifdef __vita__
+		Vita_PerfPcode(pcd);
+#endif
 
 		switch (pcd)
 		{
@@ -9466,7 +9496,13 @@ int DLevelScript::RunScript ()
 				// [TDRR] Context to allow local array access in ACSF functions.
 				struct ACSLocals callFuncLocals = { &locals, localarrays };
 
+#ifdef __vita__
+				unsigned long long vt0 = Vita_PerfNow();
 				int retval = CallFunction(argCount, funcIndex, &STACK(argCount), &callFuncLocals);
+				Vita_PerfAcsFunc(funcIndex, Vita_PerfNow() - vt0);
+#else
+				int retval = CallFunction(argCount, funcIndex, &STACK(argCount), &callFuncLocals);
+#endif
 				sp -= argCount-1;
 				STACK(1) = retval;
 			}
@@ -13257,8 +13293,12 @@ int P_StartScript (AActor *who, line_t *where, int script, const char *map, cons
 				}
 			}
 
-			DLevelScript *runningScript = P_GetScriptGoing (who, where, script,
-				scriptdata, module, args, argcount, flags);
+			DLevelScript *runningScript;
+			{
+				VITA_PERF(VPERF_ACSNEW);
+				runningScript = P_GetScriptGoing (who, where, script,
+					scriptdata, module, args, argcount, flags);
+			}
 			if (runningScript != NULL)
 			{
 				if (flags & ACS_WANTRESULT)

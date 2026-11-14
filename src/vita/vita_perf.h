@@ -19,6 +19,8 @@ enum
 	VPERF_THINKERS,		// part of TIC: all thinkers (actors, ACS scripts...)
 	VPERF_GC,			// part of THINKERS: garbage collector steps
 	VPERF_DB,			// SQLite (ACS database functions)
+	VPERF_ACSNEW,		// starting ACS scripts (P_GetScriptGoing)
+	VPERF_FINDCVAR,		// cvar lookups by name
 	VPERF_COUNT
 };
 
@@ -39,6 +41,11 @@ struct FVitaPerfScope
 
 // Time spent in one thinker's Tick(), grouped by class (top ones are logged).
 void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us);
+
+// ACS interpreter: opcode counts and ACSF function (PCD_CALLFUNC) times.
+extern unsigned Vita_PcodeCounts[1024];
+static inline void Vita_PerfPcode(int pcd) { Vita_PcodeCounts[pcd & 1023]++; }
+void Vita_PerfAcsFunc(int func, unsigned long long us);
 
 // Call once per displayed frame (after the swap).
 void Vita_PerfFrame();

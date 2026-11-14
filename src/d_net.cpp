@@ -924,6 +924,10 @@ void UnadjustBots ()
 //
 int gametime;
 
+#ifdef __vita__
+CVAR(Int, vita_maxtics, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+#endif
+
 void NetUpdate (void)
 {
 	int		lowtic;
@@ -949,6 +953,15 @@ void NetUpdate (void)
 	nowtime = I_GetTime (false);
 	newtics = nowtime - gametime;
 	gametime = nowtime;
+
+#ifdef __vita__
+	// [Vita] When a frame took longer than a couple of tics, don't try to
+	// catch up: running all the missed tics makes the next frame even
+	// slower (a mod with heavy scripts went down to 1 fps that way). The
+	// game runs in slow motion instead and stays responsive.
+	if ((NETWORK_GetState() == NETSTATE_SINGLE || NETWORK_GetState() == NETSTATE_SINGLE_MULTIPLAYER) && vita_maxtics > 0 && newtics > vita_maxtics)
+		newtics = vita_maxtics;
+#endif
 
 	if (newtics <= 0)	// nothing new to update
 	{

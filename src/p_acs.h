@@ -1040,6 +1040,7 @@ public:
 
 	void Serialize (FArchive &arc);
 	int RunScript ();
+	int RunScriptInner ();
 
 	inline void SetState (EScriptState newstate) { state = newstate; }
 	inline EScriptState GetState () { return state; }
