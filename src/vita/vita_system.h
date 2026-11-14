@@ -35,6 +35,10 @@ void Vita_Checkpoint(const char *stage);
 // (clear + swap) so system dialogs such as the error box can show.
 extern void (*Vita_GLDialogFrame)(void);
 
+// Appends engine console output to ux0:data/zandronum/console.txt
+// (truncated at start-up).
+void Vita_ConsoleWrite(const char *text);
+
 // Whether Sony's shader compiler (needed by vitaGL) is installed.
 int Vita_HaveShaderCompiler(void);
 

@@ -155,6 +155,14 @@ bool FMD3Model::Load(const char * path, int, const char * buffer, int length)
 		{
 			s->tris[i].VertIndex[j]=LittleLong(tris[i].vt_index[j]);
 		}
+#ifdef __vita__
+		if (s->numVertices <= 65535)
+		{
+			s->indices16 = new unsigned short[s->numTriangles * 3];
+			for (int i = 0; i < s->numTriangles; i++) for (int j = 0; j < 3; j++)
+				s->indices16[i * 3 + j] = (unsigned short)s->tris[i].VertIndex[j];
+		}
+#endif
 
 		// copy shaders (skins)
 		md3_shader_t * shader = (md3_shader_t*)(((char*)ss)+LittleLong(ss->Ofs_Shaders));
@@ -236,6 +244,21 @@ static float *MD3Expand(const short *v1, const short *v2, double inter, int numV
 void FMD3Model::RenderTriangles(MD3Surface * surf, const float * xyz)
 {
 	gl_RenderState.Apply();
+#ifdef __vita__
+	// [Vita] One glDrawElements per surface instead of 2 calls per vertex:
+	// HaloDoom's characters have ~6,500 triangles each.
+	if (surf->indices16 != NULL)
+	{
+		glVertexPointer(3, GL_FLOAT, 0, xyz);
+		glTexCoordPointer(2, GL_FLOAT, 0, surf->texcoords);
+		glEnableClientState(GL_VERTEX_ARRAY);
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		glDrawElements(GL_TRIANGLES, surf->numTriangles * 3, GL_UNSIGNED_SHORT, surf->indices16);
+		glDisableClientState(GL_VERTEX_ARRAY);
+		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+		return;
+	}
+#endif
 	glBegin(GL_TRIANGLES);
 	for(int i=0; i<surf->numTriangles;i++)
 	{

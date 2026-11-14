@@ -466,9 +466,16 @@ void I_PrintStr (const char *cp)
 	}
 	*dstp=0;
 
+#ifdef __vita__
+	// [Vita] Straight to ux0:data/zandronum/console.txt through sceIo; stdio
+	// output to stdout.txt is unreliable (lost or stale in Vita3K).
+	Vita_ConsoleWrite(copy);
+	delete [] copy;
+#else
 	fputs (copy, stdout);
 	delete [] copy;
 	fflush (stdout);
+#endif
 }
 
 #ifndef NO_GTK

@@ -253,6 +253,45 @@ FTexture *JPEGTexture_TryCreate(FileReader & data, int lumpnum)
 	return new FJPEGTexture (lumpnum, BigShort(first4bytes.w[1]), BigShort(first4bytes.w[0]));
 }
 
+
+//==========================================================================
+//
+// ReadReducedRow: reads up to 'denom' scanlines and box-averages them into
+// one output row of 'outw' pixels (denom 1 = a plain scanline read). The
+// bundled libjpeg is built without DCT scaling, so this is done here.
+//
+//==========================================================================
+
+static void ReadReducedRow(jpeg_decompress_struct &cinfo, int denom, int outw, JSAMPLE *fullrow, unsigned *acc, JSAMPLE *out)
+{
+	const int comps = cinfo.output_components;
+	if (denom == 1)
+	{
+		JSAMPLE *ptr = out;
+		jpeg_read_scanlines(&cinfo, &ptr, 1);
+		return;
+	}
+	memset(acc, 0, sizeof(unsigned) * outw * comps);
+	int rows = 0;
+	for (; rows < denom && cinfo.output_scanline < cinfo.output_height; rows++)
+	{
+		JSAMPLE *ptr = fullrow;
+		jpeg_read_scanlines(&cinfo, &ptr, 1);
+		for (unsigned sx = 0; sx < cinfo.output_width; sx++)
+		{
+			unsigned *a = acc + (sx / denom) * comps;
+			const JSAMPLE *p = fullrow + sx * comps;
+			for (int c = 0; c < comps; c++) a[c] += p[c];
+		}
+	}
+	for (int ox = 0; ox < outw; ox++)
+	{
+		int cols = MIN(denom, (int)cinfo.output_width - ox * denom);
+		unsigned n = MAX(1, rows * cols);
+		for (int c = 0; c < comps; c++) out[ox * comps + c] = (JSAMPLE)(acc[ox * comps + c] / n);
+	}
+}
+
 //==========================================================================
 //
 //
@@ -272,8 +311,9 @@ FJPEGTexture::FJPEGTexture (int lumpnum, int width, int height)
 	ScaleDenom = 1;
 #ifdef __vita__
 	// [Vita] Huge JPEGs (mods ship 6000x3000 ones) are decoded at 1/2, 1/4 or
-	// 1/8 size so they fit in memory; the texture scale keeps their size in
-	// the world. The GL renderer can't use more than 1024 pixels anyway.
+	// 1/8 size (box filter, row by row) so they fit in memory; the texture
+	// scale keeps their size in the world. The GL renderer can't use more
+	// than 1024 pixels anyway.
 	while ((Width > 1024 || Height > 1024) && ScaleDenom < 8)
 	{
 		ScaleDenom *= 2;
@@ -409,16 +449,16 @@ void FJPEGTexture::MakeTexture ()
 			throw -1;
 		}
 
-		cinfo.scale_num = 1;
-		cinfo.scale_denom = ScaleDenom;
 		jpeg_start_decompress(&cinfo);
 
 		int y = 0;
 		buff = new BYTE[cinfo.output_width * cinfo.output_components];
+		TArray<JSAMPLE> fullrow; fullrow.Resize(cinfo.output_width * cinfo.output_components);
+		TArray<unsigned> acc; acc.Resize(Width * cinfo.output_components);
 
-		while (cinfo.output_scanline < cinfo.output_height)
+		while (cinfo.output_scanline < cinfo.output_height && y < Height)
 		{
-			int num_scanlines = jpeg_read_scanlines(&cinfo, &buff, 1);
+			ReadReducedRow(cinfo, ScaleDenom, Width, &fullrow[0], &acc[0], buff);
 			BYTE *in = buff;
 			BYTE *out = Pixels + y;
 			switch (cinfo.out_color_space)
@@ -513,37 +553,37 @@ int FJPEGTexture::CopyTrueColorPixels(FBitmap *bmp, int x, int y, int rotate, FC
 			Printf (TEXTCOLOR_ORANGE "Unsupported color format\n");
 			throw -1;
 		}
-		cinfo.scale_num = 1;
-		cinfo.scale_denom = ScaleDenom;
 		jpeg_start_decompress(&cinfo);
 
 		int yc = 0;
-		buff = new BYTE[cinfo.output_height * cinfo.output_width * cinfo.output_components];
+		const int outw = Width, outh = Height;
+		buff = new BYTE[outh * outw * cinfo.output_components];
+		TArray<JSAMPLE> fullrow; fullrow.Resize(cinfo.output_width * cinfo.output_components);
+		TArray<unsigned> acc; acc.Resize(outw * cinfo.output_components);
 
-
-		while (cinfo.output_scanline < cinfo.output_height)
+		while (cinfo.output_scanline < cinfo.output_height && yc < outh)
 		{
-			BYTE * ptr = buff + cinfo.output_width * cinfo.output_components * yc;
-			jpeg_read_scanlines(&cinfo, &ptr, 1);
+			BYTE * ptr = buff + outw * cinfo.output_components * yc;
+			ReadReducedRow(cinfo, ScaleDenom, outw, &fullrow[0], &acc[0], ptr);
 			yc++;
 		}
 
 		switch (cinfo.out_color_space)
 		{
 		case JCS_RGB:
-			bmp->CopyPixelDataRGB(x, y, buff, cinfo.output_width, cinfo.output_height, 
-				3, cinfo.output_width * cinfo.output_components, rotate, CF_RGB, inf);
+			bmp->CopyPixelDataRGB(x, y, buff, outw, outh, 
+				3, outw * cinfo.output_components, rotate, CF_RGB, inf);
 			break;
 
 		case JCS_GRAYSCALE:
 			for(int i=0;i<256;i++) pe[i]=PalEntry(255,i,i,i);	// default to a gray map
-			bmp->CopyPixelData(x, y, buff, cinfo.output_width, cinfo.output_height, 
-				1, cinfo.output_width, rotate, pe, inf);
+			bmp->CopyPixelData(x, y, buff, outw, outh, 
+				1, outw, rotate, pe, inf);
 			break;
 
 		case JCS_CMYK:
-			bmp->CopyPixelDataRGB(x, y, buff, cinfo.output_width, cinfo.output_height, 
-				4, cinfo.output_width * cinfo.output_components, rotate, CF_CMYK, inf);
+			bmp->CopyPixelDataRGB(x, y, buff, outw, outh, 
+				4, outw * cinfo.output_components, rotate, CF_CMYK, inf);
 			break;
 
 		default:

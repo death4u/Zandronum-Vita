@@ -198,16 +198,19 @@ class FMD3Model : public FModel
 		MD3Triangle * tris;
 		MD3TexCoord * texcoords;
 		MD3Vertex * vertices;
+		unsigned short * indices16;	// [Vita] triangle list for glDrawElements
 
 		MD3Surface()
 		{
 			tris=NULL;
 			vertices=NULL;
 			texcoords=NULL;
+			indices16=NULL;
 		}
 
 		~MD3Surface()
 		{
+			if (indices16) delete [] indices16;
 			if (tris) delete [] tris;
 			if (vertices) delete [] vertices;
 			if (texcoords) delete [] texcoords;

@@ -112,6 +112,10 @@ static int PalFromRGB(uint32 rgb)
 	return LastPal;
 }
 
+#ifdef __vita__
+CVAR(Bool, vita_hidevisor, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+#endif
+
 void STACK_ARGS DCanvas::DrawTexture (FTexture *img, double x, double y, int tags_first, ...)
 {
 	va_list tags;
@@ -340,6 +344,16 @@ bool DCanvas::ParseDrawTextureTags (FTexture *img, double x, double y, DWORD tag
 	bool translationset = false;
 	bool virtBottom;
 
+#ifdef __vita__
+	// [Vita] HaloDoom's full-screen helmet visor (sprites HUD1A0/HUD2A0,
+	// 2560x1440) is drawn far too large and off-centre on the Vita; hide it
+	// until that is fixed.
+	if (img != NULL && vita_hidevisor && (!stricmp(img->Name, "HUD2A0") || !stricmp(img->Name, "HUD1A0")))
+	{
+		va_end(tags);
+		return false;
+	}
+#endif
 	if (img == NULL || img->UseType == FTexture::TEX_Null)
 	{
 		va_end(tags);

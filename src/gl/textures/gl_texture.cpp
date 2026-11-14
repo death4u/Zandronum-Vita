@@ -69,14 +69,39 @@ CCMD(gl_flush)
 	if (GLRenderer != NULL) GLRenderer->FlushTextures();
 }
 
+#ifdef __vita__
+// [Vita] How much of vitaGL's memory pools is still free.
+CCMD(vglmem)
+{
+	Printf("vitaGL free: CDRAM %u KB, RAM %u KB, phycont %u KB\n",
+		(unsigned)(vglMemFree(VGL_MEM_VRAM) / 1024), (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024),
+		(unsigned)(vglMemFree(VGL_MEM_PHYCONT) / 1024));
+}
+#endif
+
 // [BB] Changed default
-CUSTOM_CVAR(Int, gl_texture_filter, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINITCALL)
+#ifdef __vita__
+// [Vita] Linear filtering with mipmaps: mods with hi-res textures look
+// blocky with the classic nearest filter, and mipmaps are cheaper to sample.
+#define GL_TEXTURE_FILTER_DEFAULT 3
+#else
+#define GL_TEXTURE_FILTER_DEFAULT 0
+#endif
+CUSTOM_CVAR(Int, gl_texture_filter, GL_TEXTURE_FILTER_DEFAULT, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINITCALL)
 {
 	if (self < 0 || self > 5) self=4;
 	if (GLRenderer != NULL) GLRenderer->FlushTextures();
 }
 
-CUSTOM_CVAR(Int, gl_texture_format, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINITCALL)
+#ifdef __vita__
+// [Vita] DXT5 (vitaGL compresses on upload): a quarter of the memory of
+// RGBA8. Hi-res mods otherwise run vitaGL out of texture memory and
+// surfaces come out black.
+#define GL_TEXTURE_FORMAT_DEFAULT 7
+#else
+#define GL_TEXTURE_FORMAT_DEFAULT 0
+#endif
+CUSTOM_CVAR(Int, gl_texture_format, GL_TEXTURE_FORMAT_DEFAULT, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINITCALL)
 {
 	// [BB] The number of available texture modes depends on the GPU capabilities.
 	// RFL_TEXTURE_COMPRESSION gives us one additional mode and RFL_TEXTURE_COMPRESSION_S3TC
@@ -87,7 +112,7 @@ CUSTOM_CVAR(Int, gl_texture_format, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINI
 	else if ( gl.flags & RFL_TEXTURE_COMPRESSION )
 		numOfAvailableTextureFormat = 5;
 	if (self < 0 || self > numOfAvailableTextureFormat-1) self=0;
-	GLRenderer->FlushTextures();
+	if (GLRenderer != NULL) GLRenderer->FlushTextures();
 }
 
 CUSTOM_CVAR(Bool, gl_texture_usehires, true, CVAR_ARCHIVE|CVAR_NOINITCALL)

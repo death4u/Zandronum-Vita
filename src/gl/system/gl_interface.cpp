@@ -146,6 +146,12 @@ static void InitContext()
 //
 //==========================================================================
 
+#ifdef __vita__
+CVAR(Int, vita_glconfig, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+EXTERN_CVAR(Int, gl_texture_format)
+EXTERN_CVAR(Int, gl_texture_filter)
+#endif
+
 void gl_LoadExtensions()
 {
 	InitContext();
@@ -157,10 +163,19 @@ void gl_LoadExtensions()
 	// pixels so a mod's huge hi-res images fit in the Vita's memory.
 	gl.shadermodel = 0;
 	gl.vendorstring = (char*)glGetString(GL_VENDOR);
-	gl.flags |= RFL_NPOT_TEXTURE;
+	gl.flags |= RFL_NPOT_TEXTURE | RFL_TEXTURE_COMPRESSION | RFL_TEXTURE_COMPRESSION_S3TC;
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &gl.max_texturesize);
 	if (gl.max_texturesize <= 0 || gl.max_texturesize > 1024) gl.max_texturesize = 1024;
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+	// Configs saved by earlier builds have the desktop defaults (RGBA8,
+	// nearest filtering); switch them over once.
+	if (vita_glconfig < 1)
+	{
+		gl_texture_format = 7;
+		gl_texture_filter = 3;
+		vita_glconfig = 1;
+	}
 #else
 
 	const char *version = (const char*)glGetString(GL_VERSION);

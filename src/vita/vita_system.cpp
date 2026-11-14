@@ -194,6 +194,21 @@ extern "C" void Vita_FatalError(const char *text)
 
 void (*Vita_GLDialogFrame)(void) = NULL;
 
+extern "C" void Vita_ConsoleWrite(const char *text)
+{
+	// Opened per write: Vita3K only commits a file's data when it is closed.
+	static bool truncated = false;
+	if (text == NULL || *text == 0) return;
+	SceUID fd = sceIoOpen(VITA_DATA_ROOT "/console.txt",
+		SCE_O_WRONLY | SCE_O_CREAT | (truncated ? SCE_O_APPEND : SCE_O_TRUNC), 0777);
+	truncated = true;
+	if (fd >= 0)
+	{
+		sceIoWrite(fd, text, strlen(text));
+		sceIoClose(fd);
+	}
+}
+
 extern "C" int Vita_HaveShaderCompiler(void)
 {
 	SceIoStat st;
