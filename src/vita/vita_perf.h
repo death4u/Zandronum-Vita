@@ -25,6 +25,9 @@ enum
 };
 
 extern unsigned long long Vita_PerfAcc[VPERF_COUNT];
+// Detailed profiling (per thinker class, per ACS script, opcode counts):
+// vita_perfdetail. Off by default, since its timers cost time themselves.
+extern bool Vita_PerfDetail;
 extern int Vita_PerfCalls[VPERF_COUNT];
 
 static inline unsigned long long Vita_PerfNow() { return sceKernelGetProcessTimeWide(); }
@@ -44,7 +47,7 @@ void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us);
 
 // ACS interpreter: opcode counts and ACSF function (PCD_CALLFUNC) times.
 extern unsigned Vita_PcodeCounts[1024];
-static inline void Vita_PerfPcode(int pcd) { Vita_PcodeCounts[pcd & 1023]++; }
+static inline void Vita_PerfPcode(int pcd) { if (Vita_PerfDetail) Vita_PcodeCounts[pcd & 1023]++; }
 void Vita_PerfAcsFunc(int func, unsigned long long us);
 
 // Call once per displayed frame (after the swap).

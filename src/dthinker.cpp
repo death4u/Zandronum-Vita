@@ -472,19 +472,21 @@ int DThinker::TickThinkers (FThinkerList *list, FThinkerList *dest)
 				( static_cast<AActor *>( node ) != players[consoleplayer].mo ))
 			{
 #ifdef __vita__
-				unsigned long long t0 = Vita_PerfNow();
-				const PClass *cls = node->GetClass();
-				node->Tick();
-				Vita_PerfThinker(cls, cls->TypeName.GetChars(), Vita_PerfNow() - t0);
+				if (Vita_PerfDetail)
+				{
+					unsigned long long t0 = Vita_PerfNow();
+					const PClass *cls = node->GetClass();
+					node->Tick();
+					Vita_PerfThinker(cls, cls->TypeName.GetChars(), Vita_PerfNow() - t0);
+				}
+				else
+					node->Tick();
 #else
 				node->Tick();
 #endif
 			}
 			node->ObjectFlags &= ~OF_JustSpawned;
-			{
-				VITA_PERF(VPERF_GC);
-				GC::CheckGC();
-			}
+			GC::CheckGC();
 		}
 		node = NextToThink;
 	}

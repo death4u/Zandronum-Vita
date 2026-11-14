@@ -1694,7 +1694,6 @@ static void CVarHashBuild ()
 
 FBaseCVar *FindCVar (const char *var_name, FBaseCVar **prev)
 {
-	VITA_PERF(VPERF_FINDCVAR);
 	FBaseCVar *var;
 	FBaseCVar *dummy;
 

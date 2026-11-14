@@ -120,7 +120,13 @@ CUSTOM_CVAR(Bool, gl_texture_usehires, true, CVAR_ARCHIVE|CVAR_NOINITCALL)
 	if (GLRenderer != NULL) GLRenderer->FlushTextures();
 }
 
+#ifdef __vita__
+// [Vita] Upload (and DXT-compress) a level's textures while it loads
+// instead of stalling the game the first time each one is seen.
+CVAR(Bool, gl_precache, true, CVAR_ARCHIVE)
+#else
 CVAR(Bool, gl_precache, false, CVAR_ARCHIVE)
+#endif
 CVAR(Bool, gl_clamp_per_texture, false,  CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
 CVAR(Bool, gl_trimsprites, true, CVAR_ARCHIVE);

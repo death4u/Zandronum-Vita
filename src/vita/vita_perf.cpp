@@ -9,6 +9,12 @@
 #endif
 
 CVAR(Bool, vita_perflog, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Bool, vita_perfdetail, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	Vita_PerfDetail = self;
+}
+
+bool Vita_PerfDetail;
 
 unsigned long long Vita_PerfAcc[VPERF_COUNT];
 int Vita_PerfCalls[VPERF_COUNT];
@@ -45,6 +51,7 @@ void Vita_PerfAcsFunc(int func, unsigned long long us)
 
 void Vita_PerfFrame()
 {
+	Vita_FrameShown();
 	static unsigned long long periodStart = 0, lastFrame = 0, worst = 0;
 	static int frames = 0;
 	const unsigned long long now = Vita_PerfNow();
@@ -81,6 +88,11 @@ void Vita_PerfFrame()
 #endif
 			);
 		Vita_ConsoleWrite(line);
+	}
+	if (vita_perflog && Vita_PerfDetail)
+	{
+		const double f = frames > 0 ? 1.0 / frames : 0;
+		char line[1024];
 
 		// Where the logic time goes: thinkers in total, GC, database, and the
 		// most expensive thinker classes (ms per frame, ticks per frame).

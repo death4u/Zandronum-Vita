@@ -851,6 +851,55 @@ FSpriteModelFrame * gl_FindModelFrame(const PClass * ti, int sprite, int frame, 
 }
 
 
+
+//===========================================================================
+//
+// [Vita] Level precache for models: marks the skins of every model used by
+// an actor class present in the level (inventory included) in the texture
+// hitlist, and loads those models while they fit in the model budget, so
+// the first sight of a weapon or enemy doesn't stall the game.
+//
+//===========================================================================
+
+void gl_PrecacheModels(BYTE *hitlist)
+{
+	TMap<const PClass *, bool> classes;
+	{
+		AActor *actor;
+		TThinkerIterator<AActor> it;
+		while ((actor = it.Next()) != NULL)
+			classes[actor->GetClass()] = true;
+	}
+	TMap<FModel *, bool> wanted;
+	for (unsigned i = 0; i < SpriteModelFrames.Size(); i++)
+	{
+		const FSpriteModelFrame &smf = SpriteModelFrames[i];
+		if (smf.type == NULL || classes.CheckKey(smf.type) == NULL)
+			continue;
+		for (int m = 0; m < MAX_MODELS_PER_FRAME; m++)
+		{
+			if (smf.skins[m] != NULL) hitlist[smf.skins[m]->id.GetIndex()] |= 1;
+			if (smf.surfaceskins != NULL)
+				for (int sf = 0; sf < MD3_MAX_SURFACES; sf++)
+					if (smf.surfaceskins[m][sf] != NULL) hitlist[smf.surfaceskins[m][sf]->id.GetIndex()] |= 1;
+			if (smf.models[m] != NULL) wanted[smf.models[m]] = true;
+		}
+	}
+#ifdef __vita__
+	const int budget = MAX(8, (int)gl_vita_modelbudget) << 20;
+	int loaded = 0;
+	TMap<FModel *, bool>::Iterator mit(wanted);
+	TMap<FModel *, bool>::Pair *pair;
+	while (mit.NextPair(pair))
+	{
+		FLazyModel *lazy = static_cast<FLazyModel *>(pair->Key);
+		if (FLazyModel::LoadedBytes + lazy->mSize > budget * 3 / 4) continue;
+		if (lazy->Get() != NULL) loaded++;
+	}
+	Printf("Precached %d models (%d MB)\n", loaded, FLazyModel::LoadedBytes >> 20);
+#endif
+}
+
 //===========================================================================
 //
 // gl_RenderModel

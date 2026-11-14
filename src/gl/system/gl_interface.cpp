@@ -150,6 +150,7 @@ static void InitContext()
 CVAR(Int, vita_glconfig, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 EXTERN_CVAR(Int, gl_texture_format)
 EXTERN_CVAR(Int, gl_texture_filter)
+EXTERN_CVAR(Bool, gl_precache)
 #endif
 
 void gl_LoadExtensions()
@@ -168,13 +169,20 @@ void gl_LoadExtensions()
 	if (gl.max_texturesize <= 0 || gl.max_texturesize > 1024) gl.max_texturesize = 1024;
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
+	// Faster (normal instead of high quality) DXT compression on upload.
+	glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
+
 	// Configs saved by earlier builds have the desktop defaults (RGBA8,
-	// nearest filtering); switch them over once.
+	// nearest filtering, no precaching); switch them over once.
 	if (vita_glconfig < 1)
 	{
 		gl_texture_format = 7;
 		gl_texture_filter = 3;
-		vita_glconfig = 1;
+	}
+	if (vita_glconfig < 2)
+	{
+		gl_precache = true;
+		vita_glconfig = 2;
 	}
 #else
 

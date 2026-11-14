@@ -472,6 +472,9 @@ void SDLFB::Update ()
 
 	SDLFlipCycles.Clock();
 	SDL_Flip (Screen);
+#ifdef __vita__
+	Vita_FrameShown();
+#endif
 	SDLFlipCycles.Unclock();
 
 	BlitCycles.Unclock();

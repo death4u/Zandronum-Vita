@@ -1113,6 +1113,10 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RadiusThrust)
 // Execute a line special / script
 //
 //==========================================================================
+#ifdef __vita__
+CVAR(Int, vita_acsthrottle, 3, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+#endif
+
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CallSpecial)
 {
 	ACTION_PARAM_START(6);
@@ -1133,6 +1137,28 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CallSpecial)
 		}
 	}
 
+#ifdef __vita__
+	// [Vita] Some mods start the same script from an actor's state every tic
+	// (HaloDoom: every weapon pickup runs its 32-player HUD prompt script
+	// each tic). With vita_acsthrottle N > 1, such ACS_ExecuteAlways calls
+	// run only every Nth tic per actor and script; prompts drawn by them are
+	// held for several tics anyway.
+	if (special == ACS_ExecuteAlways && vita_acsthrottle > 1)
+	{
+		static TMap<QWORD, int> lastStart;
+		static int lastLevelTime = 0;
+		if (level.time < lastLevelTime) lastStart.Clear();	// new level
+		lastLevelTime = level.time;
+		QWORD key = ((QWORD)(size_t)self << 16) ^ (QWORD)(arg1 & 0xFFFF);
+		int *last = lastStart.CheckKey(key);
+		if (last != NULL && level.time - *last < vita_acsthrottle && level.time >= *last)
+		{
+			ACTION_SET_RESULT(true);
+			return;
+		}
+		lastStart[key] = level.time;
+	}
+#endif
 	bool res = !!P_ExecuteSpecial(special, NULL, self, false, arg1, arg2, arg3, arg4, arg5);
 
 	ACTION_SET_RESULT(res);

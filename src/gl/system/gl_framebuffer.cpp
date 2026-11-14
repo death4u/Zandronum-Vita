@@ -350,6 +350,8 @@ int OpenGLFrameBuffer::GetPageCount()
 }
 
 
+void gl_PrecacheModels(BYTE *hitlist);
+
 void OpenGLFrameBuffer::GetHitlist(BYTE *hitlist)
 {
 	Super::GetHitlist(hitlist);
@@ -377,6 +379,7 @@ void OpenGLFrameBuffer::GetHitlist(BYTE *hitlist)
 
 
 	// check model skins
+	gl_PrecacheModels(hitlist);
 }
 
 //==========================================================================

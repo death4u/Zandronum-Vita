@@ -9122,6 +9122,8 @@ int DLevelScript::RunScript ()
 {
 #ifdef __vita__
 	// [Vita] Profile ACS time per script (see vita/vita_perf).
+	if (!Vita_PerfDetail)
+		return RunScriptInner();
 	static TMap<int, const char *> names;
 	const char **name = names.CheckKey(script);
 	if (name == NULL)
@@ -9497,9 +9499,9 @@ int DLevelScript::RunScriptInner ()
 				struct ACSLocals callFuncLocals = { &locals, localarrays };
 
 #ifdef __vita__
-				unsigned long long vt0 = Vita_PerfNow();
+				unsigned long long vt0 = Vita_PerfDetail ? Vita_PerfNow() : 0;
 				int retval = CallFunction(argCount, funcIndex, &STACK(argCount), &callFuncLocals);
-				Vita_PerfAcsFunc(funcIndex, Vita_PerfNow() - vt0);
+				if (Vita_PerfDetail) Vita_PerfAcsFunc(funcIndex, Vita_PerfNow() - vt0);
 #else
 				int retval = CallFunction(argCount, funcIndex, &STACK(argCount), &callFuncLocals);
 #endif
@@ -13294,11 +13296,8 @@ int P_StartScript (AActor *who, line_t *where, int script, const char *map, cons
 			}
 
 			DLevelScript *runningScript;
-			{
-				VITA_PERF(VPERF_ACSNEW);
-				runningScript = P_GetScriptGoing (who, where, script,
-					scriptdata, module, args, argcount, flags);
-			}
+			runningScript = P_GetScriptGoing (who, where, script,
+				scriptdata, module, args, argcount, flags);
 			if (runningScript != NULL)
 			{
 				if (flags & ACS_WANTRESULT)

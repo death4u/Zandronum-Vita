@@ -27,6 +27,9 @@ void Vita_RunLauncher(int *argc, char ***argv);
 void Vita_LoadingStatus(const char *line);
 void Vita_LoadingDone(void);
 
+// Once per frame the game displays (frees the launcher's framebuffers).
+void Vita_FrameShown(void);
+
 // The console's IP address (dotted) on the current network, or 127.0.0.1.
 void Vita_GetLocalIP(char *buf, int size);
 void Vita_Checkpoint(const char *stage);

@@ -22,6 +22,9 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/processmgr.h>
 
+#include <zlib.h>
+#include <set>
+
 #include "vita_system.h"
 #include "vita_font.inc"
 
@@ -174,6 +177,29 @@ extern "C" void Vita_LoadingDone(void)
 	LoadingLines.clear();
 }
 
+// Called for every frame the game shows. Once the game's own display has
+// been up for a while, the launcher framebuffers are freed: as long as they
+// existed, the system could switch back to them after an overlay (PS button,
+// PS+Select screenshot) and the old loading screen reappeared.
+extern "C" void Vita_FrameShown(void)
+{
+	static int frames = 0;
+	if (FbBlock[0] < 0 && FbBlock[1] < 0)
+		return;
+	if (++frames < 30 || LoadingActive)
+		return;
+	for (int i = 0; i < 2; ++i)
+	{
+		if (FbBlock[i] >= 0)
+		{
+			sceKernelFreeMemBlock(FbBlock[i]);
+			FbBlock[i] = -1;
+			Fb[i] = NULL;
+		}
+	}
+	Vita_BootLog("launcher framebuffers released");
+}
+
 // ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------
@@ -299,9 +325,9 @@ static bool NameLess(const Entry &ea, const Entry &eb)
 // Remembered choice
 // ---------------------------------------------------------------------------
 
-// launcher.cfg format version. Version 2 added the built-in Skulltag actors
-// entry; older files get it ticked by default.
-#define LAUNCHER_CFG_VERSION 2
+// launcher.cfg format version (3: the built-in Skulltag actors are no longer
+// a list entry; they load automatically when a mod needs them).
+#define LAUNCHER_CFG_VERSION 3
 
 static void LoadConfig(std::string &iwad, std::vector<std::string> &mods, int &version)
 {
@@ -331,6 +357,182 @@ static void SaveConfig(const std::string &iwad, const std::vector<std::string> &
 	fclose(f);
 }
 
+
+// ---------------------------------------------------------------------------
+// Does a mod need Skulltag's actors? Many Zandronum mods inherit from or
+// spawn Skulltag's classes (RedArmor, DarkImp, BFG10K...), which PC users get
+// by loading skulltag_actors.pk3 or skulltag_content. The launcher looks at
+// the DECORATE code of the ticked mods and adds the built-in
+// app0:/skulltag_actors.pk3 only when one of them names a Skulltag actor.
+// ---------------------------------------------------------------------------
+
+static unsigned Rd16(const unsigned char *p) { return p[0] | (p[1] << 8); }
+static unsigned Rd32(const unsigned char *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned)p[3] << 24); }
+
+// Calls fn(name, text) for each DECORATE text in a zip/pk3 (text files named
+// decorate* or under actors/), or each DECORATE lump of a WAD.
+template<class F> static void ForEachDecorate(const std::string &path, F fn)
+{
+	FILE *f = fopen(path.c_str(), "rb");
+	if (f == NULL) return;
+	unsigned char hdr[12];
+	if (fread(hdr, 1, 12, f) != 12) { fclose(f); return; }
+	if (!memcmp(hdr, "PWAD", 4) || !memcmp(hdr, "IWAD", 4))
+	{
+		unsigned num = Rd32(hdr + 4), dir = Rd32(hdr + 8);
+		std::vector<unsigned char> d(num * 16);
+		if (num < 65536 && fseek(f, dir, SEEK_SET) == 0 && fread(d.data(), 16, num, f) == num)
+		{
+			for (unsigned i = 0; i < num; i++)
+			{
+				const unsigned char *e = &d[i * 16];
+				char name[9] = {};
+				memcpy(name, e + 8, 8);
+				unsigned pos = Rd32(e), size = Rd32(e + 4);
+				if (strncasecmp(name, "DECORATE", 8) || size == 0 || size > (4u << 20)) continue;
+				std::string text(size, '\0');
+				if (fseek(f, pos, SEEK_SET) == 0 && fread(&text[0], 1, size, f) == size) fn(name, text);
+			}
+		}
+		fclose(f);
+		return;
+	}
+	if (memcmp(hdr, "PK\3\4", 4)) { fclose(f); return; }
+	// Find the end-of-central-directory record in the last 64 KB.
+	fseek(f, 0, SEEK_END);
+	long fsize = ftell(f);
+	long tail = fsize < 65558 ? fsize : 65558;
+	std::vector<unsigned char> t(tail);
+	fseek(f, fsize - tail, SEEK_SET);
+	if (fread(t.data(), 1, tail, f) != (size_t)tail) { fclose(f); return; }
+	long eocd = -1;
+	for (long i = tail - 22; i >= 0; i--)
+		if (Rd32(&t[i]) == 0x06054b50) { eocd = i; break; }
+	if (eocd < 0) { fclose(f); return; }
+	unsigned entries = Rd16(&t[eocd + 10]), cdsize = Rd32(&t[eocd + 12]), cdoff = Rd32(&t[eocd + 16]);
+	std::vector<unsigned char> cd(cdsize);
+	if (fseek(f, cdoff, SEEK_SET) != 0 || fread(cd.data(), 1, cdsize, f) != cdsize) { fclose(f); return; }
+	size_t o = 0;
+	for (unsigned i = 0; i < entries && o + 46 <= cdsize; i++)
+	{
+		const unsigned char *e = &cd[o];
+		if (Rd32(e) != 0x02014b50) break;
+		unsigned method = Rd16(e + 10), csize = Rd32(e + 20), usize = Rd32(e + 24);
+		unsigned nlen = Rd16(e + 28), xlen = Rd16(e + 30), clen = Rd16(e + 32), loff = Rd32(e + 42);
+		std::string name((const char *)e + 46, nlen);
+		o += 46 + nlen + xlen + clen;
+		std::string lname = Lower(name);
+		size_t slash = lname.find_last_of('/');
+		std::string base = slash == std::string::npos ? lname : lname.substr(slash + 1);
+		bool want = lname.find("decorate") != std::string::npos || lname.compare(0, 7, "actors/") == 0;
+		std::string ext = Extension(lname);
+		if (!want || usize == 0 || usize > (4u << 20) || ext == "png" || ext == "jpg" || ext == "md3" || ext == "wav" || ext == "ogg")
+			continue;
+		unsigned char lh[30];
+		if (fseek(f, loff, SEEK_SET) != 0 || fread(lh, 1, 30, f) != 30 || Rd32(lh) != 0x04034b50) continue;
+		fseek(f, loff + 30 + Rd16(lh + 26) + Rd16(lh + 28), SEEK_SET);
+		std::vector<unsigned char> comp(csize);
+		if (fread(comp.data(), 1, csize, f) != csize) continue;
+		std::string text(usize, '\0');
+		if (method == 0 && csize == usize)
+			memcpy(&text[0], comp.data(), usize);
+		else if (method == 8)
+		{
+			z_stream zs = {};
+			if (inflateInit2(&zs, -MAX_WBITS) != Z_OK) continue;
+			zs.next_in = comp.data(); zs.avail_in = csize;
+			zs.next_out = (Bytef *)&text[0]; zs.avail_out = usize;
+			int r = inflate(&zs, Z_FINISH);
+			inflateEnd(&zs);
+			if (r != Z_STREAM_END) continue;
+		}
+		else continue;
+		fn(name, text);
+	}
+	fclose(f);
+}
+
+// Actor names in DECORATE text. parentsonly = false: the names defined by
+// "actor <name> ..." headers. parentsonly = true: the classes a mod builds
+// on (": <parent>", "replaces <x>"), plus every "quoted" word if wantquoted.
+static void CollectNames(const std::string &text, std::set<std::string> &out, bool parentsonly, bool wantquoted)
+{
+	size_t i = 0, n = text.size();
+	while (i < n)
+	{
+		size_t eol = text.find('\n', i);
+		if (eol == std::string::npos) eol = n;
+		std::string line = text.substr(i, eol - i);
+		i = eol + 1;
+		if (wantquoted)
+		{
+			for (size_t q = line.find('"'); q != std::string::npos; )
+			{
+				size_t e = line.find('"', q + 1);
+				if (e == std::string::npos) break;
+				out.insert(Lower(line.substr(q + 1, e - q - 1)));
+				q = line.find('"', e + 1);
+			}
+		}
+		// tokenize the header
+		std::vector<std::string> tok;
+		std::string cur;
+		for (size_t k = 0; k <= line.size(); k++)
+		{
+			char c = k < line.size() ? line[k] : ' ';
+			if (c == '/' && k + 1 < line.size() && line[k + 1] == '/') c = ' ', k = line.size();
+			if (isspace((unsigned char)c) || c == ':' || c == '{')
+			{
+				if (!cur.empty()) tok.push_back(Lower(cur));
+				cur.clear();
+				if (c == ':') tok.push_back(":");
+				if (c == '{') break;
+			}
+			else cur += c;
+		}
+		if (tok.size() < 2 || tok[0] != "actor") continue;
+		if (!parentsonly)
+		{	// definitions: only the defined names
+			out.insert(tok[1]);
+			continue;
+		}
+		for (size_t k = 2; k + 1 < tok.size(); k++)
+			if (tok[k] == ":" || tok[k] == "replaces") out.insert(tok[k + 1]);
+	}
+}
+
+static bool ModsNeedSkulltagActors(const std::vector<std::string> &mods)
+{
+	// Skulltag-only classes: defined in skulltag_actors.pk3 but not among the
+	// engine's own (it also redefines some, e.g. BulletPuff).
+	std::set<std::string> stnames, engine;
+	ForEachDecorate("app0:/skulltag_actors.pk3", [&](const std::string &, const std::string &text) {
+		CollectNames(text, stnames, false, false);
+	});
+	ForEachDecorate("app0:/zandronum.pk3", [&](const std::string &, const std::string &text) {
+		CollectNames(text, engine, false, false);
+	});
+	for (std::set<std::string>::iterator it = engine.begin(); it != engine.end(); ++it)
+		stnames.erase(*it);
+	if (stnames.empty()) return false;
+	for (size_t m = 0; m < mods.size(); m++)
+	{
+		std::set<std::string> refs;
+		ForEachDecorate(mods[m], [&](const std::string &, const std::string &text) {
+			CollectNames(text, refs, true, true);
+		});
+		for (std::set<std::string>::iterator it = refs.begin(); it != refs.end(); ++it)
+		{
+			if (stnames.count(*it))
+			{
+				Vita_BootLog("launcher: %s uses Skulltag actor '%s', loading skulltag_actors.pk3", mods[m].c_str(), it->c_str());
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 // ---------------------------------------------------------------------------
 // The launcher
 // ---------------------------------------------------------------------------
@@ -348,10 +550,10 @@ static void BuildArgs(int *argc, char ***argv, const std::string &iwad, const st
 		args.push_back(iwad);
 	}
 	std::vector<std::string> files, dehs;
-	// Skulltag's own resources (skulltag_actors, skulltag_content/_data and
-	// the like) go first, as PC launchers do, since mods build on them.
-	// skulltag_content already contains Skulltag's actors, so the built-in
-	// skulltag_actors.pk3 is left out when it is ticked.
+	// Skulltag's own resources (skulltag_content/_data and the like) go
+	// first, as PC launchers do, since mods build on them. skulltag_content
+	// already contains Skulltag's actors; otherwise the built-in
+	// skulltag_actors.pk3 is added when a ticked mod uses Skulltag actors.
 	bool havecontent = false;
 	for (size_t i = 0; i < mods.size(); ++i)
 	{
@@ -360,16 +562,12 @@ static void BuildArgs(int *argc, char ***argv, const std::string &iwad, const st
 		if (base.compare(0, 16, "skulltag_content") == 0)
 			havecontent = true;
 	}
+	if (!havecontent && !mods.empty() && ModsNeedSkulltagActors(mods))
+		files.push_back("app0:/skulltag_actors.pk3");
 	for (int pass = 0; pass < 2; ++pass)
 	{
 		for (size_t i = 0; i < mods.size(); ++i)
 		{
-			if (havecontent && mods[i] == "app0:/skulltag_actors.pk3")
-			{
-				if (pass == 0)
-					Vita_BootLog("launcher: skulltag_content ticked, leaving out the built-in skulltag_actors.pk3");
-				continue;
-			}
 			size_t slash = mods[i].find_last_of("/:");
 			std::string base = Lower(slash == std::string::npos ? mods[i] : mods[i].substr(slash + 1));
 			bool st = base.compare(0, 9, "skulltag_") == 0;
@@ -443,16 +641,6 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 	std::sort(iwads.begin(), iwads.end(), NameLess);
 	std::sort(mods.begin(), mods.end(), NameLess);
 
-	// Skulltag's actors ship inside the VPK (as with PC Zandronum, they are
-	// not loaded unless asked for). Many Zandronum mods build on them, so they
-	// come first in the list and always load before the other mods.
-	{
-		Entry st;
-		st.Path = "app0:/skulltag_actors.pk3";
-		st.Name = "skulltag_actors.pk3 (built in)";
-		st.IsIWAD = false;
-		mods.insert(mods.begin(), st);
-	}
 	Vita_BootLog("launcher: %u IWADs, %u mods", (unsigned)iwads.size(), (unsigned)mods.size());
 
 	// Restore the last choice where the files still exist.
@@ -467,13 +655,6 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 	for (size_t j = 0; j < lastmods.size(); ++j)
 		for (size_t i = 0; i < mods.size(); ++i)
 			if (mods[i].Path == lastmods[j]) order.push_back((int)i);
-	if (cfgversion < 2 && std::find(order.begin(), order.end(), 0) == order.end())
-		order.insert(order.begin(), 0);	// first run with this launcher: tick Skulltag actors
-	{	// the built-in always loads first
-		std::vector<int>::iterator it = std::find(order.begin(), order.end(), 0);
-		if (it != order.end() && it != order.begin()) { order.erase(it); order.insert(order.begin(), 0); }
-	}
-
 	if (!FbInit())
 	{
 		Vita_BootLog("launcher: no framebuffer, starting with the saved choice");
@@ -562,7 +743,6 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 				int m = cursor - 1 - (int)iwads.size();
 				std::vector<int>::iterator it = std::find(order.begin(), order.end(), m);
 				if (it != order.end()) order.erase(it);
-				else if (m == 0) order.insert(order.begin(), m);	// built-in loads first
 				else order.push_back(m);
 			}
 		}
