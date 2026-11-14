@@ -26,13 +26,13 @@
 
 // ---------------------------------------------------------------------------
 // Process memory. The SFO sets ATTRIBUTE2=12 (extended memory mode), which
-// gives the app roughly 365 MB of main memory; the newlib heap takes 192 MB
-// of it and SDL's GXM buffers, the network pool and thread stacks the rest.
+// gives the app roughly 365 MB of main memory; the newlib heap takes 256 MB
+// of it and vitaGL/SDL's GPU pools, the network pool and thread stacks the rest.
 // Zandronum recurses deeply (BSP traversal, ACS, parsers), so the main
 // thread gets a large stack instead of the 256 KB default.
 // ---------------------------------------------------------------------------
 extern "C" {
-int _newlib_heap_size_user = 192 * 1024 * 1024;
+int _newlib_heap_size_user = 256 * 1024 * 1024;
 unsigned int sceUserMainThreadStackSize = 4 * 1024 * 1024;
 }
 

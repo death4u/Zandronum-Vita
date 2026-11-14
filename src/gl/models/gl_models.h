@@ -333,7 +333,11 @@ struct FSpriteModelFrame
 {
 	FModel * models[MAX_MODELS_PER_FRAME];
 	FTexture * skins[MAX_MODELS_PER_FRAME];
-	FTexture * surfaceskins[MAX_MODELS_PER_FRAME][MD3_MAX_SURFACES];
+	// Per-surface skins, [MAX_MODELS_PER_FRAME][MD3_MAX_SURFACES], or NULL when
+	// the definition has none. Shared by all frames of a MODELDEF block: kept
+	// inline it made each frame ~650 bytes, and mods with 100,000+ FrameIndex
+	// lines (HaloDoom) then needed over 100 MB for this table alone.
+	FTexture * (*surfaceskins)[MD3_MAX_SURFACES];
 	int modelframes[MAX_MODELS_PER_FRAME];
 	float xscale, yscale, zscale;
 	// [BB] Added zoffset, rotation parameters and flags.

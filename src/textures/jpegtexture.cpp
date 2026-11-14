@@ -196,6 +196,7 @@ protected:
 
 	BYTE *Pixels;
 	Span DummySpans[2];
+	int ScaleDenom;	// [Vita] decode at 1/ScaleDenom size (libjpeg DCT scaling)
 
 	void MakeTexture ();
 
@@ -268,6 +269,23 @@ FJPEGTexture::FJPEGTexture (int lumpnum, int width, int height)
 
 	Width = width;
 	Height = height;
+	ScaleDenom = 1;
+#ifdef __vita__
+	// [Vita] Huge JPEGs (mods ship 6000x3000 ones) are decoded at 1/2, 1/4 or
+	// 1/8 size so they fit in memory; the texture scale keeps their size in
+	// the world. The GL renderer can't use more than 1024 pixels anyway.
+	while ((Width > 1024 || Height > 1024) && ScaleDenom < 8)
+	{
+		ScaleDenom *= 2;
+		Width = (width + ScaleDenom - 1) / ScaleDenom;
+		Height = (height + ScaleDenom - 1) / ScaleDenom;
+	}
+	if (ScaleDenom > 1)
+	{
+		xScale = FRACUNIT / ScaleDenom;
+		yScale = FRACUNIT / ScaleDenom;
+	}
+#endif
 	CalcBitSize ();
 
 	DummySpans[0].TopOffset = 0;
@@ -391,6 +409,8 @@ void FJPEGTexture::MakeTexture ()
 			throw -1;
 		}
 
+		cinfo.scale_num = 1;
+		cinfo.scale_denom = ScaleDenom;
 		jpeg_start_decompress(&cinfo);
 
 		int y = 0;
@@ -493,6 +513,8 @@ int FJPEGTexture::CopyTrueColorPixels(FBitmap *bmp, int x, int y, int rotate, FC
 			Printf (TEXTCOLOR_ORANGE "Unsupported color format\n");
 			throw -1;
 		}
+		cinfo.scale_num = 1;
+		cinfo.scale_denom = ScaleDenom;
 		jpeg_start_decompress(&cinfo);
 
 		int yc = 0;

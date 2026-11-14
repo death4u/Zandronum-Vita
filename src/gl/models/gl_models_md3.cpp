@@ -269,7 +269,7 @@ void FMD3Model::RenderFrame(FTexture * skin, int frameno, int cm, int translatio
 		FTexture *surfaceSkin = skin;
 		if (!surfaceSkin)
 		{
-			if (curSpriteMDLFrame->surfaceskins[curMDLIndex][i])
+			if (curSpriteMDLFrame->surfaceskins && curSpriteMDLFrame->surfaceskins[curMDLIndex][i])
 			{
 				surfaceSkin = curSpriteMDLFrame->surfaceskins[curMDLIndex][i];
 			}
@@ -301,7 +301,7 @@ void FMD3Model::RenderFrameInterpolated(FTexture * skin, int frameno, int framen
 		FTexture *surfaceSkin = skin;
 		if (!surfaceSkin)
 		{
-			if (curSpriteMDLFrame->surfaceskins[curMDLIndex][i])
+			if (curSpriteMDLFrame->surfaceskins && curSpriteMDLFrame->surfaceskins[curMDLIndex][i])
 			{
 				surfaceSkin = curSpriteMDLFrame->surfaceskins[curMDLIndex][i];
 			}

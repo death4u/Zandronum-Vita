@@ -392,6 +392,37 @@ static FModel * FindModel(const char * path, const char * modelfile)
 	return model;
 }
 
+
+//===========================================================================
+//
+// Surface skin tables (see FSpriteModelFrame::surfaceskins). A table is
+// copied before a change once frames already point at it.
+//
+//===========================================================================
+
+static TArray<void *> SurfaceSkinTables;
+static bool SurfaceSkinsInUse;
+
+static void ClearSurfaceSkinTables()
+{
+	for (unsigned i = 0; i < SurfaceSkinTables.Size(); i++) free(SurfaceSkinTables[i]);
+	SurfaceSkinTables.Clear();
+}
+
+static FTexture *(*WritableSurfaceSkins(FSpriteModelFrame &smf))[MD3_MAX_SURFACES]
+{
+	if (smf.surfaceskins == NULL || SurfaceSkinsInUse)
+	{
+		const size_t size = sizeof(FTexture *) * MAX_MODELS_PER_FRAME * MD3_MAX_SURFACES;
+		void *table = calloc(1, size);
+		if (smf.surfaceskins != NULL) memcpy(table, smf.surfaceskins, size);
+		SurfaceSkinTables.Push(table);
+		smf.surfaceskins = (FTexture *(*)[MD3_MAX_SURFACES])table;
+		SurfaceSkinsInUse = false;
+	}
+	return smf.surfaceskins;
+}
+
 //===========================================================================
 //
 // gl_InitModels
@@ -418,6 +449,7 @@ void gl_InitModels()
 	}
 	Models.Clear();
 	SpriteModelFrames.Clear();
+	ClearSurfaceSkinTables();
 	DeleteModelHash();
 
 	// First, create models for each voxel
@@ -441,7 +473,7 @@ void gl_InitModels()
 			smf.rotationSpeed = VoxelDefs[i]->PlacedSpin / 55.55f;
 			smf.flags |= MDL_ROTATING;
 		}
-		VoxelDefs[i]->VoxeldefIndex = SpriteModelFrames.Push(smf);
+		VoxelDefs[i]->VoxeldefIndex = SpriteModelFrames.Push(smf); SurfaceSkinsInUse = true;
 		if (VoxelDefs[i]->PlacedSpin != VoxelDefs[i]->DroppedSpin)
 		{
 			if (VoxelDefs[i]->DroppedSpin != 0)
@@ -456,7 +488,7 @@ void gl_InitModels()
 				smf.rotationSpeed = 0;
 				smf.flags &= ~MDL_ROTATING;
 			}
-			SpriteModelFrames.Push(smf);
+			SpriteModelFrames.Push(smf); SurfaceSkinsInUse = true;
 		}
 	}
 
@@ -664,12 +696,13 @@ void gl_InitModels()
 						FixPathSeperator(sc.String);
 						if (sc.Compare(""))
 						{
-							smf.surfaceskins[index][surface] = NULL;
+							WritableSurfaceSkins(smf)[index][surface] = NULL;
 						}
 						else
 						{
-							smf.surfaceskins[index][surface] = LoadSkin(path.GetChars(), sc.String);
-							if (smf.surfaceskins[index][surface] == NULL)
+							FTexture *skin = LoadSkin(path.GetChars(), sc.String);
+							WritableSurfaceSkins(smf)[index][surface] = skin;
+							if (skin == NULL)
 							{
 								Printf("Surface Skin '%s' not found in '%s'\n",
 									sc.String, smf.type->TypeName.GetChars());
@@ -735,7 +768,7 @@ void gl_InitModels()
 							}
 							if (map[c]) continue;
 							smf.frame=c;
-							SpriteModelFrames.Push(smf);
+							SpriteModelFrames.Push(smf); SurfaceSkinsInUse = true;
 							map[c]=1;
 						}
 					}
