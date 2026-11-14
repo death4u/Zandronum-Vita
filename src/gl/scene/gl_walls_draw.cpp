@@ -57,6 +57,7 @@
 #include "gl/textures/gl_material.h"
 #include "gl/utility/gl_clock.h"
 #include "gl/utility/gl_templates.h"
+#include "gl/scene/gl_vitawallbatch.h"
 
 EXTERN_CVAR(Bool, gl_seamless)
 
@@ -460,6 +461,30 @@ void GLWall::RenderTranslucentWall()
 // 
 //
 //==========================================================================
+#ifdef __vita__
+FVitaWallBatch VitaWalls;
+
+void Vita_FlushWalls()
+{
+	if (VitaWalls.Open && VitaWalls.Xyz.Size() > 0)
+	{
+		gl_RenderState.Apply();
+		glVertexPointer(3, GL_FLOAT, 0, &VitaWalls.Xyz[0]);
+		glTexCoordPointer(2, GL_FLOAT, 0, &VitaWalls.Uv[0]);
+		glEnableClientState(GL_VERTEX_ARRAY);
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		glDrawArrays(GL_TRIANGLES, 0, VitaWalls.Xyz.Size() / 3);
+		glDisableClientState(GL_VERTEX_ARRAY);
+		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+	}
+	VitaWalls.Xyz.Clear();
+	VitaWalls.Uv.Clear();
+	VitaWalls.Open = false;
+}
+
+CVAR(Bool, gl_vita_batchwalls, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+#endif
+
 void GLWall::Draw(int pass)
 {
 	FLightNode * node;
@@ -473,6 +498,37 @@ void GLWall::Draw(int pass)
 #endif
 
 
+#ifdef __vita__
+	if (pass == GLPASS_PLAIN && gl_vita_batchwalls && !(flags & GLWF_GLOW)
+		&& !((flags&GLWF_SKYHACK && type==RENDERWALL_M2S) || type == RENDERWALL_COLORLAYER))
+	{
+		rel = rellight + getExtraLight();
+		bool nofog = type == RENDERWALL_M2SNF;
+		if (!(VitaWalls.Open && VitaWalls.Tex == gltexture && VitaWalls.LightLevel == lightlevel
+			&& VitaWalls.Rel == rel && VitaWalls.Flags == (flags & 3) && VitaWalls.NoFog == nofog
+			&& !memcmp(&VitaWalls.Cm, &Colormap, sizeof(FColormap))))
+		{
+			Vita_FlushWalls();
+			gl_SetColor(lightlevel, rel, &Colormap,1.0f);
+			if (!nofog) gl_SetFog(lightlevel, rel, &Colormap, false);
+			else gl_SetFog(255, 0, NULL, false);
+			gl_RenderState.EnableGlow(false);
+			gltexture->Bind(Colormap.colormap, flags, 0);
+			VitaWalls.Open = true;
+			VitaWalls.Tex = gltexture;
+			VitaWalls.LightLevel = lightlevel;
+			VitaWalls.Rel = rel;
+			VitaWalls.Flags = flags & 3;
+			VitaWalls.NoFog = nofog;
+			VitaWalls.Cm = Colormap;
+		}
+		VitaWalls.Collecting = true;
+		RenderWall(3, NULL);
+		VitaWalls.Collecting = false;
+		return;
+	}
+	Vita_FlushWalls();
+#endif
 	// This allows mid textures to be drawn on lines that might overlap a sky wall
 	if ((flags&GLWF_SKYHACK && type==RENDERWALL_M2S) || type == RENDERWALL_COLORLAYER)
 	{

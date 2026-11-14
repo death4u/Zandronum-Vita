@@ -345,6 +345,9 @@ void FGLRenderer::SetupView(fixed_t viewx, fixed_t viewy, fixed_t viewz, angle_t
 
 void FGLRenderer::CreateScene()
 {
+#ifdef __vita__
+	VITA_PERF(VPERF_BSP);
+#endif
 	// reset the portal manager
 	GLPortal::StartFrame();
 	PO_LinkToSubsectors();

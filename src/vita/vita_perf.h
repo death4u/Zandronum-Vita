@@ -21,6 +21,7 @@ enum
 	VPERF_DB,			// SQLite (ACS database functions)
 	VPERF_ACSNEW,		// starting ACS scripts (P_GetScriptGoing)
 	VPERF_FINDCVAR,		// cvar lookups by name
+	VPERF_BSP,			// part of SCENE: BSP walk, setting up walls/flats/sprites
 	VPERF_COUNT
 };
 
@@ -48,6 +49,7 @@ void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us);
 // ACS interpreter: opcode counts and ACSF function (PCD_CALLFUNC) times.
 extern unsigned Vita_PcodeCounts[1024];
 extern unsigned Vita_PcodeTotal;
+extern unsigned long long Vita_PcodeUs[1024];
 extern unsigned Vita_PerfOps;	// opcode count passed along with the next Vita_PerfThinker
 static inline void Vita_PerfPcode(int pcd) { if (Vita_PerfDetail) { Vita_PcodeCounts[pcd & 1023]++; Vita_PcodeTotal++; } }
 void Vita_PerfAcsFunc(int func, unsigned long long us);

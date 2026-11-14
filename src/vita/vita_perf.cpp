@@ -53,6 +53,7 @@ void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us)
 }
 
 unsigned Vita_PcodeCounts[1024];
+unsigned long long Vita_PcodeUs[1024];
 static unsigned long long AcsFuncUs[1024];
 static unsigned AcsFuncCalls[1024];
 
@@ -92,16 +93,16 @@ void Vita_PerfFrame()
 	{
 		const double f = frames > 0 ? 1.0 / frames : 0;
 		struct mallinfo mi = mallinfo();
-		char line[1024];
+		char line[2048];
 		snprintf(line, sizeof(line),
-			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f, 3D %.1f (models %.1f), 2D+swap %.1f (swap %.1f)"
+			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f, 3D %.1f (bsp %.1f, models %.1f), 2D+swap %.1f (swap %.1f)"
 			" | in %.0f s: %d texture uploads %.0f ms, %d model loads %.0f ms | heap %u MB"
 #ifndef NO_GL
 			", vitaGL free RAM %u MB CDRAM %u MB"
 #endif
 			"\n",
 			frames * 1e6 / period, worst / 1000.0,
-			Vita_PerfAcc[VPERF_TIC] * f / 1000.0, Vita_PerfAcc[VPERF_SCENE] * f / 1000.0,
+			Vita_PerfAcc[VPERF_TIC] * f / 1000.0, Vita_PerfAcc[VPERF_SCENE] * f / 1000.0, Vita_PerfAcc[VPERF_BSP] * f / 1000.0,
 			Vita_PerfAcc[VPERF_MODELS] * f / 1000.0, Vita_PerfAcc[VPERF_UPDATE] * f / 1000.0,
 			Vita_PerfAcc[VPERF_SWAP] * f / 1000.0,
 			period / 1e6, Vita_PerfCalls[VPERF_UPLOAD], Vita_PerfAcc[VPERF_UPLOAD] / 1000.0,
@@ -116,7 +117,7 @@ void Vita_PerfFrame()
 	if (vita_perflog && Vita_PerfDetail)
 	{
 		const double f = frames > 0 ? 1.0 / frames : 0;
-		char line[1024];
+		char line[2048];
 
 		// Where the logic time goes: thinkers in total, GC, database, and the
 		// most expensive thinker classes (ms per frame, ticks per frame).
@@ -156,6 +157,16 @@ void Vita_PerfFrame()
 			len += snprintf(line + len, sizeof(line) - len, " %d:%.0f", best, Vita_PcodeCounts[best] * f);
 			Vita_PcodeCounts[best] = 0;
 		}
+		len += snprintf(line + len, sizeof(line) - len, " | op ms:");
+		for (int n = 0; n < 8; n++)
+		{
+			int best = -1;
+			for (int i = 0; i < 1024; i++)
+				if (Vita_PcodeUs[i] > 0 && (best < 0 || Vita_PcodeUs[i] > Vita_PcodeUs[best])) best = i;
+			if (best < 0 || len >= sizeof(line) - 40) break;
+			len += snprintf(line + len, sizeof(line) - len, " %d:%.2f", best, Vita_PcodeUs[best] * f / 1000.0);
+			Vita_PcodeUs[best] = 0;
+		}
 		len += snprintf(line + len, sizeof(line) - len, " | ACSF ms:");
 		for (int n = 0; n < 8; n++)
 		{
@@ -169,7 +180,7 @@ void Vita_PerfFrame()
 		snprintf(line + len, sizeof(line) - len, "\n");
 		Vita_ConsoleWrite(line);
 	}
-	for (int i = 0; i < 1024; i++) { Vita_PcodeCounts[i] = 0; AcsFuncUs[i] = 0; AcsFuncCalls[i] = 0; }
+	for (int i = 0; i < 1024; i++) { Vita_PcodeUs[i] = 0; Vita_PcodeCounts[i] = 0; AcsFuncUs[i] = 0; AcsFuncCalls[i] = 0; }
 	NumPerfClasses = 0;
 	for (int i = 0; i < VPERF_COUNT; i++) { Vita_PerfAcc[i] = 0; Vita_PerfCalls[i] = 0; }
 	frames = 0;

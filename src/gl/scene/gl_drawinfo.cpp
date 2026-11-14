@@ -56,6 +56,7 @@
 #include "gl/utility/gl_clock.h"
 #include "gl/utility/gl_templates.h"
 #include "gl/shaders/gl_shader.h"
+#include "gl/scene/gl_vitawallbatch.h"
 
 FDrawInfo * gl_drawinfo;
 
@@ -694,6 +695,7 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 //==========================================================================
 void GLDrawList::DoDraw(int pass, int i)
 {
+	if (drawitems[i].rendertype != GLDIT_WALL) Vita_FlushWalls();
 	switch(drawitems[i].rendertype)
 	{
 	case GLDIT_FLAT:
@@ -760,6 +762,7 @@ void GLDrawList::DoDrawSorted(SortNode * head)
 //==========================================================================
 void GLDrawList::DrawSorted()
 {
+	Vita_FlushWalls();
 	if (drawitems.Size()==0) return;
 
 	if (!sorted)
@@ -781,6 +784,7 @@ void GLDrawList::Draw(int pass)
 	{
 		DoDraw(pass, i);
 	}
+	Vita_FlushWalls();
 }
 
 //==========================================================================

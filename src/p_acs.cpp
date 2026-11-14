@@ -3415,7 +3415,7 @@ void FBehavior::StartTypedScripts (WORD type, AActor *activator, bool always, in
 			}
 			DLevelScript *runningScript = P_GetScriptGoing (activator, NULL, ptr->Number,
 				ptr, this, arg, 3, always ? ACS_ALWAYS : 0);
-			if (runNow)
+			if (runNow && runningScript != NULL)
 			{
 				runningScript->RunScript ();
 			}
@@ -9260,6 +9260,9 @@ int DLevelScript::RunScriptInner ()
 
 	while (state == SCRIPT_Running)
 	{
+#ifdef __vita__
+vita_nextop:
+#endif
 		if ( ptr && !(ptr->Flags & SCRIPTF_Busy) && (++runaway > 2000000) )
 		{
 			Printf ("Runaway %s terminated\n", ScriptPresentation(script).GetChars());
@@ -9281,6 +9284,82 @@ int DLevelScript::RunScriptInner ()
 		}
 #ifdef __vita__
 		Vita_PerfPcode(pcd);
+
+		// [Vita] Fast path for the simple opcodes that make up most of what
+		// mods execute (pushes, local variables, arithmetic, compares and
+		// jumps): they run back to back here without the per-opcode checks
+		// of the main loop (script state, format, runaway counter owner).
+		// Anything else drops into the big switch below. Same semantics as
+		// the cases in the switch; the runaway counter still counts them.
+		if (fmt == ACS_LittleEnhanced)
+		{
+			for (;;)
+			{
+				switch (pcd)
+				{
+				case PCD_PUSHNUMBER:	PushToStack (uallong(pc[0])); pc++; break;
+				case PCD_PUSHBYTE:		PushToStack (*(BYTE *)pc); pc = (int *)((BYTE *)pc + 1); break;
+				case PCD_PUSH2BYTES:
+					Stack[sp] = ((BYTE *)pc)[0];
+					Stack[sp+1] = ((BYTE *)pc)[1];
+					sp += 2;
+					pc = (int *)((BYTE *)pc + 2);
+					break;
+				case PCD_PUSH4BYTES:
+					Stack[sp] = ((BYTE *)pc)[0];
+					Stack[sp+1] = ((BYTE *)pc)[1];
+					Stack[sp+2] = ((BYTE *)pc)[2];
+					Stack[sp+3] = ((BYTE *)pc)[3];
+					sp += 4;
+					pc = (int *)((BYTE *)pc + 4);
+					break;
+				case PCD_PUSHSCRIPTVAR:	PushToStack (locals[getbyte(pc)]); break;
+				case PCD_ASSIGNSCRIPTVAR: locals[getbyte(pc)] = STACK(1); sp--; break;
+				case PCD_ADDSCRIPTVAR:	locals[getbyte(pc)] += STACK(1); sp--; break;
+				case PCD_INCSCRIPTVAR:	++locals[getbyte(pc)]; break;
+				case PCD_DECSCRIPTVAR:	--locals[getbyte(pc)]; break;
+				case PCD_PUSHMAPVAR:	PushToStack (*(activeBehavior->MapVars[getbyte(pc)])); break;
+				case PCD_ASSIGNMAPVAR:	*(activeBehavior->MapVars[getbyte(pc)]) = STACK(1); sp--; break;
+				case PCD_ADD:			STACK(2) = STACK(2) + STACK(1); sp--; break;
+				case PCD_SUBTRACT:		STACK(2) = STACK(2) - STACK(1); sp--; break;
+				case PCD_MULTIPLY:		STACK(2) = STACK(2) * STACK(1); sp--; break;
+				case PCD_EQ:			STACK(2) = (STACK(2) == STACK(1)); sp--; break;
+				case PCD_NE:			STACK(2) = (STACK(2) != STACK(1)); sp--; break;
+				case PCD_LT:			STACK(2) = (STACK(2) < STACK(1)); sp--; break;
+				case PCD_GT:			STACK(2) = (STACK(2) > STACK(1)); sp--; break;
+				case PCD_LE:			STACK(2) = (STACK(2) <= STACK(1)); sp--; break;
+				case PCD_GE:			STACK(2) = (STACK(2) >= STACK(1)); sp--; break;
+				case PCD_ANDLOGICAL:	STACK(2) = (STACK(2) && STACK(1)); sp--; break;
+				case PCD_ORLOGICAL:		STACK(2) = (STACK(2) || STACK(1)); sp--; break;
+				case PCD_DROP:			sp--; break;
+				case PCD_GOTO:			pc = activeBehavior->Ofs2PC (LittleLong(*pc)); break;
+				case PCD_IFGOTO:
+					if (STACK(1)) pc = activeBehavior->Ofs2PC (LittleLong(*pc));
+					else pc++;
+					sp--;
+					break;
+				case PCD_IFNOTGOTO:
+					if (!STACK(1)) pc = activeBehavior->Ofs2PC (LittleLong(*pc));
+					else pc++;
+					sp--;
+					break;
+				default:
+					goto vita_slowop;
+				}
+				// Next opcode. Past the runaway limit, everything goes through
+				// the main loop's check.
+				if (++runaway > 2000000)
+				{
+					--runaway;
+					goto vita_nextop;
+				}
+				pcd = getbyte(pc);
+				if (pcd >= 256-16)
+					pcd = (256-16) + ((pcd - (256-16)) << 8) + getbyte(pc);
+				Vita_PerfPcode(pcd);
+			}
+		}
+vita_slowop:
 #endif
 
 		switch (pcd)
@@ -13096,11 +13175,48 @@ scriptwait:
 
 #undef PushtoStack
 
+#ifdef __vita__
+// [Vita] Scripts that bots don't run. Bots have no screen, and in HaloDoom
+// the HUD library's per-player scripts (16: crosshair and target ID via
+// GetTargetTID's aim traces; RadarUpdate) cost as much as all the bots' AI.
+// Space-separated script numbers and names; empty to turn it off.
+static TArray<int> Vita_BotSkip;
+CUSTOM_CVAR(String, vita_botskipscripts, "16 GetTargetTID RadarUpdate", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	Vita_BotSkip.Clear();
+	FString list = *self;
+	char *tok = strtok(list.LockBuffer(), " ,");
+	while (tok != NULL)
+	{
+		char *end;
+		long n = strtol(tok, &end, 10);
+		if (*end == 0) Vita_BotSkip.Push((int)n);
+		else Vita_BotSkip.Push(-(int)FName(tok));
+		tok = strtok(NULL, " ,");
+	}
+	list.UnlockBuffer();
+}
+
+static bool Vita_BotSkipsScript(AActor *who, int num)
+{
+	if (who == NULL || who->player == NULL || !who->player->bIsBot)
+		return false;
+	for (unsigned i = 0; i < Vita_BotSkip.Size(); ++i)
+		if (Vita_BotSkip[i] == num) return true;
+	return false;
+}
+#endif
+
 static DLevelScript *P_GetScriptGoing (AActor *who, line_t *where, int num, const ScriptPtr *code, FBehavior *module,
 	const int *args, int argcount, int flags)
 {
 	DACSThinker *controller = DACSThinker::ActiveThinker;
 	DLevelScript **running;
+
+#ifdef __vita__
+	if (Vita_BotSkipsScript(who, num))
+		return NULL;
+#endif
 
 	if (controller && !(flags & ACS_ALWAYS) && (running = controller->RunningScripts.CheckKey(num)) != NULL)
 	{

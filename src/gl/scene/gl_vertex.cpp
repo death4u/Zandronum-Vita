@@ -51,6 +51,7 @@
 #include "gl/shaders/gl_shader.h"
 #include "gl/textures/gl_material.h"
 #include "gl/utility/gl_templates.h"
+#include "gl/scene/gl_vitawallbatch.h"
 
 EXTERN_CVAR(Bool, gl_seamless)
 extern int vertexcount;
