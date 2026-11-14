@@ -35,6 +35,7 @@
 // [BB] network.h has to be included before stats.h under Linux.
 // The reason should be investigated.
 #include "network.h"
+#include "vita/vita_perf.h"
 
 #include "dthinker.h"
 #include "stats.h"
@@ -407,6 +408,7 @@ void DThinker::DestroyMostThinkersInList (FThinkerList &list, int stat)
 
 void DThinker::RunThinkers ()
 {
+	VITA_PERF(VPERF_THINKERS);
 	int i, count;
 
 	ThinkCycles.Reset();
@@ -469,10 +471,20 @@ int DThinker::TickThinkers (FThinkerList *list, FThinkerList *dest)
 				( node->IsKindOf( RUNTIME_CLASS( AActor )) == false ) ||
 				( static_cast<AActor *>( node ) != players[consoleplayer].mo ))
 			{
+#ifdef __vita__
+				unsigned long long t0 = Vita_PerfNow();
+				const PClass *cls = node->GetClass();
 				node->Tick();
+				Vita_PerfThinker(cls, cls->TypeName.GetChars(), Vita_PerfNow() - t0);
+#else
+				node->Tick();
+#endif
 			}
 			node->ObjectFlags &= ~OF_JustSpawned;
-			GC::CheckGC();
+			{
+				VITA_PERF(VPERF_GC);
+				GC::CheckGC();
+			}
 		}
 		node = NextToThink;
 	}

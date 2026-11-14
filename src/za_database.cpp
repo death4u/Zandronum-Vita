@@ -46,6 +46,7 @@
 //-----------------------------------------------------------------------------
 
 #include "za_database.h"
+#include "vita/vita_perf.h"
 #include "i_system.h"
 #include "g_game.h"
 #include "p_acs.h"
@@ -126,6 +127,7 @@ public:
 
 	bool step ( )
 	{
+		VITA_PERF(VPERF_DB);
 		const int result = sqlite3_step ( _stmt );
 		if ( ( result != SQLITE_ROW ) && ( result != SQLITE_DONE ) )
 		{
@@ -138,6 +140,7 @@ public:
 
 	void exec ( )
 	{
+		VITA_PERF(VPERF_DB);
 		const int result = sqlite3_step ( _stmt );
 		if ( result == SQLITE_ROW )
 			Printf ( "Executing statement did not finish, sqlite3_step() has another row ready.\n" );
@@ -186,6 +189,7 @@ void database_ClearHandle ( void )
 //
 void database_ExecuteCommand ( const char *Command, int (*Callback)(void*,int,char**,char**) = NULL, void *Data = NULL )
 {
+	VITA_PERF(VPERF_DB);
 	int error = sqlite3_exec ( g_db, Command, Callback, Data, 0);
 	if ( error != SQLITE_OK )
 		Printf ( "Error: %s\n", sqlite3_errmsg ( g_db ) );

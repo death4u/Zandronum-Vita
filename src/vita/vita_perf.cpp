@@ -13,6 +13,26 @@ CVAR(Bool, vita_perflog, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 unsigned long long Vita_PerfAcc[VPERF_COUNT];
 int Vita_PerfCalls[VPERF_COUNT];
 
+struct FPerfClass { const void *Cls; const char *Name; unsigned long long Us; int Calls; };
+static FPerfClass PerfClasses[256];
+static int NumPerfClasses;
+
+void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us)
+{
+	for (int i = 0; i < NumPerfClasses; i++)
+	{
+		if (PerfClasses[i].Cls == cls) { PerfClasses[i].Us += us; PerfClasses[i].Calls++; return; }
+	}
+	if (NumPerfClasses < 256)
+	{
+		PerfClasses[NumPerfClasses].Cls = cls;
+		PerfClasses[NumPerfClasses].Name = name;
+		PerfClasses[NumPerfClasses].Us = us;
+		PerfClasses[NumPerfClasses].Calls = 1;
+		NumPerfClasses++;
+	}
+}
+
 void Vita_PerfFrame()
 {
 	static unsigned long long periodStart = 0, lastFrame = 0, worst = 0;
@@ -51,7 +71,26 @@ void Vita_PerfFrame()
 #endif
 			);
 		Vita_ConsoleWrite(line);
+
+		// Where the logic time goes: thinkers in total, GC, database, and the
+		// most expensive thinker classes (ms per frame, ticks per frame).
+		size_t len = snprintf(line, sizeof(line), "[perf]   thinkers %.1f (gc %.1f), database %.1f (%d calls) | top:",
+			Vita_PerfAcc[VPERF_THINKERS] * f / 1000.0, Vita_PerfAcc[VPERF_GC] * f / 1000.0,
+			Vita_PerfAcc[VPERF_DB] * f / 1000.0, Vita_PerfCalls[VPERF_DB]);
+		for (int n = 0; n < 6; n++)
+		{
+			int best = -1;
+			for (int i = 0; i < NumPerfClasses; i++)
+				if (PerfClasses[i].Us > 0 && (best < 0 || PerfClasses[i].Us > PerfClasses[best].Us)) best = i;
+			if (best < 0 || len >= sizeof(line) - 64) break;
+			len += snprintf(line + len, sizeof(line) - len, " %s %.1f (x%d)", PerfClasses[best].Name,
+				PerfClasses[best].Us * f / 1000.0, (int)(PerfClasses[best].Calls * f + 0.5));
+			PerfClasses[best].Us = 0;
+		}
+		snprintf(line + len, sizeof(line) - len, "\n");
+		Vita_ConsoleWrite(line);
 	}
+	NumPerfClasses = 0;
 	for (int i = 0; i < VPERF_COUNT; i++) { Vita_PerfAcc[i] = 0; Vita_PerfCalls[i] = 0; }
 	frames = 0;
 	worst = 0;

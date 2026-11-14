@@ -16,6 +16,9 @@ enum
 	VPERF_SWAP,			// part of UPDATE: waiting for the GPU / vsync
 	VPERF_UPLOAD,		// texture uploads (incl. DXT compression)
 	VPERF_MODELLOAD,	// loading models on demand
+	VPERF_THINKERS,		// part of TIC: all thinkers (actors, ACS scripts...)
+	VPERF_GC,			// part of THINKERS: garbage collector steps
+	VPERF_DB,			// SQLite (ACS database functions)
 	VPERF_COUNT
 };
 
@@ -33,6 +36,9 @@ struct FVitaPerfScope
 };
 
 #define VITA_PERF(slot) FVitaPerfScope vita_perf_scope_##slot(slot)
+
+// Time spent in one thinker's Tick(), grouped by class (top ones are logged).
+void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us);
 
 // Call once per displayed frame (after the swap).
 void Vita_PerfFrame();
