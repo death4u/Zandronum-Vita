@@ -40,6 +40,7 @@
 */
 
 #include "gl/system/gl_system.h"
+#include "vita/vita_perf.h"
 #include "files.h"
 #include "m_swap.h"
 #include "v_video.h"
@@ -187,6 +188,7 @@ CVAR(Bool, gl_draw_sync, true, 0) //false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
 void OpenGLFrameBuffer::Update()
 {
+	VITA_PERF(VPERF_UPDATE);
 	if (!CanUpdate()) 
 	{
 		GLRenderer->Flush();
@@ -225,13 +227,21 @@ void OpenGLFrameBuffer::Swap()
 {
 	Finish.Reset();
 	Finish.Clock();
-	glFinish();
+#ifndef __vita__
+	glFinish();	// [Vita] vglSwapBuffers syncs itself; glFinish would stall the CPU until the GPU is idle every frame
+#endif
 	if (needsetgamma) 
 	{
 		//DoSetGamma();
 		needsetgamma = false;
 	}
-	SwapBuffers();
+	{
+		VITA_PERF(VPERF_SWAP);
+		SwapBuffers();
+	}
+#ifdef __vita__
+	Vita_PerfFrame();
+#endif
 	Finish.Unclock();
 	swapped = true;
 	FHardwareTexture::UnbindAll();

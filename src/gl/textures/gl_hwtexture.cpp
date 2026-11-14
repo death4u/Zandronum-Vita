@@ -40,6 +40,7 @@
 */
 
 #include "gl/system/gl_system.h"
+#include "vita/vita_perf.h"
 #include "templates.h"
 #include "m_crc32.h"
 #include "c_cvars.h"
@@ -158,7 +159,10 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 			}
 		}
 	}
-	glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	{
+		VITA_PERF(VPERF_UPLOAD);
+		glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	}
 
 	if (deletebuffer) free(buffer);
 

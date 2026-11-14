@@ -23,6 +23,7 @@
 //-----------------------------------------------------------------------------
 
 #include <stddef.h>
+#include "vita/vita_perf.h"
 
 #include "version.h"
 #include "menu/menu.h"
@@ -1904,7 +1905,7 @@ void TryRunTics (void)
 			C_Ticker ();
 			M_Ticker ();
 			I_GetTime (true);
-			G_Ticker ();
+			{ VITA_PERF(VPERF_TIC); G_Ticker (); }
 			gametic++;
 
 			NetUpdate ();	// check for new console commands

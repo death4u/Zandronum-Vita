@@ -67,6 +67,7 @@
 #include "d_gui.h"
 #include "m_random.h"
 #include "doomdef.h"
+#include "vita/vita_perf.h"
 #include "doomstat.h"
 #include "gstrings.h"
 #include "w_wad.h"
@@ -1355,7 +1356,7 @@ void D_DoomLoop ()
 					// Menu Ticker
 					M_Ticker ();
 					// Game Ticker
-					G_Ticker ();
+					{ VITA_PERF(VPERF_TIC); G_Ticker (); }
 					gametic++;
 					maketic++;
 					GC::CheckGC ();

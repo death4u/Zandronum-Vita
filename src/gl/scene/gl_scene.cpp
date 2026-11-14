@@ -39,6 +39,7 @@
 */
 
 #include "gl/system/gl_system.h"
+#include "vita/vita_perf.h"
 #include "gi.h"
 #include "m_png.h"
 #include "m_random.h"
@@ -1075,8 +1076,11 @@ void FGLRenderer::RenderView (player_t* player)
 	TThinkerIterator<ADynamicLight> it(STAT_DLIGHT);
 	GLRenderer->mLightCount = ((it.Next()) != NULL);
 
-	sector_t * viewsector = RenderViewpoint(player->camera, NULL, FieldOfView * 360.0f / FINEANGLES, ratio, fovratio, true, true);
-	EndDrawScene(viewsector);
+	{
+		VITA_PERF(VPERF_SCENE);
+		sector_t * viewsector = RenderViewpoint(player->camera, NULL, FieldOfView * 360.0f / FINEANGLES, ratio, fovratio, true, true);
+		EndDrawScene(viewsector);
+	}
 
 	All.Unclock();
 }

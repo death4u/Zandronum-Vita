@@ -38,6 +38,7 @@
 */
 
 #include "gl/system/gl_system.h"
+#include "vita/vita_perf.h"
 #include "w_wad.h"
 #include "i_system.h"
 #include "cmdlib.h"
@@ -268,7 +269,10 @@ FModel *FLazyModel::Get()
 	mLastUse = I_MSTime();
 	if (mReal != NULL || mFailed) return mReal;
 	Trim(this);
-	mReal = LoadModelLump(mPath.GetChars(), mLump, mFileName.GetChars());
+	{
+		VITA_PERF(VPERF_MODELLOAD);
+		mReal = LoadModelLump(mPath.GetChars(), mLump, mFileName.GetChars());
+	}
 	if (mReal == NULL)
 	{
 		mFailed = true;
@@ -861,6 +865,7 @@ void gl_RenderFrameModels( const FSpriteModelFrame *smf,
 						   Matrix3x4 *normaltransform,
 						   int translation)
 {
+	VITA_PERF(VPERF_MODELS);
 	// [BB] Frame interpolation: Find the FSpriteModelFrame smfNext which follows after smf in the animation
 	// and the scalar value inter ( element of [0,1) ), both necessary to determine the interpolated frame.
 	FSpriteModelFrame * smfNext = NULL;
