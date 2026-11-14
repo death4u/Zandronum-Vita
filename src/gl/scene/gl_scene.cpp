@@ -1089,6 +1089,9 @@ void FGLRenderer::RenderView (player_t* player)
 	gl_frameMS = I_MSTime();
 
 	P_FindParticleSubsectors ();
+#ifdef __vita__
+	{ extern void Vita_ResetParticleCopies(); Vita_ResetParticleCopies(); }
+#endif
 
 	// prepare all camera textures that have been used in the last frame
 	FCanvasTextureInfo::UpdateAll();

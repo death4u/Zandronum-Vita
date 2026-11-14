@@ -954,6 +954,28 @@ void GLSprite::Process(AActor* thing,sector_t * sector)
 //
 //==========================================================================
 
+#ifdef __vita__
+// Per-frame copies of the particles being drawn. The pool is sized once per
+// frame and never reallocated while sprites point into it.
+extern WORD NumParticles;
+static TArray<particle_t> VitaParticleCopies;
+
+void Vita_ResetParticleCopies()
+{
+	VitaParticleCopies.Clear();
+	VitaParticleCopies.Grow(NumParticles + 64);
+}
+
+static particle_t *Vita_CopyParticle(particle_t *p)
+{
+	if (VitaParticleCopies.Size() >= VitaParticleCopies.Max())
+		return p;	// pool full (shouldn't happen): use the original
+	unsigned i = VitaParticleCopies.Reserve(1);
+	VitaParticleCopies[i] = *p;
+	return &VitaParticleCopies[i];
+}
+#endif
+
 void GLSprite::ProcessParticle (particle_t *particle, sector_t *sector)//, int shade, int fakeside)
 {
 	if (GLRenderer->mCurrentPortal)
@@ -1060,7 +1082,13 @@ void GLSprite::ProcessParticle (particle_t *particle, sector_t *sector)//, int s
 	depth = DMulScale20 (particle->x-viewx, viewtancos, particle->y-viewy, viewtansin);
 
 	actor=NULL;
+#ifdef __vita__
+	// The particle may be moved or recycled by the game logic while the
+	// scene is drawn (vita/vita_parallel.h): draw from a copy.
+	this->particle = Vita_CopyParticle(particle);
+#else
 	this->particle=particle;
+#endif
 	
 	// [BB] Translucent particles have to be rendered without the alpha test.
 	if (gl_particles_style != 2 && trans>=1.0f-FLT_EPSILON) hw_styleflags = STYLEHW_Solid;
