@@ -50,6 +50,9 @@
 #include "version.h"
 // [BB] New #includes.
 #include "doomerrors.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
 
 
 CVAR (Bool, queryiwad, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
@@ -413,6 +416,42 @@ int FIWadManager::IdentifyVersion (TArray<FString> &wadfiles, const char *iwad, 
 			iwadparm = custwad;
 			mIWadNames[0] = custwad;
 			CheckIWAD ("", &wads[0]);
+#ifdef __vita__
+			// [Vita] The IWAD picked in the launcher is used even if its
+			// contents don't match a known game exactly (otherwise another
+			// IWAD from the data folder was silently loaded instead).
+			if (wads[0].Path.IsEmpty() && FileExists(custwad))
+			{
+				int type = -1;
+				bool hasmap01 = false, hase1m1 = false;
+				int lumps = -1;
+				FResourceFile *f = FResourceFile::OpenResourceFile(custwad, NULL, true);
+				if (f != NULL)
+				{
+					lumps = f->LumpCount();
+					for (DWORD ii = 0; ii < f->LumpCount(); ii++)
+					{
+						const char *n = f->GetLump(ii)->Name;
+						if (!strnicmp(n, "MAP01", 8)) hasmap01 = true;
+						if (!strnicmp(n, "E1M1", 8)) hase1m1 = true;
+					}
+					delete f;
+				}
+				const char *want = hasmap01 ? "DOOM 2: Hell on Earth" : hase1m1 ? "DOOM Registered" : NULL;
+				for (unsigned k = 0; want != NULL && k < mIWads.Size(); k++)
+					if (!mIWads[k].Name.Compare(want)) { type = k; break; }
+				Vita_BootLog("iwad %s: not a known game (%d lumps, MAP01 %d, E1M1 %d); using it as %s",
+					custwad.GetChars(), lumps, hasmap01, hase1m1, want ? want : "nothing");
+				if (type >= 0)
+				{
+					wads[0].Type = type;
+					wads[0].Path = custwad;
+					wads[0].Name = mIWads[type].Name;
+				}
+			}
+			else
+				Vita_BootLog("iwad %s: %s", custwad.GetChars(), wads[0].Path.IsEmpty() ? "not found" : wads[0].Name.GetChars());
+#endif
 		}
 	}
 

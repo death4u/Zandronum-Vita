@@ -47,6 +47,9 @@
 #include "gl/textures/gl_material.h"
 #include "gl/shaders/gl_shader.h"
 #include "vita/vita_perf.h"
+#ifdef __ARM_NEON__
+#include <arm_neon.h>
+#endif
 #include "c_cvars.h"
 
 #define MAX_QPATH 64
@@ -528,6 +531,61 @@ static float *MD3ExpandPacked(FMD3Model::MD3Surface *s, int f1, int f2, double i
 	const float sz = sc * rModelAspectMod;
 	const unsigned *p1 = s->packed + f1 * nv;
 	const float *m1 = s->pmin + f1 * 3, *k1 = s->pscale + f1 * 3;
+#ifdef __ARM_NEON__
+	{
+		// [Vita] 4 vertices at a time. Per axis the result is
+		// c + q1 * s1 (+ q2 * s2), with the frame blend and the output
+		// scale folded into the constants; output order is x, z, y.
+		const float a = f2 < 0 ? 1.f : float(1 - inter), b = f2 < 0 ? 0.f : float(inter);
+		const unsigned *p2 = f2 < 0 ? p1 : s->packed + f2 * nv;
+		const float *m2 = f2 < 0 ? m1 : s->pmin + f2 * 3, *k2 = f2 < 0 ? k1 : s->pscale + f2 * 3;
+		const float axs[3] = { sc, sc, sz };	// x, y, z output scales
+		float c[3], s1[3], s2[3];
+		for (int k = 0; k < 3; k++)
+		{
+			c[k] = (a * m1[k] + b * m2[k]) * axs[k];
+			s1[k] = a * k1[k] * axs[k];
+			s2[k] = b * k2[k] * axs[k];
+		}
+		const float32x4_t cx = vdupq_n_f32(c[0]), cy = vdupq_n_f32(c[1]), cz = vdupq_n_f32(c[2]);
+		const float32x4_t ax = vdupq_n_f32(s1[0]), ay = vdupq_n_f32(s1[1]), az = vdupq_n_f32(s1[2]);
+		const float32x4_t bx = vdupq_n_f32(s2[0]), by = vdupq_n_f32(s2[1]), bz = vdupq_n_f32(s2[2]);
+		const uint32x4_t mask = vdupq_n_u32(2047);
+		int i = 0;
+		if (f2 < 0)
+		{
+			for (; i + 4 <= nv; i += 4, out += 12)
+			{
+				uint32x4_t w = vld1q_u32(p1 + i);
+				float32x4x3_t r;
+				r.val[0] = vmlaq_f32(cx, vcvtq_f32_u32(vandq_u32(w, mask)), ax);
+				r.val[2] = vmlaq_f32(cy, vcvtq_f32_u32(vandq_u32(vshrq_n_u32(w, 11), mask)), ay);
+				r.val[1] = vmlaq_f32(cz, vcvtq_f32_u32(vshrq_n_u32(w, 22)), az);
+				vst3q_f32(out, r);
+			}
+		}
+		else
+		{
+			for (; i + 4 <= nv; i += 4, out += 12)
+			{
+				uint32x4_t w = vld1q_u32(p1 + i), u = vld1q_u32(p2 + i);
+				float32x4x3_t r;
+				r.val[0] = vmlaq_f32(vmlaq_f32(cx, vcvtq_f32_u32(vandq_u32(w, mask)), ax), vcvtq_f32_u32(vandq_u32(u, mask)), bx);
+				r.val[2] = vmlaq_f32(vmlaq_f32(cy, vcvtq_f32_u32(vandq_u32(vshrq_n_u32(w, 11), mask)), ay), vcvtq_f32_u32(vandq_u32(vshrq_n_u32(u, 11), mask)), by);
+				r.val[1] = vmlaq_f32(vmlaq_f32(cz, vcvtq_f32_u32(vshrq_n_u32(w, 22)), az), vcvtq_f32_u32(vshrq_n_u32(u, 22)), bz);
+				vst3q_f32(out, r);
+			}
+		}
+		for (; i < nv; i++, out += 3)
+		{
+			unsigned w = p1[i], u = p2[i];
+			out[0] = c[0] + (w & 2047) * s1[0] + (u & 2047) * s2[0];
+			out[2] = c[1] + ((w >> 11) & 2047) * s1[1] + ((u >> 11) & 2047) * s2[1];
+			out[1] = c[2] + (w >> 22) * s1[2] + (u >> 22) * s2[2];
+		}
+		return &MD3Scratch[0];
+	}
+#endif
 	if (f2 < 0)
 	{
 		for (int i = 0; i < nv; i++, out += 3)

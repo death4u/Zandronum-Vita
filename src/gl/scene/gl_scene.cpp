@@ -400,7 +400,7 @@ void FGLRenderer::RenderScene(int recursion)
 #endif
 
 	glDepthMask(true);
-	if (!gl_no_skyclear) GLPortal::RenderFirstSkyPortal(recursion);
+	if (!gl_no_skyclear) { VITA_PERF(VPERF_SKYBOX); GLPortal::RenderFirstSkyPortal(recursion); }
 #ifdef __vita__
 	if (Vita_PendingLogicBegin && recursion == 0 && Vita_DrawSceneDepth == 1)
 	{

@@ -27,6 +27,7 @@
 
 #include "vita_system.h"
 #include "vita_font.inc"
+#include "vita_logo.inc"
 
 #define DATA_DIR "ux0:data/zandronum"
 #define LAUNCHER_CFG DATA_DIR "/launcher.cfg"
@@ -41,13 +42,13 @@ enum { COLS = SCR_W / CHAR_W, ROWS = SCR_H / CHAR_H };	// 60 x 27
 
 // Colours are ABGR in memory.
 static inline unsigned RGB(unsigned r, unsigned g, unsigned b) { return 0xFF000000u | (b << 16) | (g << 8) | r; }
-static const unsigned C_BG = RGB(16, 12, 12);
-static const unsigned C_PANEL = RGB(40, 24, 22);
-static const unsigned C_SEL = RGB(140, 30, 24);
+static const unsigned C_BG = RGB(14, 16, 12);
+static const unsigned C_PANEL = RGB(26, 32, 22);
+static const unsigned C_SEL = RGB(64, 96, 28);
 static const unsigned C_TEXT = RGB(225, 220, 210);
 static const unsigned C_DIM = RGB(140, 132, 124);
-static const unsigned C_TITLE = RGB(240, 190, 80);
-static const unsigned C_HEAD = RGB(230, 120, 70);
+static const unsigned C_TITLE = RGB(170, 210, 80);
+static const unsigned C_HEAD = RGB(140, 200, 70);
 static const unsigned C_OK = RGB(120, 220, 120);
 
 static SceUID FbBlock[2] = { -1, -1 };
@@ -133,6 +134,30 @@ static int Text(int col, int row, unsigned color, const char *s, int maxcols = C
 	return col + n;
 }
 
+// Draws the logo centred horizontally with its top at y, blended over
+// whatever is already there.
+static void DrawLogo(int y)
+{
+	unsigned *fb = Fb[FbCur];
+	const int x0 = (SCR_W - VITA_LOGO_W) / 2;
+	for (int ly = 0; ly < VITA_LOGO_H; ++ly)
+	{
+		if (y + ly < 0 || y + ly >= SCR_H) continue;
+		unsigned *p = fb + (y + ly) * SCR_W + x0;
+		const unsigned char *s = VitaLogo + ly * VITA_LOGO_W * 4;
+		for (int lx = 0; lx < VITA_LOGO_W; ++lx, s += 4)
+		{
+			unsigned a = s[3];
+			if (a == 0) continue;
+			unsigned d = p[lx];
+			unsigned r = (s[0] * a + (d & 0xFF) * (255 - a)) / 255;
+			unsigned g = (s[1] * a + ((d >> 8) & 0xFF) * (255 - a)) / 255;
+			unsigned b = (s[2] * a + ((d >> 16) & 0xFF) * (255 - a)) / 255;
+			p[lx] = 0xFF000000u | (b << 16) | (g << 8) | r;
+		}
+	}
+}
+
 static void TextCentered(int row, unsigned color, const char *s)
 {
 	int len = (int)strlen(s);
@@ -150,11 +175,12 @@ static std::vector<std::string> LoadingLines;
 static void DrawLoading()
 {
 	FillRect(0, 0, SCR_W, SCR_H, C_BG);
-	FillRect(0, 0, SCR_W, 3 * CHAR_H, C_PANEL);
-	TextCentered(1, C_TITLE, "ZANDRONUM - LOADING");
-	int first = (int)LoadingLines.size() - (ROWS - 5);
+	FillRect(0, 0, SCR_W, 4 * CHAR_H, C_PANEL);
+	DrawLogo((4 * CHAR_H - VITA_LOGO_H) / 2);
+	TextCentered(4, C_TITLE, "LOADING");
+	int first = (int)LoadingLines.size() - (ROWS - 6);
 	if (first < 0) first = 0;
-	for (int i = first, row = 4; i < (int)LoadingLines.size(); ++i, ++row)
+	for (int i = first, row = 6; i < (int)LoadingLines.size(); ++i, ++row)
 		Text(1, row, i + 1 == (int)LoadingLines.size() ? C_TEXT : C_DIM, LoadingLines[i].c_str(), COLS - 2);
 	FbFlip();
 }
@@ -694,7 +720,7 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 	bool launch = false, quit = false;
 
 	// Layout
-	const int listtop = 5, listrows = ROWS - listtop - 4;
+	const int listtop = 6, listrows = ROWS - listtop - 4;
 
 	while (!launch && !quit)
 	{
@@ -755,9 +781,9 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 
 		// ---- draw ----
 		FillRect(0, 0, SCR_W, SCR_H, C_BG);
-		FillRect(0, 0, SCR_W, 3 * CHAR_H, C_PANEL);
-		TextCentered(1, C_TITLE, "ZANDRONUM");
-		Text(1, 3, C_DIM, "Files from ux0:data/zandronum/ and its mods/ folder");
+		FillRect(0, 0, SCR_W, 4 * CHAR_H, C_PANEL);
+		DrawLogo((4 * CHAR_H - VITA_LOGO_H) / 2);
+		Text(1, 4, C_DIM, "Files from ux0:data/zandronum/ and its mods/ folder");
 
 		int row = 0;	// logical row in the scrolling list
 		for (int item = 0; item < numitems; ++item)

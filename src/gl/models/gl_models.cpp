@@ -1061,6 +1061,8 @@ CVAR(Int, vita_precacheskins, 20, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 static void Vita_PrecacheSkins()
 {
 	if (vita_precacheskins <= 0) return;
+	// The title map's menu models aren't worth 20 s at start-up.
+	if (!stricmp(level.mapname, "TITLEMAP")) return;
 	TMap<const PClass *, bool> classes;
 	{
 		AActor *actor;

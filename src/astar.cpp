@@ -50,6 +50,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <new>
 
 #include "astar.h"
 #ifdef __vita__
@@ -177,7 +178,36 @@ void ASTAR_BuildNodes( void )
 		g_bIsInitialized = true;
 		return;
 	}
+#ifdef __vita__
+	// [Vita] Even with enough free memory in total, the heap may have no
+	// single block this big after a few level changes (a 46 MB request failed
+	// with 82 MB free and the game aborted). Allocate everything up front and
+	// go without A* paths if any of it fails.
+	{
+		bool ok = true;
+		g_aMasterNodeList = new (std::nothrow) ASTARNODE_t[g_lNodeListSize];
+		if ( g_aMasterNodeList == NULL ) ok = false;
+		for ( ulIdx = 0; ok && ulIdx < MAX_PATHS; ulIdx++ )
+		{
+			g_aPaths[ulIdx].paVisualizations = (AActor **)malloc( sizeof(AActor *) * g_lNodeListSize );
+			g_apOpenListPriorityQueue[ulIdx] = (ASTARNODE_t **)malloc( sizeof(ASTARNODE_t *) * ( g_lNodeListSize + 1 ));
+			if ( g_aPaths[ulIdx].paVisualizations == NULL || g_apOpenListPriorityQueue[ulIdx] == NULL ) ok = false;
+		}
+		if ( !ok )
+		{
+			ASTAR_ClearNodes( );
+			Vita_BootLog( "bot path nodes: allocation failed (heap fragmented); bots won't use A* paths here" );
+			Printf ( "Not enough memory for bot path nodes; bots won't use A* paths here.\n");
+			g_lNodeListSize = 0;
+			g_lNumHorizontalNodes = 0;
+			g_lNumVerticalNodes = 0;
+			g_bIsInitialized = true;
+			return;
+		}
+	}
+#else
 	g_aMasterNodeList = new ASTARNODE_t[g_lNodeListSize];
+#endif
 
 	for ( ulIdx = 0; ulIdx < (ULONG)g_lNumHorizontalNodes; ulIdx++ )
 	{
@@ -206,7 +236,9 @@ void ASTAR_BuildNodes( void )
 		g_aPaths[ulIdx].bInGoalNode = false;
 		g_aPaths[ulIdx].lStackPos = 0;
 		g_aPaths[ulIdx].pActor = NULL;
+#ifndef __vita__
 		g_aPaths[ulIdx].paVisualizations = (AActor **)M_Malloc( sizeof(AActor *) * g_lNodeListSize );
+#endif
 		for ( ulIdx2 = 0; ulIdx2 < (ULONG)g_lNodeListSize; ulIdx2++ )
 			g_aPaths[ulIdx].paVisualizations[ulIdx2] = NULL;
 		g_aPaths[ulIdx].pCurrentNode = NULL;
@@ -219,7 +251,9 @@ void ASTAR_BuildNodes( void )
 		g_aPaths[ulIdx].ulNumSearchedNodes = 0;
 
 		g_ulPriorityQueuePosition[ulIdx] = 0;
+#ifndef __vita__
 		g_apOpenListPriorityQueue[ulIdx] = (ASTARNODE_t **)M_Malloc( sizeof(ASTARNODE_t *) * ( g_lNodeListSize + 1 ));
+#endif
 		for ( ulIdx2 = 0; ulIdx2 < (ULONG)g_lNodeListSize; ulIdx2++ )
 			g_apOpenListPriorityQueue[ulIdx][ulIdx2] = NULL;
 	}
