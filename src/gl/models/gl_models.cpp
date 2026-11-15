@@ -39,6 +39,8 @@
 
 #include "gl/system/gl_system.h"
 #include "vita/vita_perf.h"
+#include "vita/vita_system.h"
+#include <vitaGL.h>
 #include "w_wad.h"
 #include "i_system.h"
 #ifdef __vita__
@@ -1048,8 +1050,62 @@ FSpriteModelFrame * gl_FindModelFrame(const PClass * ti, int sprite, int frame, 
 
 EXTERN_CVAR(Bool, gl_precache)
 
+#ifdef __vita__
+// [Vita] Even without gl_precache: upload the skins of the models that the
+// level's actors use while the level loads (a 1024x1024 weapon or Spartan
+// skin takes ~0.4 s to decode and compress, which stalled the game the
+// first time it was seen). Stops when GPU memory gets low or after a time
+// limit (seconds).
+CVAR(Int, vita_precacheskins, 20, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+static void Vita_PrecacheSkins()
+{
+	if (vita_precacheskins <= 0) return;
+	TMap<const PClass *, bool> classes;
+	{
+		AActor *actor;
+		TThinkerIterator<AActor> it;
+		while ((actor = it.Next()) != NULL)
+			classes[actor->GetClass()] = true;
+	}
+	TMap<FTexture *, bool> skins;
+	for (unsigned i = 0; i < SpriteModelFrames.Size(); i++)
+	{
+		const FSpriteModelFrame &smf = SpriteModelFrames[i];
+		if (smf.type == NULL || classes.CheckKey(smf.type) == NULL)
+			continue;
+		for (int m = 0; m < MAX_MODELS_PER_FRAME; m++)
+		{
+			if (smf.skins[m] != NULL) skins[smf.skins[m]] = true;
+			if (smf.surfaceskins != NULL)
+				for (int sf = 0; sf < MD3_MAX_SURFACES; sf++)
+					if (smf.surfaceskins[m][sf] != NULL) skins[smf.surfaceskins[m][sf]] = true;
+		}
+	}
+	const unsigned long long start = sceKernelGetProcessTimeWide();
+	const unsigned long long limit = (unsigned long long)vita_precacheskins * 1000000;
+	int done = 0, total = skins.CountUsed();
+	const char *why = "all done";
+	TMap<FTexture *, bool>::Iterator sit(skins);
+	TMap<FTexture *, bool>::Pair *pair;
+	while (sit.NextPair(pair))
+	{
+		if (sceKernelGetProcessTimeWide() - start > limit) { why = "time limit"; break; }
+		if (vglMemFree(VGL_MEM_RAM) + vglMemFree(VGL_MEM_VRAM) < (48u << 20)) { why = "GPU memory low"; break; }
+		FMaterial *mat = FMaterial::ValidateTexture(pair->Key);
+		if (mat != NULL) { mat->Precache(); done++; }
+	}
+	Vita_BootLog("precached %d of %d model skins in %llu ms (%s); GPU free RAM %u MB CDRAM %u MB", done, total,
+		(sceKernelGetProcessTimeWide() - start) / 1000, why,
+		(unsigned)(vglMemFree(VGL_MEM_RAM) >> 20), (unsigned)(vglMemFree(VGL_MEM_VRAM) >> 20));
+}
+#endif
+
 void gl_PrecacheModels(BYTE *hitlist)
 {
+#ifdef __vita__
+	if (!gl_precache) { Vita_PrecacheSkins(); return; }
+#endif
 	if (!gl_precache) return;
 	TMap<const PClass *, bool> classes;
 	{
