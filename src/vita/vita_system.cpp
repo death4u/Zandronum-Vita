@@ -9,6 +9,7 @@
 
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include <psp2/power.h>
@@ -83,6 +84,8 @@ static void Vita_SqliteFree(void *p) { free(p); }
 #define VITA_NET_MEMORY (1 * 1024 * 1024)
 static char vita_net_memory[VITA_NET_MEMORY];
 
+static SceUID Vita_MainThreadId = -1;	// see Vita_RetryAlloc
+
 extern "C" void Vita_EarlyInit(void)
 {
 	// The data folders must exist before anything is logged.
@@ -93,6 +96,7 @@ extern "C" void Vita_EarlyInit(void)
 	sceIoRemove(VITA_BOOT_LOG);
 
 	Vita_BootLog("Zandronum for PS Vita, built " __DATE__ " " __TIME__);
+	Vita_MainThreadId = sceKernelGetThreadId();
 	Vita_BootLog("heap %d MB, main stack %u KB",
 		_newlib_heap_size_user / (1024 * 1024), sceUserMainThreadStackSize / 1024);
 	{
@@ -258,9 +262,23 @@ extern "C" void *__wrap_realloc(void *old, size_t size)
 #include <new>
 extern "C" void *__real__Znwj(size_t size);
 extern "C" void *__real__Znaj(size_t size);
+// [Vita] Called when a big allocation fails, to free caches and retry
+// (set by the renderer: unloads models that weren't drawn recently).
+// Only used on the main thread.
+void (*Vita_MemoryPressureHook)(void);
+
+static void *Vita_RetryAlloc(size_t size)
+{
+	if (size < (256u << 10) || Vita_MemoryPressureHook == NULL || sceKernelGetThreadId() != Vita_MainThreadId)
+		return NULL;
+	Vita_MemoryPressureHook();
+	return malloc(size);
+}
+
 extern "C" void *__wrap__Znwj(size_t size)
 {
 	void *p = malloc(size ? size : 1);
+	if (p == NULL) p = Vita_RetryAlloc(size);
 	if (p == NULL)
 	{
 		Vita_LogAllocFailure("new", size, __builtin_return_address(0));
@@ -271,6 +289,7 @@ extern "C" void *__wrap__Znwj(size_t size)
 extern "C" void *__wrap__Znaj(size_t size)
 {
 	void *p = malloc(size ? size : 1);
+	if (p == NULL) p = Vita_RetryAlloc(size);
 	if (p == NULL)
 	{
 		Vita_LogAllocFailure("new[]", size, __builtin_return_address(0));

@@ -56,6 +56,9 @@
 #include "c_cvars.h"
 #include "c_bind.h"
 #include "c_dispatch.h"
+#ifdef __vita__
+#include "vita/vita_system.h"
+#endif
 #include "v_video.h"
 #include "w_wad.h"
 #include "p_local.h" 
@@ -1481,13 +1484,39 @@ static void Vita_AutoBots()
 
 // [Vita] Test helper: go to the next map every N seconds.
 CVAR(Int, vita_testnextmap, 0, 0)
+// Maps to cycle through instead of level.nextmap (space separated).
+CVAR(String, vita_testmaps, "", 0)
+// Summoned in front of the player 3 s into each level (to look at it).
+CVAR(String, vita_testsummon, "", 0)
 void Vita_TestNextMap()
 {
-	static int tics = 0;
-	if (vita_testnextmap <= 0 || gamestate != GS_LEVEL || gameaction != ga_nothing) { if (gamestate != GS_LEVEL) tics = 0; return; }
+	static int tics = 0, levtics = 0;
+	if (gamestate != GS_LEVEL) { tics = levtics = 0; return; }
+	if (++levtics == 3 * TICRATE && *vita_testsummon != 0)
+	{
+		FString cmd; cmd.Format("summon %s", *vita_testsummon);
+		C_DoCommand(cmd.GetChars());
+	}
+	if (vita_testnextmap <= 0 || gameaction != ga_nothing) return;
 	if (++tics < vita_testnextmap * TICRATE) return;
-	tics = 0;
-	G_ChangeLevel(level.nextmap, 0, CHANGELEVEL_NOINTERMISSION);
+	tics = levtics = 0;
+	FString next = level.nextmap;
+	if (*vita_testmaps != 0)
+	{
+		TArray<FString> maps;
+		FString list = *vita_testmaps;
+		char *tok = strtok(list.LockBuffer(), " ,");
+		while (tok != NULL) { maps.Push(tok); tok = strtok(NULL, " ,"); }
+		list.UnlockBuffer();
+		if (maps.Size() > 0)
+		{
+			unsigned k = 0;
+			for (; k < maps.Size(); k++) if (!maps[k].CompareNoCase(level.mapname)) break;
+			next = maps[k < maps.Size() ? (k + 1) % maps.Size() : 0];
+		}
+	}
+	Vita_BootLog("test: changing map to %s", next.GetChars());
+	G_ChangeLevel(next, 0, CHANGELEVEL_NOINTERMISSION);
 }
 
 void G_Ticker ()

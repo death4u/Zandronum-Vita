@@ -48,6 +48,8 @@
 #include "gl/models/gl_models.h"
 #include "gl/textures/gl_material.h"
 #include "gl/shaders/gl_shader.h"
+#include "c_cvars.h"
+#include <stdint.h>
 
 static float   avertexnormals[NUMVERTEXNORMALS][3] = {
 #include "tab_anorms.h"
@@ -217,6 +219,9 @@ bool FDMDModel::Load(const char * path, int, const char * buffer, int length)
 
 FDMDModel::~FDMDModel()
 {
+#ifdef __vita__
+	delete[] vIdx; delete[] vSrc; delete[] vTex;
+#endif
 	int i;
 
 	// clean up
@@ -293,6 +298,103 @@ void FDMDModel::RenderGLCommands(void *glCommands, unsigned int numVertices,FMod
 }
 
 
+#ifdef __vita__
+CVAR(Bool, vita_md2batch, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+void FDMDModel::VitaBuildTriangles()
+{
+	vBuilt = true;
+	if (info.numLODs < 1 || lods[0].glCommands == NULL) return;
+	TArray<unsigned short> idx, src;
+	TArray<float> tex;
+	TMap<uint64_t, unsigned> seen;	// (vertex index, s, t) -> expanded vertex
+	TArray<unsigned> corners;
+	for (char *pos = (char *)lods[0].glCommands; *pos; )
+	{
+		int count = *(int *)pos;
+		pos += 4;
+		const bool strip = count > 0;
+		count = abs(count);
+		corners.Clear();
+		for (int c = 0; c < count; c++)
+		{
+			FGLCommandVertex *v = (FGLCommandVertex *)pos;
+			pos += sizeof(FGLCommandVertex);
+			uint32_t si, ti;
+			memcpy(&si, &v->s, 4); memcpy(&ti, &v->t, 4);
+			uint64_t key = ((uint64_t)(unsigned)v->index << 40) ^ ((uint64_t)si << 20) ^ ti;
+			unsigned *e = seen.CheckKey(key);
+			unsigned ex;
+			if (e != NULL && src[*e] == (unsigned short)v->index && tex[*e * 2] == v->s && tex[*e * 2 + 1] == v->t)
+				ex = *e;
+			else
+			{
+				ex = src.Size();
+				if (ex >= 65535) { idx.Clear(); return; }
+				src.Push((unsigned short)v->index);
+				tex.Push(v->s); tex.Push(v->t);
+				seen[key] = ex;
+			}
+			corners.Push(ex);
+		}
+		for (int k = 2; k < count; k++)
+		{
+			unsigned a, b, c;
+			if (strip)
+			{
+				// Same winding as GL draws a strip.
+				if (k & 1) { a = corners[k - 1]; b = corners[k - 2]; }
+				else { a = corners[k - 2]; b = corners[k - 1]; }
+				c = corners[k];
+			}
+			else { a = corners[0]; b = corners[k - 1]; c = corners[k]; }
+			idx.Push((unsigned short)a); idx.Push((unsigned short)b); idx.Push((unsigned short)c);
+		}
+	}
+	if (idx.Size() == 0) return;
+	vNumIdx = idx.Size();
+	vNumExp = src.Size();
+	vIdx = new unsigned short[vNumIdx];
+	memcpy(vIdx, &idx[0], vNumIdx * sizeof(unsigned short));
+	vSrc = new unsigned short[vNumExp];
+	memcpy(vSrc, &src[0], vNumExp * sizeof(unsigned short));
+	vTex = new float[vNumExp * 2];
+	memcpy(vTex, &tex[0], vNumExp * 2 * sizeof(float));
+}
+
+void FDMDModel::VitaRender(FModelVertex *v1, FModelVertex *v2, float inter)
+{
+	static TArray<float> pos;
+	pos.Resize(vNumExp * 3);
+	float *o = &pos[0];
+	if (v2 == NULL)
+	{
+		for (int i = 0; i < vNumExp; i++, o += 3)
+		{
+			const float *p = v1[vSrc[i]].xyz;
+			o[0] = p[0]; o[1] = p[1]; o[2] = p[2];
+		}
+	}
+	else
+	{
+		const float a = 1.f - inter, b = inter;
+		for (int i = 0; i < vNumExp; i++, o += 3)
+		{
+			const float *p = v1[vSrc[i]].xyz, *q = v2[vSrc[i]].xyz;
+			o[0] = a * p[0] + b * q[0]; o[1] = a * p[1] + b * q[1]; o[2] = a * p[2] + b * q[2];
+		}
+	}
+	gl_RenderState.Apply();
+	glVertexPointer(3, GL_FLOAT, 0, &pos[0]);
+	glTexCoordPointer(2, GL_FLOAT, 0, vTex);
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	glDrawElements(GL_TRIANGLES, vNumIdx, GL_UNSIGNED_SHORT, vIdx);
+	glDisableClientState(GL_VERTEX_ARRAY);
+	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+}
+#endif
+
 void FDMDModel::RenderFrame(FTexture * skin, int frameno, int cm, int translation)
 {
 	int activeLod;
@@ -334,6 +436,13 @@ void FDMDModel::RenderFrame(FTexture * skin, int frameno, int cm, int translatio
 		activeLod = 0;
 	}
 
+#ifdef __vita__
+	if (vita_md2batch)
+	{
+		if (!vBuilt) VitaBuildTriangles();
+		if (vIdx != NULL) { VitaRender(frame->vertices, NULL, 0); return; }
+	}
+#endif
 	RenderGLCommands(lods[activeLod].glCommands, numVerts, frame->vertices/*, modelColors, NULL*/);
 }
 
@@ -359,6 +468,13 @@ void FDMDModel::RenderFrameInterpolated(FTexture * skin, int frameno, int framen
 
 	int numVerts = info.numVertices;
 
+#ifdef __vita__
+	if (vita_md2batch)
+	{
+		if (!vBuilt) VitaBuildTriangles();
+		if (vIdx != NULL) { VitaRender(vertices1, vertices2, (float)inter); return; }
+	}
+#endif
 	// [BB] Calculate the interpolated vertices by linear interpolation.
 	FModelVertex *verticesInterpolated = new FModelVertex[numVerts];
 	for( int k = 0; k < numVerts; k++ )

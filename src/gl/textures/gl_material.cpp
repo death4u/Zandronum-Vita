@@ -387,6 +387,7 @@ bool FGLTexture::CreatePatch()
 //===========================================================================
 
 #ifdef __vita__
+#include <new>
 #include "vita/vita_perf.h"
 #include "vita/vita_system.h"
 // Logs textures that took long to decode or upload (to see what causes
@@ -454,7 +455,14 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 #endif
 			if (!tex->bHasCanvas)
 			{
+#ifdef __vita__
+				// Out of memory for a big texture: draw without it rather
+				// than end the game.
+				try { buffer = CreateTexBuffer(cm, translation, w, h, false, hirescheck, warp); }
+				catch (std::bad_alloc &) { Vita_BootLog("texture skipped: out of memory"); return NULL; }
+#else
 				buffer = CreateTexBuffer(cm, translation, w, h, false, hirescheck, warp);
+#endif
 				tex->ProcessData(buffer, w, h, false);
 			}
 #ifdef __vita__
@@ -520,7 +528,13 @@ const FHardwareTexture * FGLTexture::BindPatch(int texunit, int cm, int translat
 #ifdef __vita__
 			const unsigned long long vt0 = Vita_PerfNow();
 #endif
+#ifdef __vita__
+			unsigned char * buffer;
+			try { buffer = CreateTexBuffer(cm, translation, w, h, bExpand, NULL, warp); }
+			catch (std::bad_alloc &) { Vita_BootLog("sprite skipped: out of memory"); return NULL; }
+#else
 			unsigned char * buffer = CreateTexBuffer(cm, translation, w, h, bExpand, NULL, warp);
+#endif
 #ifdef __vita__
 			const unsigned long long vt1 = Vita_PerfNow();
 #endif

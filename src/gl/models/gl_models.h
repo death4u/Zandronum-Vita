@@ -38,6 +38,8 @@ public:
 #ifdef __vita__
 	// Bytes this model keeps in memory, or -1 if unknown (for the model budget).
 	virtual int MemSize() { return -1; }
+	// Number of animation frames (0 if unknown).
+	virtual int NumFrames() { return 0; }
 #endif
 
 
@@ -135,10 +137,24 @@ protected:
 	bool			allowTexComp;  // Allow texture compression with this.
 
 	static void RenderGLCommands(void *glCommands, unsigned int numVertices,FModelVertex * vertices);
+#ifdef __vita__
+	// [Vita] The GL command strips/fans as one indexed triangle list, so a
+	// frame is a single draw instead of a glBegin/glEnd per strip.
+	unsigned short *vIdx;	// 3 per triangle, into the expanded vertices
+	unsigned short *vSrc;	// expanded vertex -> model vertex
+	float *vTex;			// expanded vertex texture coordinates
+	int vNumIdx, vNumExp;
+	bool vBuilt;
+	void VitaBuildTriangles();
+	void VitaRender(FModelVertex *v1, FModelVertex *v2, float inter);
+#endif
 
 public:
 	FDMDModel() 
 	{ 
+#ifdef __vita__
+		vIdx = vSrc = NULL; vTex = NULL; vNumIdx = vNumExp = 0; vBuilt = false;
+#endif
 		loaded = false; 
 		frames = NULL;
 		skins = NULL;
@@ -271,6 +287,7 @@ public:
 	TArray<FString> DeferredSkins;
 	FString DeferredPath;
 	int MemSize();
+	int NumFrames() { return numFrames; }
 	float VitaCheckPacking(const char *buffer);	// max error vs. the file (test)
 #endif
 	virtual int FindFrame(const char * name);

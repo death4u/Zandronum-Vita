@@ -56,6 +56,7 @@
 #ifdef __vita__
 #include <malloc.h>
 #include "vita/vita_system.h"
+#include "c_cvars.h"
 #endif
 #include "doomstat.h"
 #include "gi.h"
@@ -121,6 +122,26 @@ void ASTAR_Construct( void )
 
 //*****************************************************************************
 //
+#ifdef __vita__
+CVAR(Int, vita_astarmb, 40, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+static ASTARNODE_t *VitaNodePool;
+static AActor **VitaVisPool[MAX_PATHS];
+static ASTARNODE_t **VitaQueuePool[MAX_PATHS];
+static long VitaNodeCap;
+
+static void VitaFreeNodePools( void )
+{
+	delete[] VitaNodePool;
+	VitaNodePool = NULL;
+	for ( int i = 0; i < MAX_PATHS; i++ )
+	{
+		free( VitaVisPool[i] ); VitaVisPool[i] = NULL;
+		free( VitaQueuePool[i] ); VitaQueuePool[i] = NULL;
+	}
+	VitaNodeCap = 0;
+}
+#endif
+
 void ASTAR_BuildNodes( void )
 {
 	ULONG	ulIdx;
@@ -152,16 +173,38 @@ void ASTAR_BuildNodes( void )
 	// is the maximum number of nodes per search: length * width.
 	// [BB] This is certainly more memory than we want to assign for the bots...
 #ifdef __vita__
-	// [Vita] Bot path nodes for big maps need more memory than the Vita has
-	// (HaloDoom's MULTI03: 129 MB plus per-path tables), which ended the game
-	// with an out-of-memory error. Use them only if they leave the heap
-	// enough room; otherwise bots go without A* paths on that map.
+	// [Vita] Bot path nodes take ~2.8 KB per 64x64 map cell (Warehouse 63 MB,
+	// MULTI03 177 MB). Allocating and freeing them on every level change
+	// fragmented the heap until a level change crashed. They now live in one
+	// set of buffers that is kept between levels and reused while big enough,
+	// up to vita_astarmb megabytes; bigger maps go without A* paths.
 	{
 		extern int _newlib_heap_size_user;
-		double need = (double)g_lNodeListSize * ( sizeof ( ASTARNODE_t ) + 2.0 * MAX_PATHS * sizeof ( void * ));
-		double room = (double)_newlib_heap_size_user - (double)mallinfo().uordblks - 48.0 * 1024 * 1024;
-		Vita_BootLog( "bot path nodes: %.1f MB needed, %.1f MB available", need / 1048576, room / 1048576 );
-		if ( need > room )
+		const double per = sizeof ( ASTARNODE_t ) + 2.0 * MAX_PATHS * sizeof ( void * );
+		const double need = (double)g_lNodeListSize * per;
+		bool ok = need <= (double)vita_astarmb * 1048576.0;
+		if ( ok && g_lNodeListSize > VitaNodeCap )
+		{
+			VitaFreeNodePools( );
+			double room = (double)_newlib_heap_size_user - (double)mallinfo().uordblks - 48.0 * 1024 * 1024;
+			ok = need <= room;
+			if ( ok )
+			{
+				VitaNodePool = new (std::nothrow) ASTARNODE_t[g_lNodeListSize];
+				ok = VitaNodePool != NULL;
+				for ( ulIdx = 0; ok && ulIdx < MAX_PATHS; ulIdx++ )
+				{
+					VitaVisPool[ulIdx] = (AActor **)malloc( sizeof(AActor *) * g_lNodeListSize );
+					VitaQueuePool[ulIdx] = (ASTARNODE_t **)malloc( sizeof(ASTARNODE_t *) * ( g_lNodeListSize + 1 ));
+					if ( VitaVisPool[ulIdx] == NULL || VitaQueuePool[ulIdx] == NULL ) ok = false;
+				}
+				if ( ok ) VitaNodeCap = g_lNodeListSize;
+				else VitaFreeNodePools( );
+			}
+		}
+		Vita_BootLog( "bot path nodes: %.1f MB needed, buffers %.1f MB: %s", need / 1048576, VitaNodeCap * per / 1048576,
+			ok ? "using them" : "too big or no room; bots go without A* paths here" );
+		if ( !ok )
 		{
 			Printf ( "Map too big for bot path nodes on the Vita; bots won't use A* paths here.\n");
 			g_lNodeListSize = 0;
@@ -170,39 +213,11 @@ void ASTAR_BuildNodes( void )
 			g_bIsInitialized = true;
 			return;
 		}
-	}
-#endif
-	if ( sizeof ( ASTARNODE_t ) * g_lNodeListSize > INT_MAX )
-	{
-		Printf ( "Unable to allocate bot nodes. Disabling bots on this map.\n");
-		g_bIsInitialized = true;
-		return;
-	}
-#ifdef __vita__
-	// [Vita] Even with enough free memory in total, the heap may have no
-	// single block this big after a few level changes (a 46 MB request failed
-	// with 82 MB free and the game aborted). Allocate everything up front and
-	// go without A* paths if any of it fails.
-	{
-		bool ok = true;
-		g_aMasterNodeList = new (std::nothrow) ASTARNODE_t[g_lNodeListSize];
-		if ( g_aMasterNodeList == NULL ) ok = false;
-		for ( ulIdx = 0; ok && ulIdx < MAX_PATHS; ulIdx++ )
+		g_aMasterNodeList = VitaNodePool;
+		for ( ulIdx = 0; ulIdx < MAX_PATHS; ulIdx++ )
 		{
-			g_aPaths[ulIdx].paVisualizations = (AActor **)malloc( sizeof(AActor *) * g_lNodeListSize );
-			g_apOpenListPriorityQueue[ulIdx] = (ASTARNODE_t **)malloc( sizeof(ASTARNODE_t *) * ( g_lNodeListSize + 1 ));
-			if ( g_aPaths[ulIdx].paVisualizations == NULL || g_apOpenListPriorityQueue[ulIdx] == NULL ) ok = false;
-		}
-		if ( !ok )
-		{
-			ASTAR_ClearNodes( );
-			Vita_BootLog( "bot path nodes: allocation failed (heap fragmented); bots won't use A* paths here" );
-			Printf ( "Not enough memory for bot path nodes; bots won't use A* paths here.\n");
-			g_lNodeListSize = 0;
-			g_lNumHorizontalNodes = 0;
-			g_lNumVerticalNodes = 0;
-			g_bIsInitialized = true;
-			return;
+			g_aPaths[ulIdx].paVisualizations = VitaVisPool[ulIdx];
+			g_apOpenListPriorityQueue[ulIdx] = VitaQueuePool[ulIdx];
 		}
 	}
 #else
@@ -271,6 +286,15 @@ void ASTAR_ClearNodes( void )
 {
 	ULONG	ulIdx;
 
+#ifdef __vita__
+	// The buffers stay allocated for the next level (see ASTAR_BuildNodes).
+	g_aMasterNodeList = NULL;
+	for ( ulIdx = 0; ulIdx < MAX_PATHS; ulIdx++ )
+	{
+		g_apOpenListPriorityQueue[ulIdx] = NULL;
+		g_aPaths[ulIdx].paVisualizations = NULL;
+	}
+#else
 	delete[] g_aMasterNodeList;
 	g_aMasterNodeList = NULL;
 
@@ -282,6 +306,7 @@ void ASTAR_ClearNodes( void )
 		M_Free( g_aPaths[ulIdx].paVisualizations );
 		g_aPaths[ulIdx].paVisualizations = NULL;
 	}
+#endif
 
 	g_lNodeListSize = 0;
 	g_bIsInitialized = false;

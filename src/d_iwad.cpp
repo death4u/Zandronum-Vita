@@ -429,6 +429,13 @@ int FIWadManager::IdentifyVersion (TArray<FString> &wadfiles, const char *iwad, 
 				if (f != NULL)
 				{
 					lumps = f->LumpCount();
+					FString first;
+					for (DWORD ii = 0; ii < f->LumpCount() && ii < 12; ii++)
+					{
+						FResourceLump *l = f->GetLump(ii);
+						first.AppendFormat("%s%s(%s) ", l->Name, l->FullName ? "/" : "", l->FullName ? l->FullName : "");
+					}
+					Vita_BootLog("iwad first lumps: %s", first.GetChars());
 					for (DWORD ii = 0; ii < f->LumpCount(); ii++)
 					{
 						const char *n = f->GetLump(ii)->Name;

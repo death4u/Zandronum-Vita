@@ -206,6 +206,8 @@ static int ModelFrameHash(FSpriteModelFrame * smf)
 
 CVAR(Int, gl_vita_modelbudget, 48, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)	// MB of model files kept loaded
 
+CVAR(Bool, vita_modelsubstitute, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
 class FLazyModel : public FModel
 {
 public:
@@ -239,9 +241,32 @@ public:
 		return f;
 	}
 
+	// [Vita] While a model is still loading, draw a loaded model from the
+	// same folder that has the frame (HaloDoom's Spartans are one model per
+	// weapon with the same 503-frame body): a bot that switches weapons
+	// then shows its previous weapon for a moment instead of vanishing.
+	FModel *Substitute(int frame, int frame2)
+	{
+		int slash = mPath.LastIndexOf('/');
+		if (slash < 0) return NULL;
+		FLazyModel *best = NULL;
+		for (unsigned i = 0; i < All.Size(); i++)
+		{
+			FLazyModel *c = All[i];
+			if (c == this || c->mReal == NULL) continue;
+			int n = c->mReal->NumFrames();
+			if (n <= frame || n <= frame2) continue;
+			if (c->mPath.Len() <= (unsigned)slash || strnicmp(c->mPath.GetChars(), mPath.GetChars(), slash + 1) != 0) continue;
+			if (strchr(c->mPath.GetChars() + slash + 1, '/') != NULL) continue;
+			if (best == NULL || c->mLastUse > best->mLastUse) best = c;
+		}
+		return best ? best->mReal : NULL;
+	}
+
 	void RenderFrame(FTexture *skin, int frame, int cm, int translation)
 	{
 		FModel *m = Get();
+		if (m == NULL && vita_modelsubstitute) m = Substitute(frame, frame);
 		if (m == NULL) return;
 		m->PushSpriteMDLFrame(curSpriteMDLFrame, curMDLIndex);
 		m->RenderFrame(skin, frame, cm, translation);
@@ -250,6 +275,7 @@ public:
 	void RenderFrameInterpolated(FTexture *skin, int frame, int frame2, double inter, int cm, int translation)
 	{
 		FModel *m = Get();
+		if (m == NULL && vita_modelsubstitute) m = Substitute(frame, frame2);
 		if (m == NULL) return;
 		m->PushSpriteMDLFrame(curSpriteMDLFrame, curMDLIndex);
 		m->RenderFrameInterpolated(skin, frame, frame2, inter, cm, translation);
@@ -437,6 +463,23 @@ FModel *FLazyModel::Get(bool sync)
 	LoadedBytes += mSize;
 	return mReal;
 }
+
+// [Vita] Out of memory for a big allocation: unload every model that
+// wasn't drawn in the last half second (see Vita_MemoryPressureHook).
+static void Vita_FreeModelsForMemory()
+{
+	int freed = 0;
+	for (unsigned i = 0; i < FLazyModel::All.Size(); i++)
+	{
+		FLazyModel *m = FLazyModel::All[i];
+		if (m->mReal != NULL && I_MSTime() - m->mLastUse >= 500) { m->Unload(); freed++; }
+	}
+	Vita_BootLog("low memory: unloaded %d models", freed);
+}
+static struct FVitaPressureInit
+{
+	FVitaPressureInit() { extern void (*Vita_MemoryPressureHook)(void); Vita_MemoryPressureHook = Vita_FreeModelsForMemory; }
+} Vita_PressureInit;
 
 void FLazyModel::Trim(FLazyModel *keep)
 {
