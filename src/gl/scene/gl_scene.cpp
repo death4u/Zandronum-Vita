@@ -386,6 +386,9 @@ void FGLRenderer::CreateScene()
 void FGLRenderer::RenderScene(int recursion)
 {
 	RenderAll.Clock();
+#ifdef __vita__
+	const unsigned long long vita_opaque_t0 = recursion == 0 ? Vita_PerfNow() : 0;
+#endif
 
 	glDepthMask(true);
 	if (!gl_no_skyclear) GLPortal::RenderFirstSkyPortal(recursion);
@@ -534,6 +537,7 @@ void FGLRenderer::RenderScene(int recursion)
 
 #ifdef __vita__
 	// Decals, portals, translucent things and the HUD read live game data.
+	if (vita_opaque_t0) { Vita_PerfAcc[VPERF_OPAQUE] += Vita_PerfNow() - vita_opaque_t0; Vita_PerfCalls[VPERF_OPAQUE]++; }
 	Vita_LogicEnd();
 #endif
 
@@ -543,9 +547,12 @@ void FGLRenderer::RenderScene(int recursion)
 	glPolygonOffset(-1.0f, -128.0f);
 	glDepthMask(false);
 
+	{
+	VITA_PERF(VPERF_DECALS);
 	for(int i=0; i<GLDL_TRANSLUCENT; i++)
 	{
 		gl_drawinfo->drawlists[i].Draw(GLPASS_DECALS);
+	}
 	}
 
 	gl_RenderState.SetTextureMode(TM_MODULATE);
@@ -665,9 +672,9 @@ void FGLRenderer::DrawScene(bool toscreen)
 	// Handle all portals after rendering the opaque objects but before
 	// doing all translucent stuff
 	recursion++;
-	GLPortal::EndFrame();
+	{ VITA_PERF(VPERF_PORTALS); GLPortal::EndFrame(); }
 	recursion--;
-	RenderTranslucent();
+	{ VITA_PERF(VPERF_TRANSL); RenderTranslucent(); }
 }
 
 

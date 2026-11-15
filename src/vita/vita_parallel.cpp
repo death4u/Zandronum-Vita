@@ -5,7 +5,9 @@
 #include <psp2/kernel/cpu.h>
 #include <exception>
 
+#include <psp2/kernel/processmgr.h>
 #include "doomtype.h"
+#include "dobject.h"
 #include "doomdef.h"
 #include "doomstat.h"
 #include "d_event.h"
@@ -150,12 +152,17 @@ static void RunDeferredLights()
 //
 //==========================================================================
 
+static volatile SceUInt64 LogicSignalTime;
+unsigned long long Vita_LogicStartDelay, Vita_LogicRunTime;	// for the profiler
+
 static int LogicEntry(SceSize, void *)
 {
 	LogicThreadId = sceKernelGetThreadId();
 	for (;;)
 	{
 		sceKernelWaitSema(StartSema, 1, NULL);
+		const SceUInt64 t0 = sceKernelGetProcessTimeWide();
+		Vita_LogicStartDelay += t0 - LogicSignalTime;
 		try
 		{
 			TryRunTics();
@@ -164,6 +171,7 @@ static int LogicEntry(SceSize, void *)
 		{
 			LogicError = std::current_exception();
 		}
+		Vita_LogicRunTime += sceKernelGetProcessTimeWide() - t0;
 		sceKernelSignalSema(DoneSema, 1);
 	}
 	return 0;
@@ -185,6 +193,16 @@ static bool StartThread()
 		vita_parallel = false;
 		return false;
 	}
+	// Keep the main thread off the logic thread's core: threads of equal
+	// priority on one core don't time-slice, so the logic would only run
+	// while the main thread blocks.
+	{
+		const int before = sceKernelGetThreadCpuAffinityMask(0);
+		int r = sceKernelChangeThreadCpuAffinityMask(0, SCE_KERNEL_CPU_MASK_USER_0);
+		Vita_BootLog("main thread affinity was 0x%08X", before);
+		Vita_BootLog("main thread pinned to core 0: 0x%08X (affinity now 0x%08X)", r,
+			sceKernelGetThreadCpuAffinityMask(0));
+	}
 	sceKernelStartThread(LogicThread, 0, NULL);
 	while (LogicThreadId < 0) sceKernelDelayThread(100);
 	Vita_BootLog("logic thread started");
@@ -195,6 +213,7 @@ void Vita_LogicBegin()
 {
 	if (!StartThread()) return;
 	Vita_Overlap = true;
+	LogicSignalTime = sceKernelGetProcessTimeWide();
 	sceKernelSignalSema(StartSema, 1);
 }
 
@@ -215,4 +234,28 @@ void Vita_LogicEnd()
 		LogicError = nullptr;
 		std::rethrow_exception(e);
 	}
+}
+
+//==========================================================================
+//
+// Garbage collection between frames
+//
+//==========================================================================
+
+unsigned Vita_GCSteps;			// for the profiler
+unsigned long long Vita_GCTime;
+
+void Vita_GCCatchUp()
+{
+	const SceUInt64 start = sceKernelGetProcessTimeWide();
+	unsigned n = 0;
+	while (GC::AllocBytes >= GC::Threshold && n < 4000)
+	{
+		GC::Step();
+		n++;
+		if ((n & 15) == 0 && sceKernelGetProcessTimeWide() - start > 4000)
+			break;
+	}
+	Vita_GCSteps += n;
+	Vita_GCTime += sceKernelGetProcessTimeWide() - start;
 }

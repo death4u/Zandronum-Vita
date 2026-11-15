@@ -149,7 +149,11 @@ DObject *SoftRoots;
 DObject **SweepPos;
 DWORD CurrentWhite = OF_White0 | OF_Fixed;
 EGCState State = GCS_Pause;
+#ifdef __vita__
+int Pause = 125;	// collect sooner: the Vita heap has little headroom
+#else
 int Pause = DEFAULT_GCPAUSE;
+#endif
 int StepMul = DEFAULT_GCMUL;
 int StepCount;
 size_t Dept;

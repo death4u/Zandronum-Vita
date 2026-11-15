@@ -2321,6 +2321,81 @@ static int ParseLocalArrayChunk(void *chunk, ACSLocalArrays *arrays, int offset)
 	return offset;
 }
 
+#ifdef __vita__
+//==========================================================================
+//
+// [Vita] Native versions of hot ACS functions. HaloDoom's hud library has a
+// 3D distance(tid1, tid2) function that every map weapon pickup calls for
+// all 32 player slots every tic (the "press use" prompt): about a third of
+// all the script time. Functions are recognised by their exact bytecode
+// (jump targets relative to the function start), so any other code still
+// runs in the interpreter. The native version does the same fixed-point
+// steps as the bytecode, so results are identical.
+//
+//==========================================================================
+
+enum { VITA_NATIVE_NONE, VITA_NATIVE_DISTANCE };
+
+static const BYTE Vita_DistanceCode[] = {
+	0x1c,0x00,0xc5,0x1c,0x01,0xc5,0x0f,0x19,0x03,0x1c,0x00,0xc4,0x1c,0x01,0xc4,0x0f,0x19,0x04,0x1c,0x00,0xc6,0x1c,0x01,0xc6,0x0f,0x19,0x05,0x1c,0x04,0x1c,0x03,0xde,
+	0x19,0x06,0x1c,0x06,0x03,0x00,0x20,0x00,0x00,0x0e,0x03,0x00,0x80,0x00,0x00,0x12,0x03,0x00,0x40,0x00,0x00,0x16,0x4f,0x7a,0x39,0x00,0x00,0x1c,0x03,0x1c,0x06,0xdc,
+	0x89,0x19,0x02,0x34,0x82,0x39,0x00,0x00,0x1c,0x04,0x1c,0x06,0xdd,0x89,0x19,0x02,0x1c,0x02,0x1c,0x05,0xde,0x19,0x06,0x1c,0x06,0x03,0x00,0x20,0x00,0x00,0x0e,0x03,
+	0x00,0x80,0x00,0x00,0x12,0x03,0x00,0x40,0x00,0x00,0x16,0x4f,0xaf,0x39,0x00,0x00,0x1c,0x05,0x1c,0x06,0xdc,0x89,0x19,0x02,0x34,0xb7,0x39,0x00,0x00,0x1c,0x02,0x1c,
+	0x06,0xdd,0x89,0x19,0x02,0x1c,0x02,0xa7,0x10,0x4d,0xce,
+};
+// Jump operands in that code: offset of the operand, target relative to the function start.
+static const int Vita_DistanceJumps[][2] = { {55,72}, {68,80}, {108,125}, {121,133} };
+static const DWORD Vita_DistanceBase = 14642;	// where the reference copy sits in hud.o
+
+static BYTE Vita_IdentifyNativeFunction(const BYTE *data, int datasize, const ScriptFunction *func)
+{
+	if (func->ArgCount != 2 || !func->HasReturnValue) return VITA_NATIVE_NONE;
+	const DWORD a = func->Address;
+	if (a == 0 || (int)(a + sizeof(Vita_DistanceCode)) > datasize) return VITA_NATIVE_NONE;
+	BYTE want[sizeof(Vita_DistanceCode)];
+	memcpy(want, Vita_DistanceCode, sizeof(want));
+	for (unsigned j = 0; j < countof(Vita_DistanceJumps); j++)
+	{
+		DWORD t = a + Vita_DistanceJumps[j][1];
+		BYTE *p = want + Vita_DistanceJumps[j][0];
+		p[0] = BYTE(t); p[1] = BYTE(t >> 8); p[2] = BYTE(t >> 16); p[3] = BYTE(t >> 24);
+	}
+	(void)Vita_DistanceBase;
+	if (memcmp(data + a, want, sizeof(want)) != 0) return VITA_NATIVE_NONE;
+	Printf("ACS: running function at %u natively (distance)\n", (unsigned)a);
+	return VITA_NATIVE_DISTANCE;
+}
+
+static AActor *SingleActorFromTID (int tid, AActor *defactor);
+static inline int Vita_ACSActorCoord(int tid, AActor *activator, int which)
+{
+	AActor *actor = SingleActorFromTID(tid, activator);
+	if (actor == NULL) return 0;
+	if (which == 2) return actor->z + actor->GetBobOffset();
+	return (&actor->x)[which];
+}
+
+static inline int Vita_ACSSplitLength(int across, int along, int ang)
+{
+	// if ((ang + 8192) % 32768 > 16384) across / sin(ang) else along / cos(ang)
+	if ((ang + 8192) % 32768 > 16384)
+		return FixedDiv(across, finesine[angle_t(ang << 16) >> ANGLETOFINESHIFT]);
+	return FixedDiv(along, finecosine[angle_t(ang << 16) >> ANGLETOFINESHIFT]);
+}
+
+static int Vita_NativeDistance(int tid1, int tid2, AActor *activator)
+{
+	const int dy = Vita_ACSActorCoord(tid1, activator, 1) - Vita_ACSActorCoord(tid2, activator, 1);
+	const int dx = Vita_ACSActorCoord(tid1, activator, 0) - Vita_ACSActorCoord(tid2, activator, 0);
+	const int dz = Vita_ACSActorCoord(tid1, activator, 2) - Vita_ACSActorCoord(tid2, activator, 2);
+	int ang = R_PointToAngle2(0, 0, dx, dy) >> 16;
+	int len = Vita_ACSSplitLength(dy, dx, ang);
+	ang = R_PointToAngle2(0, 0, len, dz) >> 16;
+	len = Vita_ACSSplitLength(dz, len, ang);
+	return len >> 16;
+}
+#endif
+
 FBehavior::FBehavior (int lumpnum, FileReader * fr, int len)
 {
 	BYTE *object;
@@ -2486,6 +2561,9 @@ FBehavior::FBehavior (int lumpnum, FileReader * fr, int len)
 				funcm->ImportNum = funcf->ImportNum;
 				funcm->LocalCount = funcf->LocalCount;
 				funcm->Address = funcf->Address;
+#ifdef __vita__
+				funcm->VitaNative = funcm->ImportNum ? 0 : Vita_IdentifyNativeFunction(Data, DataSize, funcm);
+#endif
 			}
 		}
 
@@ -9128,19 +9206,23 @@ int DLevelScript::RunScript ()
 	if (!Vita_PerfDetail)
 		return RunScriptInner();
 	static TMap<int, const char *> names;
-	const char **name = names.CheckKey(script);
+	AActor *act = activator;
+	const bool bot = act != NULL && act->player != NULL && act->player->bIsBot;
+	const int key = bot ? (script ^ 0x4000000) : script;
+	const char **name = names.CheckKey(key);
 	if (name == NULL)
 	{
 		FString pres = ScriptPresentation(script);
 		pres.Substitute(" ", "_");
-		names[script] = strdup(pres.GetChars());
-		name = names.CheckKey(script);
+		if (bot) pres += "(bots)";
+		names[key] = strdup(pres.GetChars());
+		name = names.CheckKey(key);
 	}
 	unsigned long long t0 = Vita_PerfNow();
 	unsigned ops0 = Vita_PcodeTotal;
 	int result = RunScriptInner();
 	Vita_PerfOps = Vita_PcodeTotal - ops0;
-	Vita_PerfThinker((const void *)(intptr_t)(0x7F000000 ^ script), *name, Vita_PerfNow() - t0);
+	Vita_PerfThinker((const void *)(intptr_t)(0x7F000000 ^ key), *name, Vita_PerfNow() - t0);
 	Vita_PerfOps = 0;
 	return result;
 }
@@ -9632,6 +9714,15 @@ vita_slowop:
 					state = SCRIPT_PleaseRemove;
 					break;
 				}
+#ifdef __vita__
+				if (func->VitaNative == VITA_NATIVE_DISTANCE && pcd != PCD_CALLSTACK)
+				{
+					const int r = Vita_NativeDistance(Stack[sp-2], Stack[sp-1], activator);
+					sp -= 2;
+					if (pcd != PCD_CALLDISCARD) Stack[sp++] = r;
+					break;
+				}
+#endif
 				if (sp + func->LocalCount + 64 > STACK_SIZE)
 				{ // 64 is the margin for the function's working space
 					Printf ("Out of stack space in %s\n", ScriptPresentation(script).GetChars());
@@ -13178,10 +13269,13 @@ scriptwait:
 #ifdef __vita__
 // [Vita] Scripts that bots don't run. Bots have no screen, and in HaloDoom
 // the HUD library's per-player scripts (16: crosshair and target ID via
-// GetTargetTID's aim traces; RadarUpdate) cost as much as all the bots' AI.
+// GetTargetTID's aim traces) and the score display (DisplayMyScores: HUD
+// messages; its high-score table, OrderScores and GameOver are still kept
+// up to date by the player's own copy) cost as much as all the bots' AI.
 // Space-separated script numbers and names; empty to turn it off.
+// (Renamed from vita_botskipscripts so saved configs pick up the new list.)
 static TArray<int> Vita_BotSkip;
-CUSTOM_CVAR(String, vita_botskipscripts, "16 GetTargetTID RadarUpdate", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(String, vita_botskiplist, "16 GetTargetTID DisplayMyScores", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	Vita_BotSkip.Clear();
 	FString list = *self;
@@ -13197,8 +13291,29 @@ CUSTOM_CVAR(String, vita_botskipscripts, "16 GetTargetTID RadarUpdate", CVAR_ARC
 	list.UnlockBuffer();
 }
 
+// [Vita] Scripts nobody runs. HaloDoom's radar doesn't work on this port
+// anyway, and AddToRadar runs for every Firefight enemy.
+static TArray<int> Vita_AllSkip;
+CUSTOM_CVAR(String, vita_skipscripts, "RadarUpdate AddToRadar", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	Vita_AllSkip.Clear();
+	FString list = *self;
+	char *tok = strtok(list.LockBuffer(), " ,");
+	while (tok != NULL)
+	{
+		char *end;
+		long n = strtol(tok, &end, 10);
+		if (*end == 0) Vita_AllSkip.Push((int)n);
+		else Vita_AllSkip.Push(-(int)FName(tok));
+		tok = strtok(NULL, " ,");
+	}
+	list.UnlockBuffer();
+}
+
 static bool Vita_BotSkipsScript(AActor *who, int num)
 {
+	for (unsigned i = 0; i < Vita_AllSkip.Size(); ++i)
+		if (Vita_AllSkip[i] == num) return true;
 	if (who == NULL || who->player == NULL || !who->player->bIsBot)
 		return false;
 	for (unsigned i = 0; i < Vita_BotSkip.Size(); ++i)

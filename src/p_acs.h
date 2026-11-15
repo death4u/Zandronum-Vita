@@ -330,6 +330,9 @@ struct ScriptFunction
 	int  LocalCount;
 	DWORD Address;
 	ACSLocalArrays LocalArrays;
+#ifdef __vita__
+	BYTE VitaNative;	// [Vita] run by native code (see Vita_NativeFunction)
+#endif
 };
 
 // Script types

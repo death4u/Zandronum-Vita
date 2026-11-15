@@ -23,6 +23,10 @@ enum
 	VPERF_FINDCVAR,		// cvar lookups by name
 	VPERF_BSP,			// part of SCENE: BSP walk, setting up walls/flats/sprites
 	VPERF_JOIN,			// part of SCENE: waiting for the logic thread (vita_parallel)
+	VPERF_OPAQUE,		// part of SCENE: opaque passes (drawn alongside the logic)
+	VPERF_DECALS,		// part of SCENE: decal pass
+	VPERF_PORTALS,		// part of SCENE: portals and sky
+	VPERF_TRANSL,		// part of SCENE: translucent pass
 	VPERF_COUNT
 };
 

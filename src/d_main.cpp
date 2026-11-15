@@ -1386,10 +1386,11 @@ void D_DoomLoop ()
 				D_Display ();
 				Vita_SetFrameAllowsOverlap(false);
 				Vita_LogicEnd();
-				// The garbage collector never runs while the logic thread does, so
-				// give it its step here, once the frame is drawn and nothing points
-				// at destroyed actors any more.
-				GC::CheckGC ();
+				// The garbage collector never runs while the logic thread does
+				// (normally it takes a step after every thinker), so it catches
+				// up here, once the frame is drawn and nothing points at
+				// destroyed actors any more. Bounded to a few ms per frame.
+				Vita_GCCatchUp ();
 #else
 				D_Display ();
 #endif
