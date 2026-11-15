@@ -63,6 +63,13 @@
 // [BB] New #includes.
 #include "gamemode.h"
 #include "c_console.h"
+#ifdef __vita__
+#include <malloc.h>
+#include "vita/vita_parallel.h"
+#endif
+#ifdef __vita__
+static AActor *Vita_CopyActor(AActor *a);
+#endif
 
 CVAR(Bool, gl_usecolorblending, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_spritebrightfog, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
@@ -923,6 +930,9 @@ void GLSprite::Process(AActor* thing,sector_t * sector)
 	// end of light calculation
 
 	actor=thing;
+#ifdef __vita__
+	if (Vita_ParallelAllowed()) actor = Vita_CopyActor(thing);
+#endif
 	index = GLRenderer->gl_spriteindex++;
 	particle=NULL;
 	
@@ -964,6 +974,61 @@ void Vita_ResetParticleCopies()
 {
 	VitaParticleCopies.Clear();
 	VitaParticleCopies.Grow(NumParticles + 64);
+}
+
+// Per-frame copies of the actors being drawn. The opaque passes are drawn
+// while the logic thread runs the next tics (vita_parallel), and an actor can
+// change state, move or be destroyed meanwhile (a destroyed actor's state
+// becomes NULL). Sprites and models draw from a snapshot taken when the
+// scene is built. Copies live in fixed blocks that are never moved; each one
+// is preceded by a pointer to the live actor.
+struct FVitaActorBlock { BYTE *mem; size_t used; };
+static TArray<FVitaActorBlock> VitaActorBlocks;
+static unsigned VitaActorBlock;
+static const size_t VITA_ACTOR_BLOCK = 256 * 1024;
+static const unsigned VITA_ACTOR_MAXBLOCKS = 16;
+
+void Vita_ResetActorCopies()
+{
+	for (unsigned i = 0; i < VitaActorBlocks.Size(); i++) VitaActorBlocks[i].used = 0;
+	VitaActorBlock = 0;
+}
+
+static AActor *Vita_CopyActor(AActor *a)
+{
+	size_t size = (RUNTIME_TYPE(a)->Size + 15) & ~(size_t)15;
+	size_t need = size + 16;
+	if (need > VITA_ACTOR_BLOCK) return a;
+	while (VitaActorBlock < VitaActorBlocks.Size() &&
+		VitaActorBlocks[VitaActorBlock].used + need > VITA_ACTOR_BLOCK)
+		VitaActorBlock++;
+	if (VitaActorBlock >= VitaActorBlocks.Size())
+	{
+		if (VitaActorBlocks.Size() >= VITA_ACTOR_MAXBLOCKS) return a;
+		BYTE *mem = (BYTE *)memalign(16, VITA_ACTOR_BLOCK);
+		if (mem == NULL) return a;
+		FVitaActorBlock b = { mem, 0 };
+		VitaActorBlock = VitaActorBlocks.Push(b);
+	}
+	FVitaActorBlock &b = VitaActorBlocks[VitaActorBlock];
+	BYTE *p = b.mem + b.used;
+	b.used += need;
+	*(AActor **)p = a;
+	memcpy(p + 16, (void *)a, RUNTIME_TYPE(a)->Size);
+	return (AActor *)(p + 16);
+}
+
+// The live actor a sprite's (possibly copied) actor stands for.
+AActor *Vita_LiveActor(AActor *a)
+{
+	if (a == NULL) return NULL;
+	BYTE *p = (BYTE *)a;
+	for (unsigned i = 0; i < VitaActorBlocks.Size(); i++)
+	{
+		BYTE *m = VitaActorBlocks[i].mem;
+		if (p >= m + 16 && p < m + VITA_ACTOR_BLOCK) return *(AActor **)(p - 16);
+	}
+	return a;
 }
 
 static particle_t *Vita_CopyParticle(particle_t *p)

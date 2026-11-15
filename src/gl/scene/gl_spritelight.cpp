@@ -74,6 +74,9 @@ bool gl_GetSpriteLight(AActor *self, fixed_t x, fixed_t y, fixed_t z, subsector_
 	bool changed = false;
 	
 	out[0]=out[1]=out[2]=0;
+#ifdef __vita__
+	{ extern AActor *Vita_LiveActor(AActor *); self = Vita_LiveActor(self); }
+#endif
 
 	for(int j=0;j<2;j++)
 	{

@@ -1090,7 +1090,7 @@ void FGLRenderer::RenderView (player_t* player)
 
 	P_FindParticleSubsectors ();
 #ifdef __vita__
-	{ extern void Vita_ResetParticleCopies(); Vita_ResetParticleCopies(); }
+	{ extern void Vita_ResetParticleCopies(); Vita_ResetParticleCopies(); extern void Vita_ResetActorCopies(); Vita_ResetActorCopies(); }
 #endif
 
 	// prepare all camera textures that have been used in the last frame
