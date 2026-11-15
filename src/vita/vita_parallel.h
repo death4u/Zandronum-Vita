@@ -26,6 +26,7 @@ extern volatile bool Vita_Overlap;	// logic thread running alongside drawing
 extern bool Vita_LogicDone;			// the tics for this frame already ran
 
 bool Vita_OnLogicThread();
+void Vita_TraceTic(bool begin);
 void Vita_GCCatchUp();				// main thread, after the join
 bool Vita_ParallelAllowed();		// called by the renderer at the overlap point
 void Vita_LogicBegin();

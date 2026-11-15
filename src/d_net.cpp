@@ -1942,7 +1942,7 @@ void TryRunTics (void)
 			if (Vita_OnLogicThread() && (gameaction != ga_nothing || gamestate != GS_LEVEL))
 				break;
 #endif
-			{ VITA_PERF(VPERF_TIC); G_Ticker (); }
+			{ VITA_PERF(VPERF_TIC); Vita_TraceTic(true); G_Ticker (); Vita_TraceTic(false); }
 #ifdef __vita__
 			{ extern void Vita_TestNextMap(); Vita_TestNextMap(); }
 #endif

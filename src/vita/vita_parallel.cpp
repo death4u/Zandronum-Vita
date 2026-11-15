@@ -153,6 +153,17 @@ static void RunDeferredLights()
 //==========================================================================
 
 static volatile SceUInt64 LogicSignalTime;
+// Frame trace (vita_paralleltrace N: log N frames to boot.log)
+CVAR(Int, vita_paralleltrace, 0, 0)
+static SceUInt64 TrStart, TrTic0, TrTicEnd; static int TrTics;
+unsigned long long Vita_TrRenderStart, Vita_TrOpaqueEnd;
+void Vita_TraceTic(bool begin)
+{
+	if (!Vita_OnLogicThread()) return;
+	SceUInt64 t = sceKernelGetProcessTimeWide();
+	if (begin) { if (TrTics == 0) TrTic0 = t; TrTics++; }
+	else TrTicEnd = t;
+}
 unsigned long long Vita_LogicStartDelay, Vita_LogicRunTime;	// for the profiler
 
 static int LogicEntry(SceSize, void *)
@@ -163,6 +174,7 @@ static int LogicEntry(SceSize, void *)
 		sceKernelWaitSema(StartSema, 1, NULL);
 		const SceUInt64 t0 = sceKernelGetProcessTimeWide();
 		Vita_LogicStartDelay += t0 - LogicSignalTime;
+		TrStart = t0; TrTics = 0; TrTic0 = TrTicEnd = t0;
 		try
 		{
 			TryRunTics();
@@ -220,9 +232,19 @@ void Vita_LogicBegin()
 void Vita_LogicEnd()
 {
 	if (!Vita_Overlap) return;
+	const SceUInt64 joinStart = sceKernelGetProcessTimeWide();
 	{
 		VITA_PERF(VPERF_JOIN);
 		sceKernelWaitSema(DoneSema, 1, NULL);
+	}
+	if (vita_paralleltrace > 0)
+	{
+		const SceUInt64 now = sceKernelGetProcessTimeWide();
+		Vita_BootLog("ptrace: render %+lld opaque end %+lld", (long long)(Vita_TrRenderStart - LogicSignalTime), (long long)(Vita_TrOpaqueEnd - LogicSignalTime));
+		Vita_BootLog("ptrace: signal 0 start %+lld tics %d first %+lld lastend %+lld | join at %+lld done %+lld",
+			(long long)(TrStart - LogicSignalTime), TrTics, (long long)(TrTic0 - LogicSignalTime),
+			(long long)(TrTicEnd - LogicSignalTime), (long long)(joinStart - LogicSignalTime), (long long)(now - LogicSignalTime));
+		vita_paralleltrace = vita_paralleltrace - 1;
 	}
 	Vita_Overlap = false;
 	Vita_LogicDone = true;

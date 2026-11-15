@@ -40,6 +40,7 @@
 
 #include "gl/system/gl_system.h"
 #include "vita/vita_perf.h"
+#include "vita/vita_system.h"
 #include "gi.h"
 #include "m_png.h"
 #include "m_random.h"
@@ -383,15 +384,33 @@ void FGLRenderer::CreateScene()
 //
 //-----------------------------------------------------------------------------
 
+#ifdef __vita__
+static int Vita_DrawSceneDepth;
+static bool Vita_PendingLogicBegin;
+static bool Vita_InterpolationsRestored;
+#endif
+
 void FGLRenderer::RenderScene(int recursion)
 {
 	RenderAll.Clock();
 #ifdef __vita__
 	const unsigned long long vita_opaque_t0 = recursion == 0 ? Vita_PerfNow() : 0;
+	extern unsigned long long Vita_TrRenderStart, Vita_TrOpaqueEnd;
+	if (recursion == 0) Vita_TrRenderStart = vita_opaque_t0;
 #endif
 
 	glDepthMask(true);
 	if (!gl_no_skyclear) GLPortal::RenderFirstSkyPortal(recursion);
+#ifdef __vita__
+	if (Vita_PendingLogicBegin && recursion == 0 && Vita_DrawSceneDepth == 1)
+	{
+		// The game state goes back to its real (uninterpolated) values first.
+		Vita_PendingLogicBegin = false;
+		interpolator.RestoreInterpolations();
+		Vita_InterpolationsRestored = true;
+		Vita_LogicBegin();
+	}
+#endif
 
 	gl_RenderState.SetCameraPos(FIXED2FLOAT(viewx), FIXED2FLOAT(viewy), FIXED2FLOAT(viewz));
 
@@ -537,7 +556,9 @@ void FGLRenderer::RenderScene(int recursion)
 
 #ifdef __vita__
 	// Decals, portals, translucent things and the HUD read live game data.
-	if (vita_opaque_t0) { Vita_PerfAcc[VPERF_OPAQUE] += Vita_PerfNow() - vita_opaque_t0; Vita_PerfCalls[VPERF_OPAQUE]++; }
+	if (vita_opaque_t0) { Vita_TrOpaqueEnd = Vita_PerfNow(); Vita_PerfAcc[VPERF_OPAQUE] += Vita_TrOpaqueEnd - vita_opaque_t0; Vita_PerfCalls[VPERF_OPAQUE]++;
+		EXTERN_CVAR(Int, vita_paralleltrace)
+		if (vita_paralleltrace > 0) Vita_BootLog("ptrace: RenderScene opaque %llu us, overlap %d", Vita_TrOpaqueEnd - vita_opaque_t0, (int)Vita_Overlap); }
 	Vita_LogicEnd();
 #endif
 
@@ -636,27 +657,28 @@ void FGLRenderer::RenderTranslucent()
 EXTERN_CVAR(Bool, gl_draw_sync)
 
 #ifdef __vita__
-static bool Vita_InterpolationsRestored;
 #endif
 
 void FGLRenderer::DrawScene(bool toscreen)
 {
 	static int recursion=0;
+#ifdef __vita__
+	// A nested scene (sky box, portal) builds from live game data, so the
+	// logic thread must not be running then.
+	if (Vita_Overlap) Vita_LogicEnd();
+	Vita_DrawSceneDepth++;
+#endif
 
 	CreateScene();
 	GLRenderer->mCurrentPortal = NULL;	// this must be reset before any portal recursion takes place.
 
 #ifdef __vita__
-	// The scene is built: from here until the decal pass, drawing only uses
-	// the draw lists, so the next frame's tics can run on the logic thread
-	// (see vita/vita_parallel.h). The game state goes back to its real
-	// (uninterpolated) values first.
-	if (recursion == 0 && toscreen && !GL_MULTIPASS_LIGHTS && Vita_ParallelAllowed())
-	{
-		interpolator.RestoreInterpolations();
-		Vita_InterpolationsRestored = true;
-		Vita_LogicBegin();
-	}
+	// The scene is built. The logic thread starts in RenderScene once the
+	// first sky portal (often a sky box: a nested scene) has been drawn;
+	// from there until the decal pass, drawing only uses the draw lists
+	// (see vita/vita_parallel.h).
+	if (Vita_DrawSceneDepth == 1)
+		Vita_PendingLogicBegin = recursion == 0 && toscreen && !GL_MULTIPASS_LIGHTS && Vita_ParallelAllowed();
 #endif
 
 	// Up to this point in the main draw call no rendering is performed so we can wait
@@ -675,6 +697,9 @@ void FGLRenderer::DrawScene(bool toscreen)
 	{ VITA_PERF(VPERF_PORTALS); GLPortal::EndFrame(); }
 	recursion--;
 	{ VITA_PERF(VPERF_TRANSL); RenderTranslucent(); }
+#ifdef __vita__
+	if (--Vita_DrawSceneDepth == 0) Vita_PendingLogicBegin = false;
+#endif
 }
 
 
@@ -942,6 +967,12 @@ sector_t * FGLRenderer::RenderViewpoint (AActor * camera, GL_IRECT * bounds, flo
 	const bool renderStereo = (supportsStereo && supportsBuffered && toscreen);
 
 	sector_t * retval;
+#ifdef __vita__
+	{
+		EXTERN_CVAR(Int, vita_paralleltrace)
+		if (vita_paralleltrace > 0) Vita_BootLog("ptrace: RenderViewpoint %s main %d toscreen %d bounds %p", camera ? camera->GetClass()->TypeName.GetChars() : "-", mainview, toscreen, (void *)bounds);
+	}
+#endif
 	R_SetupFrame (camera);
 	SetViewArea();
 	mAngles.Pitch = clamp<float>((float)((double)(int)(viewpitch))/ANGLE_1, -90, 90);
