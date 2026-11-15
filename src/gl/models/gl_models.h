@@ -212,9 +212,13 @@ public:	// the loader's helpers in gl_models_md3.cpp use the surface type
 		unsigned * packed;
 		float * pmin;		// per frame: x, y, z of the bounding box minimum
 		float * pscale;		// per frame: x, y, z step per quantization level
+		// [Vita] Static index and texture coordinate buffers, so a draw only
+		// copies the frame's positions.
+		unsigned vboIdx, vboTex;
 
 		MD3Surface()
 		{
+			vboIdx = vboTex = 0;
 			tris=NULL;
 			skins=NULL;
 			packed=NULL;
@@ -226,6 +230,8 @@ public:	// the loader's helpers in gl_models_md3.cpp use the surface type
 
 		~MD3Surface()
 		{
+			void Vita_MD3FreeBuffers(unsigned &idx, unsigned &tex);
+			if (vboIdx || vboTex) Vita_MD3FreeBuffers(vboIdx, vboTex);
 			if (indices16) delete [] indices16;
 			if (packed) delete [] packed;
 			if (pmin) delete [] pmin;

@@ -46,6 +46,8 @@
 #include "gl/models/gl_models.h"
 #include "gl/textures/gl_material.h"
 #include "gl/shaders/gl_shader.h"
+#include "vita/vita_perf.h"
+#include "c_cvars.h"
 
 #define MAX_QPATH 64
 
@@ -583,12 +585,51 @@ static float *MD3Expand(const short *v1, const short *v2, double inter, int numV
 	return &MD3Scratch[0];
 }
 
+#ifdef __vita__
+CVAR(Bool, vita_modelbuffers, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+void Vita_MD3FreeBuffers(unsigned &idx, unsigned &tex)
+{
+	// GL objects belong to the main thread; a surface freed elsewhere (a
+	// failed background load) never had any.
+	if (idx) glDeleteBuffers(1, &idx);
+	if (tex) glDeleteBuffers(1, &tex);
+	idx = tex = 0;
+}
+#endif
+
 void FMD3Model::RenderTriangles(MD3Surface * surf, const float * xyz)
 {
 	gl_RenderState.Apply();
 #ifdef __vita__
 	// [Vita] One glDrawElements per surface instead of 2 calls per vertex:
 	// HaloDoom's characters have ~6,500 triangles each.
+	if (surf->indices16 != NULL && vita_modelbuffers)
+	{
+		if (surf->vboIdx == 0)
+		{
+			glGenBuffers(1, &surf->vboIdx);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surf->vboIdx);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, surf->numTriangles * 3 * sizeof(unsigned short), surf->indices16, GL_STATIC_DRAW);
+			glGenBuffers(1, &surf->vboTex);
+			glBindBuffer(GL_ARRAY_BUFFER, surf->vboTex);
+			glBufferData(GL_ARRAY_BUFFER, surf->numVertices * sizeof(MD3TexCoord), surf->texcoords, GL_STATIC_DRAW);
+			glBindBuffer(GL_ARRAY_BUFFER, 0);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+		}
+		glBindBuffer(GL_ARRAY_BUFFER, surf->vboTex);
+		glTexCoordPointer(2, GL_FLOAT, 0, (const void *)0);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glVertexPointer(3, GL_FLOAT, 0, xyz);
+		glEnableClientState(GL_VERTEX_ARRAY);
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surf->vboIdx);
+		glDrawRangeElements(GL_TRIANGLES, 0, surf->numVertices - 1, surf->numTriangles * 3, GL_UNSIGNED_SHORT, (const void *)0);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+		glDisableClientState(GL_VERTEX_ARRAY);
+		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+		return;
+	}
 	if (surf->indices16 != NULL)
 	{
 		glVertexPointer(3, GL_FLOAT, 0, xyz);
@@ -648,9 +689,11 @@ void FMD3Model::RenderFrame(FTexture * skin, int frameno, int cm, int translatio
 
 		FMaterial * tex = FMaterial::ValidateTexture(surfaceSkin);
 
-		tex->Bind(cm, 0, translation);
+		{ VITA_PERF(VPERF_MBIND); tex->Bind(cm, 0, translation); }
 #ifdef __vita__
-		RenderTriangles(surf, MD3ExpandPacked(surf, frameno, -1, 0));
+		const float *xyz;
+		{ VITA_PERF(VPERF_MEXPAND); xyz = MD3ExpandPacked(surf, frameno, -1, 0); }
+		{ VITA_PERF(VPERF_MDRAW); RenderTriangles(surf, xyz); }
 #else
 		RenderTriangles(surf, MD3Expand(&surf->vertices[frameno * surf->numVertices].x, NULL, 0, surf->numVertices));
 #endif
@@ -684,10 +727,12 @@ void FMD3Model::RenderFrameInterpolated(FTexture * skin, int frameno, int framen
 
 		FMaterial * tex = FMaterial::ValidateTexture(surfaceSkin);
 
-		tex->Bind(cm, 0, translation);
+		{ VITA_PERF(VPERF_MBIND); tex->Bind(cm, 0, translation); }
 
 #ifdef __vita__
-		RenderTriangles(surf, MD3ExpandPacked(surf, frameno, frameno2, inter));
+		const float *xyz;
+		{ VITA_PERF(VPERF_MEXPAND); xyz = MD3ExpandPacked(surf, frameno, frameno2, inter); }
+		{ VITA_PERF(VPERF_MDRAW); RenderTriangles(surf, xyz); }
 #else
 		RenderTriangles(surf, MD3Expand(&surf->vertices[frameno * surf->numVertices].x,
 			&surf->vertices[frameno2 * surf->numVertices].x, inter, surf->numVertices));

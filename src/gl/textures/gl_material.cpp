@@ -386,6 +386,19 @@ bool FGLTexture::CreatePatch()
 //
 //===========================================================================
 
+#ifdef __vita__
+#include "vita/vita_perf.h"
+#include "vita/vita_system.h"
+// Logs textures that took long to decode or upload (to see what causes
+// in-game stalls).
+static void Vita_LogSlowTexture(FTexture *tex, int w, int h, int trans, unsigned long long decode, unsigned long long upload)
+{
+	Vita_PerfAcc[VPERF_TEXDECODE] += decode;
+	if (decode + upload > 15000)
+		{ char nm[9]; memcpy(nm, tex->Name, 8); nm[8] = 0; Vita_BootLog("slow texture %s %dx%d trans %d: decode %llu ms, upload %llu ms", nm, w, h, trans, decode / 1000, upload / 1000); }
+}
+#endif
+
 const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int translation, FTexture *hirescheck, int warp)
 {
 	int usebright = false;
@@ -436,12 +449,22 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 			// Create this texture
 			unsigned char * buffer = NULL;
 			
+#ifdef __vita__
+			const unsigned long long vt0 = Vita_PerfNow();
+#endif
 			if (!tex->bHasCanvas)
 			{
 				buffer = CreateTexBuffer(cm, translation, w, h, false, hirescheck, warp);
 				tex->ProcessData(buffer, w, h, false);
 			}
+#ifdef __vita__
+			const unsigned long long vt1 = Vita_PerfNow();
+			const bool vok = hwtex->CreateTexture(buffer, w, h, true, texunit, cm, translation);
+			Vita_LogSlowTexture(tex, w, h, translation, vt1 - vt0, Vita_PerfNow() - vt1);
+			if (!vok)
+#else
 			if (!hwtex->CreateTexture(buffer, w, h, true, texunit, cm, translation)) 
+#endif
 			{
 				// could not create texture
 				delete[] buffer;
@@ -494,9 +517,21 @@ const FHardwareTexture * FGLTexture::BindPatch(int texunit, int cm, int translat
 			int w, h;
 
 			// Create this texture
+#ifdef __vita__
+			const unsigned long long vt0 = Vita_PerfNow();
+#endif
 			unsigned char * buffer = CreateTexBuffer(cm, translation, w, h, bExpand, NULL, warp);
+#ifdef __vita__
+			const unsigned long long vt1 = Vita_PerfNow();
+#endif
 			tex->ProcessData(buffer, w, h, true);
+#ifdef __vita__
+			const bool vok = glpatch->CreateTexture(buffer, w, h, false, texunit, cm, translation);
+			Vita_LogSlowTexture(tex, w, h, translation, vt1 - vt0, Vita_PerfNow() - vt1);
+			if (!vok)
+#else
 			if (!glpatch->CreateTexture(buffer, w, h, false, texunit, cm, translation)) 
+#endif
 			{
 				// could not create texture
 				delete[] buffer;

@@ -97,8 +97,8 @@ void Vita_PerfFrame()
 		struct mallinfo mi = mallinfo();
 		char line[2048];
 		snprintf(line, sizeof(line),
-			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f, 3D %.1f (bsp %.1f, opaque %.1f, waiting for logic %.1f, decals %.1f, portals+sky %.1f, translucent %.1f, models %.1f), 2D+swap %.1f (swap %.1f)"
-			" | in %.0f s: %d texture uploads %.0f ms, %d model loads %.0f ms | logic thread: start delay %.1f, run %.1f | heap %u MB (objects %u MB, gc %.1f ms/frame)"
+			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f, 3D %.1f (bsp %.1f, opaque %.1f, waiting for logic %.1f, decals %.1f, portals+sky %.1f, translucent %.1f, models %.1f [expand %.1f draw %.1f bind %.1f]), 2D+swap %.1f (swap %.1f)"
+			" | in %.0f s: %d texture uploads %.0f ms (decode %.0f ms), %d model loads %.0f ms | logic thread: start delay %.1f, run %.1f | heap %u MB (objects %u MB, gc %.1f ms/frame)"
 #ifndef NO_GL
 			", vitaGL free RAM %u MB CDRAM %u MB"
 #endif
@@ -107,9 +107,10 @@ void Vita_PerfFrame()
 			Vita_PerfAcc[VPERF_TIC] * f / 1000.0, Vita_PerfAcc[VPERF_SCENE] * f / 1000.0, Vita_PerfAcc[VPERF_BSP] * f / 1000.0,
 			Vita_PerfAcc[VPERF_OPAQUE] * f / 1000.0, Vita_PerfAcc[VPERF_JOIN] * f / 1000.0,
 			Vita_PerfAcc[VPERF_DECALS] * f / 1000.0, Vita_PerfAcc[VPERF_PORTALS] * f / 1000.0, Vita_PerfAcc[VPERF_TRANSL] * f / 1000.0,
-			Vita_PerfAcc[VPERF_MODELS] * f / 1000.0, Vita_PerfAcc[VPERF_UPDATE] * f / 1000.0,
+			Vita_PerfAcc[VPERF_MODELS] * f / 1000.0, Vita_PerfAcc[VPERF_MEXPAND] * f / 1000.0, Vita_PerfAcc[VPERF_MDRAW] * f / 1000.0, Vita_PerfAcc[VPERF_MBIND] * f / 1000.0,
+			Vita_PerfAcc[VPERF_UPDATE] * f / 1000.0,
 			Vita_PerfAcc[VPERF_SWAP] * f / 1000.0,
-			period / 1e6, Vita_PerfCalls[VPERF_UPLOAD], Vita_PerfAcc[VPERF_UPLOAD] / 1000.0,
+			period / 1e6, Vita_PerfCalls[VPERF_UPLOAD], Vita_PerfAcc[VPERF_UPLOAD] / 1000.0, Vita_PerfAcc[VPERF_TEXDECODE] / 1000.0,
 			Vita_PerfCalls[VPERF_MODELLOAD], Vita_PerfAcc[VPERF_MODELLOAD] / 1000.0,
 			Vita_LogicStartDelay * f / 1000.0, Vita_LogicRunTime * f / 1000.0,
 			(unsigned)(mi.uordblks >> 20), (unsigned)(GC::AllocBytes >> 20), Vita_GCTime * f / 1000.0

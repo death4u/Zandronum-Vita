@@ -697,8 +697,15 @@ void ACSStringPool::UnlockAll()
 //
 //============================================================================
 
+#ifdef __vita__
+unsigned Vita_ACSPurgeGen = 1;	// bumped on every purge (see PCD_TAGSTRING)
+#endif
+
 void ACSStringPool::PurgeStrings()
 {
+#ifdef __vita__
+	Vita_ACSPurgeGen++;
+#endif
 	// Clear the hash buckets. We'll rebuild them as we decide what strings
 	// to keep and which to toss.
 	memset(PoolBuckets, 0xFF, sizeof(PoolBuckets));
@@ -9464,6 +9471,32 @@ vita_slowop:
 
 		case PCD_TAGSTRING:
 			//Stack[sp-1] |= activeBehavior->GetLibraryID();
+#ifdef __vita__
+			{
+				// [Vita] Same result as below, without hashing the string
+				// every time: HaloDoom's HUD scripts tag ~1,300 strings per frame.
+				const unsigned idx = (unsigned)Stack[sp-1];
+				TArray<int> &cache = activeBehavior->VitaTagCache;
+				TArray<unsigned> &gen = activeBehavior->VitaTagGen;
+				if (idx < 65536)
+				{
+					if (idx >= cache.Size())
+					{
+						unsigned old = cache.Size();
+						cache.Resize(idx + 1);
+						gen.Resize(idx + 1);
+						for (unsigned k = old; k <= idx; k++) gen[k] = 0;
+					}
+					if (gen[idx] != Vita_ACSPurgeGen)
+					{
+						cache[idx] = GlobalACSStrings.AddString(activeBehavior->LookupString(idx));
+						gen[idx] = Vita_ACSPurgeGen;
+					}
+					Stack[sp-1] = cache[idx];
+					break;
+				}
+			}
+#endif
 			Stack[sp-1] = GlobalACSStrings.AddString(activeBehavior->LookupString(Stack[sp-1]));
 			break;
 

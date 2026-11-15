@@ -47,6 +47,8 @@
 // [BB] New #includes.
 #include "cl_demo.h"
 #include "doomstat.h"
+#include "c_cvars.h"
+#include "actor.h"
 
 
 static cycle_t ThinkCycles;
@@ -434,6 +436,57 @@ void DThinker::RunThinkers ()
 	ThinkCycles.Unclock();
 }
 
+#ifdef __vita__
+//==========================================================================
+//
+// [Vita] Actors that sit still forever don't need their Tick. HaloDoom's
+// bot path nodes (TDBots_PathNode, ~150-200 per map) are invisible
+// pickups in an endless state that never move; ticking them is pure cost.
+// Only classes in vita_staticactors are skipped, and only while they are
+// in a state that never ends, have no velocity and rest on the floor, so
+// nothing about them can change in their Tick.
+//
+//==========================================================================
+
+static TArray<const PClass *> Vita_StaticClasses;
+CUSTOM_CVAR(String, vita_staticactors, "TDBots_PathNode", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	Vita_StaticClasses.Clear();
+	FString list = *self;
+	char *tok = strtok(list.LockBuffer(), " ,");
+	while (tok != NULL)
+	{
+		const PClass *cls = PClass::FindClass(tok);
+		if (cls != NULL) Vita_StaticClasses.Push(cls);
+		tok = strtok(NULL, " ,");
+	}
+	list.UnlockBuffer();
+}
+
+static bool Vita_StaticClassesResolved;
+
+static bool Vita_SkipStaticTick(DThinker *node)
+{
+	if (!Vita_StaticClassesResolved)
+	{
+		// Classes from the mod exist only after DECORATE is loaded.
+		vita_staticactors.Callback();
+		Vita_StaticClassesResolved = true;
+	}
+	if (Vita_StaticClasses.Size() == 0) return false;
+	const PClass *cls = node->GetClass();
+	unsigned i;
+	for (i = 0; i < Vita_StaticClasses.Size(); i++)
+		if (Vita_StaticClasses[i] == cls) break;
+	if (i == Vita_StaticClasses.Size()) return false;
+	AActor *a = static_cast<AActor *>(node);
+	if (a->tics != -1 || (a->velx | a->vely | a->velz) != 0 || a->z != a->floorz) return false;
+	if (a->ObjectFlags & OF_JustSpawned) return false;
+	a->PrevX = a->x; a->PrevY = a->y; a->PrevZ = a->z; a->PrevAngle = a->angle;
+	return true;
+}
+#endif
+
 int DThinker::TickThinkers (FThinkerList *list, FThinkerList *dest)
 {
 	int count = 0;
@@ -472,7 +525,10 @@ int DThinker::TickThinkers (FThinkerList *list, FThinkerList *dest)
 				( static_cast<AActor *>( node ) != players[consoleplayer].mo ))
 			{
 #ifdef __vita__
-				if (Vita_PerfDetail)
+				if (Vita_SkipStaticTick(node))
+				{
+				}
+				else if (Vita_PerfDetail)
 				{
 					unsigned long long t0 = Vita_PerfNow();
 					const PClass *cls = node->GetClass();

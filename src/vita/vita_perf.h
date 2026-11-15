@@ -27,6 +27,10 @@ enum
 	VPERF_DECALS,		// part of SCENE: decal pass
 	VPERF_PORTALS,		// part of SCENE: portals and sky
 	VPERF_TRANSL,		// part of SCENE: translucent pass
+	VPERF_TEXDECODE,	// texture image decoding (PNG/JPG, translations)
+	VPERF_MEXPAND,		// part of MODELS: unpacking/blending vertices
+	VPERF_MDRAW,		// part of MODELS: draw calls
+	VPERF_MBIND,		// part of MODELS: skin binds
 	VPERF_COUNT
 };
 

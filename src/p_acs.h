@@ -526,6 +526,14 @@ private:
 	int NumScripts;
 	ScriptFunction *Functions;
 	ACSProfileInfo *FunctionProfileData;
+#ifdef __vita__
+public:
+	// [Vita] TAGSTRING results (global string ids) per module string, valid
+	// while no purge of the global string pool has happened since.
+	TArray<int> VitaTagCache;
+	TArray<unsigned> VitaTagGen;
+private:
+#endif
 	int NumFunctions;
 	ArrayInfo *ArrayStore;
 	int NumArrays;
