@@ -436,6 +436,19 @@ int FIWadManager::IdentifyVersion (TArray<FString> &wadfiles, const char *iwad, 
 						first.AppendFormat("%s%s(%s) ", l->Name, l->FullName ? "/" : "", l->FullName ? l->FullName : "");
 					}
 					Vita_BootLog("iwad first lumps: %s", first.GetChars());
+					{
+						FILE *wf = fopen(custwad.GetChars(), "rb");
+						if (wf != NULL)
+						{
+							int hdr[3] = { 0, 0, 0 };
+							fread(hdr, 4, 3, wf);
+							fseek(wf, 0, SEEK_END);
+							long size = ftell(wf);
+							fclose(wf);
+							Vita_BootLog("iwad header: id %.4s, %d lumps, directory at %d, file size %ld (directory end %d)",
+								(char *)&hdr[0], hdr[1], hdr[2], size, hdr[2] + hdr[1] * 16);
+						}
+					}
 					for (DWORD ii = 0; ii < f->LumpCount(); ii++)
 					{
 						const char *n = f->GetLump(ii)->Name;

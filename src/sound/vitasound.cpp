@@ -1,3 +1,4 @@
+#include <new>
 /*
 ** vitasound.cpp
 **
@@ -968,9 +969,33 @@ static bool DecodeSound(BYTE *sfxdata, int length, short *&pcm_out, unsigned &fr
 		int n = stb_vorbis_decode_memory(sfxdata, length, &channels, &rate, &out);
 		if (n > 0 && out != NULL)
 		{	// stb uses malloc; copy so UnloadSound can use delete[]
-			pcm = new short[n * channels];
-			memcpy(pcm, out, n * channels * sizeof(short));
-			frames = n;
+			// [Vita] Long sounds (HaloDoom's ambience loops and cutscene
+			// music, 10-20 MB as PCM) are kept as mono at half rate when they
+			// would take more than 2 MB: 1/4 of the memory.
+			if ((size_t)n * channels * sizeof(short) > (2u << 20) && rate >= 32000)
+			{
+				const int outn = n / 2;
+				pcm = new (std::nothrow) short[outn];
+				if (pcm != NULL)
+				{
+					for (int i = 0; i < outn; i++)
+					{
+						int acc = 0;
+						for (int c = 0; c < channels; c++)
+							acc += out[(i * 2) * channels + c] + out[(i * 2 + 1) * channels + c];
+						pcm[i] = (short)(acc / (2 * channels));
+					}
+				}
+				frames = outn;
+				channels = 1;
+				rate /= 2;
+			}
+			else
+			{
+				pcm = new (std::nothrow) short[n * channels];	// [Vita] no memory: the sound stays silent
+				if (pcm != NULL) memcpy(pcm, out, n * channels * sizeof(short));
+				frames = n;
+			}
 		}
 		free(out);
 	}
@@ -982,8 +1007,8 @@ static bool DecodeSound(BYTE *sfxdata, int length, short *&pcm_out, unsigned &fr
 		if (out != NULL)
 		{
 			channels = ch; rate = sr; frames = (unsigned)count;
-			pcm = new short[frames * channels];
-			memcpy(pcm, out, frames * channels * sizeof(short));
+			pcm = new (std::nothrow) short[frames * channels];
+			if (pcm != NULL) memcpy(pcm, out, frames * channels * sizeof(short));
 			drflac_free(out, NULL);
 		}
 	}
@@ -995,8 +1020,8 @@ static bool DecodeSound(BYTE *sfxdata, int length, short *&pcm_out, unsigned &fr
 		if (out != NULL)
 		{
 			channels = ch; rate = sr; frames = (unsigned)count;
-			pcm = new short[frames * channels];
-			memcpy(pcm, out, frames * channels * sizeof(short));
+			pcm = new (std::nothrow) short[frames * channels];
+			if (pcm != NULL) memcpy(pcm, out, frames * channels * sizeof(short));
 			drwav_free(out, NULL);
 		}
 	}
@@ -1008,8 +1033,8 @@ static bool DecodeSound(BYTE *sfxdata, int length, short *&pcm_out, unsigned &fr
 		if (out != NULL)
 		{
 			channels = cfg.channels; rate = cfg.sampleRate; frames = (unsigned)count;
-			pcm = new short[frames * channels];
-			memcpy(pcm, out, frames * channels * sizeof(short));
+			pcm = new (std::nothrow) short[frames * channels];
+			if (pcm != NULL) memcpy(pcm, out, frames * channels * sizeof(short));
 			drmp3_free(out, NULL);
 		}
 	}
@@ -1021,7 +1046,8 @@ static bool DecodeSound(BYTE *sfxdata, int length, short *&pcm_out, unsigned &fr
 	}
 	if (channels > 2)
 	{	// Keep the first two channels.
-		short *st = new short[frames * 2];
+		short *st = new (std::nothrow) short[frames * 2];
+		if (st == NULL) { delete[] pcm; return false; }
 		for (unsigned i = 0; i < frames; ++i)
 		{
 			st[i * 2] = pcm[i * channels];
@@ -1070,7 +1096,11 @@ static int DecodeThreadFunc(void *)
 		short *pcm = NULL;
 		unsigned frames = 0;
 		int channels = 0, rate = 0;
-		bool ok = DecodeSound(s->Src, s->SrcLen, pcm, frames, channels, rate);
+		bool ok = false;
+		// The decoders allocate with malloc/new; out of memory must not end
+		// the game from this thread.
+		try { ok = DecodeSound(s->Src, s->SrcLen, pcm, frames, channels, rate); }
+		catch (...) { ok = false; pcm = NULL; }
 
 		SDL_mutexP(DecodeLock);
 		DecodeCurrent = NULL;

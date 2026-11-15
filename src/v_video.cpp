@@ -859,8 +859,35 @@ DFrameBuffer::DFrameBuffer (int width, int height)
 //
 //==========================================================================
 
+#ifdef __vita__
+// [Vita] Frame rate in the bottom left corner (frames in the last second).
+CVAR(Bool, vita_showfps, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+#endif
+
 void DFrameBuffer::DrawRateStuff ()
 {
+#ifdef __vita__
+	if (vita_showfps && (SmallFont != NULL || ConFont != NULL))
+	{
+		static DWORD secStart = 0;
+		static int frames = 0, shown = 0;
+		const DWORD now = I_FPSTime();
+		frames++;
+		if (secStart == 0) secStart = now;
+		if (now - secStart >= 1000)
+		{
+			shown = (int)(frames * 1000 / (now - secStart));
+			frames = 0;
+			secStart = now;
+		}
+		char buf[16];
+		mysnprintf(buf, countof(buf), "%d FPS", shown);
+		FFont *font = SmallFont != NULL ? SmallFont : ConFont;
+		// Real pixel position, the font scaled like the menus (2x at 960x544).
+		DrawText(font, shown >= 25 ? CR_GREEN : shown >= 15 ? CR_YELLOW : CR_RED, 8, Height - font->GetHeight() * CleanYfac - 44, buf,
+			DTA_CleanNoMove, true, TAG_DONE);
+	}
+#endif
 	// Draws frame time and cumulative fps
 	if (vid_fps)
 	{

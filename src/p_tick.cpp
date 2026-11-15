@@ -22,6 +22,11 @@
 //-----------------------------------------------------------------------------
 
 
+#ifdef __vita__
+#include "vita/vita_perf.h"
+#else
+#define VITA_PERF(x)
+#endif
 #include "p_local.h"
 #include "p_effect.h"
 #include "c_console.h"
@@ -167,6 +172,7 @@ void P_Ticker (void)
 		// Don't run particles while in freeze mode.
 		if ( !(level.flags2 & LEVEL2_FROZEN) )
 		{
+			VITA_PERF(VPERF_EFFECTS);
 			P_ThinkParticles ();	// [RH] make the particles think
 		}
 	}
@@ -389,7 +395,10 @@ void P_Ticker (void)
 		}
 
 		if ( playeringame[ulIdx] )
+		{
+			VITA_PERF(VPERF_PLAYERS);
 			P_PlayerThink( &players[ulIdx] );
+		}
 	}
 
 	// [BB] If we are playing a demo in free spectate mode, we also need to let the special free
@@ -400,7 +409,10 @@ void P_Ticker (void)
 
 	// [BB] The server has no status bar.
 	if ( NETWORK_GetState( ) != NETSTATE_SERVER )
+	{
+		VITA_PERF(VPERF_SBAR);
 		StatusBar->Tick ();		// [RH] moved this here
+	}
 	level.Tick ();			// [RH] let the level tick
 
 	// [BB] Some things like AMovingCamera rely on the AActor tid in the PostBeginPlay functions,
@@ -413,6 +425,7 @@ void P_Ticker (void)
 	// Don't do this stuff while in freeze mode.
 	if ( !(level.flags2 & LEVEL2_FROZEN) )
 	{
+		VITA_PERF(VPERF_BOTAIM);
 		for ( ulIdx = 0; ulIdx < MAXPLAYERS; ulIdx++ )
 		{
 			if (( playeringame[ulIdx] ) && ( players[ulIdx].pSkullBot ))

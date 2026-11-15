@@ -27,6 +27,10 @@ enum
 	VPERF_DECALS,		// part of SCENE: decal pass
 	VPERF_PORTALS,		// part of SCENE: portals and sky
 	VPERF_TRANSL,		// part of SCENE: translucent pass
+	VPERF_PLAYERS,		// part of TIC: P_PlayerThink for all players (bots included)
+	VPERF_SBAR,			// part of TIC: status bar tick
+	VPERF_BOTAIM,		// part of TIC: bot enemy sight + aiming
+	VPERF_EFFECTS,		// part of TIC: particles, specials, effects
 	VPERF_SKYBOX,		// part of opaque: the first sky portal (sky box scenes)
 	VPERF_TEXDECODE,	// texture image decoding (PNG/JPG, translations)
 	VPERF_MEXPAND,		// part of MODELS: unpacking/blending vertices
