@@ -1706,7 +1706,7 @@ if( VITA )
 	# Extended memory mode (more main memory for the 192 MB heap).
 	set( VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12" )
 	# UNSAFE: the game reads and writes ux0:data/zandronum/.
-	set_target_properties( zdoom PROPERTIES LINK_FLAGS "-Wl,-q -Wl,--wrap=malloc -Wl,--wrap=realloc -Wl,--wrap=_Znwj -Wl,--wrap=_Znaj -Wl,--wrap=gethostbyname -Wl,--defsym=__sce_headroom=0x4000" )
+	set_target_properties( zdoom PROPERTIES LINK_FLAGS "-Wl,-q -Wl,--wrap=malloc -Wl,--wrap=realloc -Wl,--wrap=free -Wl,--wrap=malloc_usable_size -Wl,--wrap=_Znwj -Wl,--wrap=_Znaj -Wl,--wrap=gethostbyname -Wl,--defsym=__sce_headroom=0x4000" )
 	vita_create_self( eboot.bin zdoom UNSAFE )
 	vita_create_vpk( zandronum.vpk ${VITA_TITLEID} eboot.bin
 		VERSION ${VITA_VERSION}
@@ -1718,6 +1718,7 @@ if( VITA )
 		FILE ${ZDOOM_OUTPUT_DIR}/zandronum.pk3 zandronum.pk3
 		FILE ${ZDOOM_OUTPUT_DIR}/brightmaps.pk3 brightmaps.pk3
 		FILE ${ZDOOM_OUTPUT_DIR}/skulltag_actors.pk3 skulltag_actors.pk3
+		FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/vita-halodoom.pk3 vita-halodoom.pk3
 	)
 	if( TARGET zandronum.vpk-vpk )
 		add_dependencies( zandronum.vpk-vpk pk3 brightmaps_pk3 skulltag_actors_pk3 )

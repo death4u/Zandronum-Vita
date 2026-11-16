@@ -3991,6 +3991,11 @@ void P_SetupLevel (char *lumpname, int position)
 
 	// Free all level data from the previous map
 	P_FreeLevelData ();
+#ifdef __vita__
+	// [Vita] Start the new level with as much memory as possible in one piece:
+	// GL textures, models and the bot path buffers of the old level go.
+	{ extern void Vita_FlushLevelMemory(); Vita_FlushLevelMemory(); }
+#endif
 	interpolator.ClearInterpolations();	// [RH] Nothing to interpolate on a fresh level.
 
 	MapData *map = P_OpenMapData(lumpname, true);

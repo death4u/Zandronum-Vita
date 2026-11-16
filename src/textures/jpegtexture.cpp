@@ -422,9 +422,36 @@ const BYTE *FJPEGTexture::GetPixels ()
 //
 //==========================================================================
 
+#ifdef __vita__
+//==========================================================================
+//
+// [Vita] A progressive JPEG needs all of its DCT coefficients in memory
+// (HaloDoom's sky panoramas: 18-56 MB), which the Vita doesn't have. A
+// baseline copy at the size the texture is decoded to anyway can be put in
+// a pk3 under vitajpeg/<original full path>; it is decoded instead.
+//
+//==========================================================================
+
+static int Vita_JpegReplacement(int lumpnum, int w, int h)
+{
+	const char *full = Wads.GetLumpFullName(lumpnum);
+	if (full == NULL) return -1;
+	FString name; name.Format("vitajpeg/%s", full);
+	return Wads.CheckNumForFullName(name.GetChars());
+}
+#endif
+
 void FJPEGTexture::MakeTexture ()
 {
-	FWadLump lump = Wads.OpenLumpNum (SourceLump);
+	int vita_lumpnum = SourceLump;
+	int vita_denom = ScaleDenom;
+#ifdef __vita__
+	{
+		int r = Vita_JpegReplacement(SourceLump, Width, Height);
+		if (r >= 0) { vita_lumpnum = r; vita_denom = 1; }
+	}
+#endif
+	FWadLump lump = Wads.OpenLumpNum (vita_lumpnum);
 	JSAMPLE *buff = NULL;
 
 	jpeg_decompress_struct cinfo;
@@ -448,6 +475,16 @@ void FJPEGTexture::MakeTexture ()
 			Printf (TEXTCOLOR_ORANGE "Unsupported color format\n");
 			throw -1;
 		}
+#ifdef __vita__
+		// [Vita] A progressive JPEG keeps all its DCT coefficients in memory
+		// (2 bytes per sample): HaloDoom's big map pictures need 15-37 MB,
+		// which doesn't fit and wrecks the heap for everything else.
+		if (cinfo.progressive_mode && (double)cinfo.image_width * cinfo.image_height * cinfo.num_components * 2.0 > 12.0 * 1048576)
+		{
+			Printf (TEXTCOLOR_ORANGE "Progressive JPEG %s too big for the Vita (%ux%u), skipped\n", Name, cinfo.image_width, cinfo.image_height);
+			throw -1;
+		}
+#endif
 
 		jpeg_start_decompress(&cinfo);
 
@@ -458,7 +495,7 @@ void FJPEGTexture::MakeTexture ()
 
 		while (cinfo.output_scanline < cinfo.output_height && y < Height)
 		{
-			ReadReducedRow(cinfo, ScaleDenom, Width, &fullrow[0], &acc[0], buff);
+			ReadReducedRow(cinfo, vita_denom, Width, &fullrow[0], &acc[0], buff);
 			BYTE *in = buff;
 			BYTE *out = Pixels + y;
 			switch (cinfo.out_color_space)
@@ -530,7 +567,15 @@ int FJPEGTexture::CopyTrueColorPixels(FBitmap *bmp, int x, int y, int rotate, FC
 {
 	PalEntry pe[256];
 
-	FWadLump lump = Wads.OpenLumpNum (SourceLump);
+	int vita_lumpnum = SourceLump;
+	int vita_denom = ScaleDenom;
+#ifdef __vita__
+	{
+		int r = Vita_JpegReplacement(SourceLump, Width, Height);
+		if (r >= 0) { vita_lumpnum = r; vita_denom = 1; }
+	}
+#endif
+	FWadLump lump = Wads.OpenLumpNum (vita_lumpnum);
 	JSAMPLE *buff = NULL;
 
 	jpeg_decompress_struct cinfo;
@@ -553,6 +598,16 @@ int FJPEGTexture::CopyTrueColorPixels(FBitmap *bmp, int x, int y, int rotate, FC
 			Printf (TEXTCOLOR_ORANGE "Unsupported color format\n");
 			throw -1;
 		}
+#ifdef __vita__
+		// [Vita] A progressive JPEG keeps all its DCT coefficients in memory
+		// (2 bytes per sample): HaloDoom's big map pictures need 15-37 MB,
+		// which doesn't fit and wrecks the heap for everything else.
+		if (cinfo.progressive_mode && (double)cinfo.image_width * cinfo.image_height * cinfo.num_components * 2.0 > 12.0 * 1048576)
+		{
+			Printf (TEXTCOLOR_ORANGE "Progressive JPEG %s too big for the Vita (%ux%u), skipped\n", Name, cinfo.image_width, cinfo.image_height);
+			throw -1;
+		}
+#endif
 		jpeg_start_decompress(&cinfo);
 
 		int yc = 0;
@@ -564,7 +619,7 @@ int FJPEGTexture::CopyTrueColorPixels(FBitmap *bmp, int x, int y, int rotate, FC
 		while (cinfo.output_scanline < cinfo.output_height && yc < outh)
 		{
 			BYTE * ptr = buff + outw * cinfo.output_components * yc;
-			ReadReducedRow(cinfo, ScaleDenom, outw, &fullrow[0], &acc[0], ptr);
+			ReadReducedRow(cinfo, vita_denom, outw, &fullrow[0], &acc[0], ptr);
 			yc++;
 		}
 

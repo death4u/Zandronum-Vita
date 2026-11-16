@@ -5985,6 +5985,32 @@ static void SetActorPitch(AActor *activator, int tid, int angle, bool interpolat
 }
 
 // [TDRR] Added "locals" parameter to allow accessing local arrays.
+#ifdef __vita__
+//==========================================================================
+//
+// [Vita] ACS CheckSight results are reused within a tic: HaloDoom's bot AI
+// asks ~150 times per frame, mostly the same pairs (5-6 ms per frame).
+//
+//==========================================================================
+
+CVAR(Bool, vita_acssightcache, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+struct FVitaSightEntry { AActor *a, *b; int flags; int time; bool result; };
+static FVitaSightEntry Vita_SightCache[512];
+
+static bool Vita_SightCached(AActor *a, AActor *b, int flags)
+{
+	if (!vita_acssightcache || a == NULL || b == NULL) return P_CheckSight(a, b, flags);
+	unsigned h = (unsigned)(((uintptr_t)a >> 4) * 31 + ((uintptr_t)b >> 4) * 17 + flags) & 511;
+	FVitaSightEntry &e = Vita_SightCache[h];
+	if (e.a == a && e.b == b && e.flags == flags && e.time == level.time + 1) return e.result;
+	bool r = P_CheckSight(a, b, flags);
+	e.a = a; e.b = b; e.flags = flags; e.time = level.time + 1; e.result = r;
+	return r;
+}
+#else
+#define Vita_SightCached P_CheckSight
+#endif
+
 int DLevelScript::CallFunction(int argCount, int funcIndex, SDWORD *args, struct ACSLocals *locals)
 {
 	AActor *actor;
@@ -6396,7 +6422,7 @@ int DLevelScript::CallFunction(int argCount, int funcIndex, SDWORD *args, struct
 
 				while ( (dest = dstiter.Next ()) )
 				{
-					if (P_CheckSight(source, dest, flags)) return 1;
+					if (Vita_SightCached(source, dest, flags)) return 1;
 				}
 			}
 			else
@@ -6410,12 +6436,12 @@ int DLevelScript::CallFunction(int argCount, int funcIndex, SDWORD *args, struct
 						TActorIterator<AActor> dstiter (args[1]);
 						while ( (dest = dstiter.Next ()) )
 						{
-							if (P_CheckSight(source, dest, flags)) return 1;
+							if (Vita_SightCached(source, dest, flags)) return 1;
 						}
 					}
 					else
 					{
-						if (P_CheckSight(source, activator, flags)) return 1;
+						if (Vita_SightCached(source, activator, flags)) return 1;
 					}
 				}
 			}

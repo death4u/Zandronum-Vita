@@ -23,6 +23,11 @@
 //
 //-----------------------------------------------------------------------------
 
+#ifdef __vita__
+#include "vita/vita_perf.h"
+#else
+#define VITA_PERF(x)
+#endif
 #include "templates.h"
 #include "doomdef.h"
 #include "d_event.h"
@@ -3364,7 +3369,7 @@ void P_DeathThink (player_t *player)
 			player->mo->pitch = 0;
 		}
 	}
-	P_CalcHeight (player);
+	{ VITA_PERF(VPERF_PMOVE); P_CalcHeight (player); }
 		
 	if (player->attacker && player->attacker != player->mo)
 	{ // Watch killer
@@ -3817,7 +3822,10 @@ void P_PlayerThink (player_t *player)
 
 	// If this is a bot, run its logic.
 	if ( player->pSkullBot )
+	{
+		VITA_PERF(VPERF_BOTTICK);
 		player->pSkullBot->Tick( );
+	}
 
 	// [BB] Since the game is currently suspended, prevent the player from doing anything.
 	// Note: This needs to be done after ticking the bot, otherwise the bot could still act.
@@ -4048,7 +4056,7 @@ void P_PlayerThink (player_t *player)
 	// to be updated. Update their angle now, then stop here.
 	if (player->playerstate == PST_DEAD)
 	{
-		P_MovePlayer(player);
+		{ VITA_PERF(VPERF_PMOVE); P_MovePlayer(player); }
 		return;
 	}
 
@@ -4059,7 +4067,7 @@ void P_PlayerThink (player_t *player)
 	}
 	else
 	{
-		P_MovePlayer (player);
+		{ VITA_PERF(VPERF_PMOVE); P_MovePlayer (player); }
 
 		if (cmd->ucmd.upmove == -32768)
 		{ // Only land if in the air
@@ -4149,7 +4157,7 @@ void P_PlayerThink (player_t *player)
 				player->usedown = true;
 				if (!P_TalkFacing(player->mo))
 				{
-					P_UseLines(player);
+					{ VITA_PERF(VPERF_PUSE); P_UseLines(player); }
 				}
 			}
 		}
@@ -4171,7 +4179,7 @@ void P_PlayerThink (player_t *player)
 		}
 
 		// Cycle psprites
-		P_MovePsprites (player);
+		{ VITA_PERF(VPERF_PSPRITES); P_MovePsprites (player); }
 
 		// Other Counters
 		if (player->damagecount)

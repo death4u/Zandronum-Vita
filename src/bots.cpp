@@ -1,3 +1,4 @@
+#include <new>
 //-----------------------------------------------------------------------------
 //
 // Skulltag Source
@@ -429,7 +430,14 @@ void BOTS_Tick( void )
 
 				// Verify that the bot's name matches one of the existing bots.
 				if ( BOTS_IsValidName( g_BotSpawn[ulIdx].szName ))
+				{
+#ifdef __vita__
+					try { pBot = new CSkullBot( g_BotSpawn[ulIdx].szName, g_BotSpawn[ulIdx].szTeam, BOTS_FindFreePlayerSlot( )); }
+					catch (std::bad_alloc &) { Printf( "Not enough memory for another bot.\n" ); g_BotSpawn[ulIdx].szName[0] = 0; break; }
+#else
 					pBot = new CSkullBot( g_BotSpawn[ulIdx].szName, g_BotSpawn[ulIdx].szTeam, BOTS_FindFreePlayerSlot( ));
+#endif
+				}
 				else
 				{
 					Printf( PRINT_HIGH, "Invalid bot name: %s\n", g_BotSpawn[ulIdx].szName );
@@ -1657,6 +1665,30 @@ void BOTSPAWN_SetTicks( ULONG ulIdx, ULONG ulTicks )
 //*****************************************************************************
 //*****************************************************************************
 //
+#ifdef __vita__
+static TArray<void *> Vita_BotPool;
+static size_t Vita_BotPoolSize;
+
+void *CSkullBot::operator new(size_t size)
+{
+	if (Vita_BotPool.Size() > 0 && size == Vita_BotPoolSize)
+	{
+		void *p;
+		Vita_BotPool.Pop(p);
+		return p;
+	}
+	void *p = malloc(size);
+	if (p == NULL) throw std::bad_alloc();
+	Vita_BotPoolSize = size;
+	return p;
+}
+
+void CSkullBot::operator delete(void *p)
+{
+	if (p != NULL) Vita_BotPool.Push(p);
+}
+#endif
+
 CSkullBot::CSkullBot( const char *pszName, const char *pszTeamName, ULONG ulPlayerNum )
 {
 	ULONG	ulIdx;
@@ -3973,6 +4005,9 @@ CCMD( addbot )
 		return;
 	}
 
+#ifdef __vita__
+	try {
+#endif
 	switch ( argv.argc( ) )
 	{
 	case 1:
@@ -4003,6 +4038,9 @@ CCMD( addbot )
 		}
 		break;
 	}
+#ifdef __vita__
+	} catch (std::bad_alloc &) { Printf( "Not enough memory for another bot.\n" ); }
+#endif
 }
 
 //*****************************************************************************

@@ -60,9 +60,15 @@
 
 #ifndef _DEBUG
 #if !defined(__sun)
+#ifdef __vita__
+void *Vita_RetryMRealloc(void *old, size_t size, void *caller);
+#endif
 void *M_Malloc(size_t size)
 {
 	void *block = malloc(size);
+#ifdef __vita__
+	if (block == NULL) block = Vita_RetryMRealloc(NULL, size, __builtin_return_address(0));
+#endif
 
 	if (block == NULL)
 		I_FatalError("Could not malloc %zu bytes", size);
@@ -78,6 +84,9 @@ void *M_Realloc(void *memblock, size_t size)
 		GC::AllocBytes -= _msize(memblock);
 	}
 	void *block = realloc(memblock, size);
+#ifdef __vita__
+	if (block == NULL) block = Vita_RetryMRealloc(memblock, size, __builtin_return_address(0));
+#endif
 	if (block == NULL)
 	{
 		I_FatalError("Could not realloc %zu bytes", size);

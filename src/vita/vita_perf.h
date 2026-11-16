@@ -28,6 +28,10 @@ enum
 	VPERF_PORTALS,		// part of SCENE: portals and sky
 	VPERF_TRANSL,		// part of SCENE: translucent pass
 	VPERF_PLAYERS,		// part of TIC: P_PlayerThink for all players (bots included)
+	VPERF_BOTTICK,		// part of PLAYERS: bot AI (CSkullBot::Tick, bot scripts)
+	VPERF_PSPRITES,		// part of PLAYERS: weapon states (P_MovePsprites)
+	VPERF_PMOVE,		// part of PLAYERS: P_MovePlayer + P_CalcHeight
+	VPERF_PUSE,			// part of PLAYERS: P_UseLines / talk
 	VPERF_SBAR,			// part of TIC: status bar tick
 	VPERF_BOTAIM,		// part of TIC: bot enemy sight + aiming
 	VPERF_EFFECTS,		// part of TIC: particles, specials, effects

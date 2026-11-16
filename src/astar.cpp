@@ -129,7 +129,7 @@ static AActor **VitaVisPool[MAX_PATHS];
 static ASTARNODE_t **VitaQueuePool[MAX_PATHS];
 static long VitaNodeCap;
 
-static void VitaFreeNodePools( void )
+void VitaFreeNodePools( void )
 {
 	delete[] VitaNodePool;
 	VitaNodePool = NULL;

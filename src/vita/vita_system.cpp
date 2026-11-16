@@ -233,17 +233,110 @@ extern "C" int Vita_HaveShaderCompiler(void)
 extern "C" void *__real_malloc(size_t size);
 extern "C" void *__real_realloc(void *p, size_t size);
 
+unsigned Vita_BigBlocksKB();
 static void Vita_LogAllocFailure(const char *what, size_t size, void *caller)
 {
 	struct mallinfo mi = mallinfo();
-	Vita_BootLog("%s(%u) failed, caller %p; heap arena %u KB, in use %u KB, free %u KB",
+	Vita_BootLog("%s(%u) failed, caller %p; heap arena %u KB, in use %u KB, free %u KB; big blocks outside the heap %u KB",
 		what, (unsigned)size, caller, (unsigned)mi.arena / 1024,
-		(unsigned)mi.uordblks / 1024, (unsigned)mi.fordblks / 1024);
+		(unsigned)mi.uordblks / 1024, (unsigned)mi.fordblks / 1024, Vita_BigBlocksKB());
+}
+
+// [Vita] When the heap is too fragmented for a big block (>= 1 MB), it is
+// taken from the system as its own memory block instead (free user memory
+// outside the heap). free/realloc/malloc_usable_size recognise those blocks.
+extern "C" void __real_free(void *p);
+extern "C" size_t __real_malloc_usable_size(void *p);
+
+struct FVitaBigBlock { char *p; size_t size; SceUID uid; };
+static FVitaBigBlock Vita_BigBlocks[128];
+static volatile int Vita_BigCount;
+static volatile int Vita_BigLock;
+static unsigned Vita_BigTotal;
+
+static void Vita_BigLockAcquire() { while (__atomic_exchange_n(&Vita_BigLock, 1, __ATOMIC_ACQUIRE)) sceKernelDelayThread(0); }
+static void Vita_BigLockRelease() { __atomic_store_n(&Vita_BigLock, 0, __ATOMIC_RELEASE); }
+
+// Index of the big block p belongs to, or -1. Caller holds the lock.
+static int Vita_BigFind(void *p)
+{
+	for (int i = 0; i < Vita_BigCount; i++)
+		if (Vita_BigBlocks[i].p == p) return i;
+	return -1;
+}
+
+static void *Vita_BigAlloc(size_t size)
+{
+	if (size < (1u << 20)) return NULL;
+	size_t rounded = (size + 0xFFF) & ~(size_t)0xFFF;
+	SceUID uid = sceKernelAllocMemBlock("zandbig", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, rounded, NULL);
+	if (uid < 0) return NULL;
+	void *base = NULL;
+	if (sceKernelGetMemBlockBase(uid, &base) < 0 || base == NULL) { sceKernelFreeMemBlock(uid); return NULL; }
+	Vita_BigLockAcquire();
+	if (Vita_BigCount >= (int)(sizeof(Vita_BigBlocks) / sizeof(Vita_BigBlocks[0])))
+	{
+		Vita_BigLockRelease();
+		sceKernelFreeMemBlock(uid);
+		return NULL;
+	}
+	Vita_BigBlocks[Vita_BigCount].p = (char *)base;
+	Vita_BigBlocks[Vita_BigCount].size = size;
+	Vita_BigBlocks[Vita_BigCount].uid = uid;
+	Vita_BigCount++;
+	Vita_BigTotal += rounded >> 10;
+	Vita_BigLockRelease();
+	return base;
+}
+
+// Frees p if it is a big block; returns its size (0 if not one).
+static size_t Vita_BigFree(void *p)
+{
+	if (Vita_BigCount == 0 || p == NULL) return 0;
+	Vita_BigLockAcquire();
+	int i = Vita_BigFind(p);
+	if (i < 0) { Vita_BigLockRelease(); return 0; }
+	FVitaBigBlock b = Vita_BigBlocks[i];
+	Vita_BigBlocks[i] = Vita_BigBlocks[--Vita_BigCount];
+	Vita_BigTotal -= ((b.size + 0xFFF) & ~(size_t)0xFFF) >> 10;
+	Vita_BigLockRelease();
+	sceKernelFreeMemBlock(b.uid);
+	return b.size;
+}
+
+static size_t Vita_BigSize(void *p)
+{
+	if (Vita_BigCount == 0 || p == NULL) return 0;
+	Vita_BigLockAcquire();
+	int i = Vita_BigFind(p);
+	size_t sz = i >= 0 ? Vita_BigBlocks[i].size : 0;
+	Vita_BigLockRelease();
+	return sz;
+}
+
+unsigned Vita_BigBlocksKB() { return Vita_BigTotal; }
+
+extern "C" void __wrap_free(void *p)
+{
+	if (p == NULL) return;
+	if (Vita_BigCount != 0 && Vita_BigFree(p) != 0) return;
+	__real_free(p);
+}
+
+extern "C" size_t __wrap_malloc_usable_size(void *p)
+{
+	size_t sz = Vita_BigSize(p);
+	return sz != 0 ? sz : __real_malloc_usable_size(p);
 }
 
 extern "C" void *__wrap_malloc(size_t size)
 {
 	void *p = __real_malloc(size);
+	if (p == NULL && size >= (1u << 20))
+	{
+		p = Vita_BigAlloc(size);
+		if (p != NULL) return p;
+	}
 	if (p == NULL && size != 0)
 		Vita_LogAllocFailure("malloc", size, __builtin_return_address(0));
 	return p;
@@ -251,7 +344,32 @@ extern "C" void *__wrap_malloc(size_t size)
 
 extern "C" void *__wrap_realloc(void *old, size_t size)
 {
+	size_t oldbig = Vita_BigSize(old);
+	if (oldbig != 0)
+	{
+		if (size == 0) { Vita_BigFree(old); return NULL; }
+		void *n = __real_malloc(size);
+		if (n == NULL) n = Vita_BigAlloc(size);
+		if (n == NULL) { Vita_LogAllocFailure("realloc", size, __builtin_return_address(0)); return NULL; }
+		memcpy(n, old, oldbig < size ? oldbig : size);
+		Vita_BigFree(old);
+		return n;
+	}
 	void *p = __real_realloc(old, size);
+	if (p == NULL && size >= (1u << 20))
+	{
+		p = Vita_BigAlloc(size);
+		if (p != NULL)
+		{
+			if (old != NULL)
+			{
+				size_t os = __real_malloc_usable_size(old);
+				memcpy(p, old, os < size ? os : size);
+				__real_free(old);
+			}
+			return p;
+		}
+	}
 	if (p == NULL && size != 0)
 		Vita_LogAllocFailure("realloc", size, __builtin_return_address(0));
 	return p;
@@ -273,6 +391,20 @@ static void *Vita_RetryAlloc(size_t size)
 		return NULL;
 	Vita_MemoryPressureHook();
 	return malloc(size);
+}
+
+// For M_Malloc/M_Realloc: one more try after freeing caches, then log the
+// engine-level caller.
+void *Vita_RetryMRealloc(void *old, size_t size, void *caller)
+{
+	void *p = NULL;
+	if (size >= (256u << 10) && Vita_MemoryPressureHook != NULL && sceKernelGetThreadId() == Vita_MainThreadId)
+	{
+		Vita_MemoryPressureHook();
+		p = old ? realloc(old, size) : malloc(size);
+	}
+	if (p == NULL) Vita_LogAllocFailure(old ? "M_Realloc" : "M_Malloc", size, caller);
+	return p;
 }
 
 extern "C" void *__wrap__Znwj(size_t size)
@@ -395,4 +527,21 @@ extern "C" void Vita_GetLocalIP(char *buf, int size)
 		snprintf(buf, size, "%s", info.ip_address);
 	else
 		snprintf(buf, size, "127.0.0.1");
+}
+
+// Self-test of the big-block path (vita_bigtest console command calls this).
+int Vita_BigSelfTest()
+{
+	char *p = (char *)Vita_BigAlloc(3u << 20);
+	if (p == NULL) return 1;
+	memset(p, 0x5A, 3u << 20);
+	if (malloc_usable_size(p) != (3u << 20)) return 2;
+	char *q = (char *)realloc(p, 5u << 20);	// moves into the heap or another block
+	if (q == NULL || q[0] != 0x5A || q[(3u << 20) - 1] != 0x5A) return 3;
+	if (Vita_BigCount != 0 && Vita_BigSize(q) == 0 && Vita_BigFind(p) >= 0) return 4;
+	free(q);
+	char *r = (char *)Vita_BigAlloc(2u << 20);
+	if (r == NULL) return 5;
+	free(r);
+	return Vita_BigCount == 0 ? 0 : 6;
 }

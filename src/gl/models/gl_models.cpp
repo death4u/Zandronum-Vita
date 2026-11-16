@@ -481,6 +481,28 @@ static struct FVitaPressureInit
 	FVitaPressureInit() { extern void (*Vita_MemoryPressureHook)(void); Vita_MemoryPressureHook = Vita_FreeModelsForMemory; }
 } Vita_PressureInit;
 
+// [Vita] Level change: drop the old level's GL textures, models and bot
+// path buffers so the new level's allocations aren't squeezed between them.
+CVAR(Bool, vita_flushonlevel, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+void Vita_FlushLevelMemory()
+{
+	if (!vita_flushonlevel) return;
+	const unsigned before = mallinfo().uordblks >> 20;
+	int models = 0;
+	for (unsigned i = 0; i < FLazyModel::All.Size(); i++)
+	{
+		FLazyModel *m = FLazyModel::All[i];
+		if (m->mReal != NULL && m->mAsync.load() != 1) { m->Unload(); models++; }
+	}
+	if (GLRenderer != NULL) GLRenderer->FlushTextures();
+	extern void VitaFreeNodePools();
+	VitaFreeNodePools();
+	GC::FullGC();
+	Vita_BootLog("level change: freed %d models, GL textures and bot path buffers; heap %u -> %u MB; GPU free RAM %u MB CDRAM %u MB",
+		models, before, (unsigned)(mallinfo().uordblks >> 20),
+		(unsigned)(vglMemFree(VGL_MEM_RAM) >> 20), (unsigned)(vglMemFree(VGL_MEM_VRAM) >> 20));
+}
+
 void FLazyModel::Trim(FLazyModel *keep)
 {
 	const int budget = MAX(8, (int)gl_vita_modelbudget) << 20;

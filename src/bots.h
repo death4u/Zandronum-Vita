@@ -478,6 +478,12 @@ class CSkullBot
 {
 
 public:
+#ifdef __vita__
+	// [Vita] A bot is ~4.3 MB; allocating them again on every level fragmented
+	// the heap until a level change crashed. Freed bots go back to a pool.
+	static void *operator new(size_t size);
+	static void operator delete(void *p);
+#endif
 	//*************************************************************************
 	CSkullBot( const char *pszName, const char *pszTeamName, ULONG ulPlayerNum );
 	~CSkullBot( );

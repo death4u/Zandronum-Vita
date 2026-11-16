@@ -5727,3 +5727,8 @@ CCMD( freeze )
 			players[consoleplayer].timefreezer &= ~freezemask;
 	}
 }
+
+#ifdef __vita__
+int Vita_BigSelfTest();
+CCMD(vita_bigtest) { Printf("vita_bigtest: %d\n", Vita_BigSelfTest()); }
+#endif

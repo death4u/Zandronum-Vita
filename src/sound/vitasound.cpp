@@ -965,39 +965,58 @@ static bool DecodeSound(BYTE *sfxdata, int length, short *&pcm_out, unsigned &fr
 
 	if (length >= 4 && memcmp(sfxdata, "OggS", 4) == 0)
 	{
-		short *out = NULL;
-		int n = stb_vorbis_decode_memory(sfxdata, length, &channels, &rate, &out);
-		if (n > 0 && out != NULL)
-		{	// stb uses malloc; copy so UnloadSound can use delete[]
-			// [Vita] Long sounds (HaloDoom's ambience loops and cutscene
-			// music, 10-20 MB as PCM) are kept as mono at half rate when they
-			// would take more than 2 MB: 1/4 of the memory.
-			if ((size_t)n * channels * sizeof(short) > (2u << 20) && rate >= 32000)
+		// [Vita] Decoded in pieces straight into a buffer of the final size
+		// (stb_vorbis_decode_memory grows one by doubling: 16 MB blocks for
+		// HaloDoom's long sounds). Sounds over 2 MB as PCM are kept as mono
+		// at half rate: 1/4 of the memory.
+		int err = 0;
+		stb_vorbis *v = stb_vorbis_open_memory(sfxdata, length, &err, NULL);
+		if (v != NULL)
+		{
+			stb_vorbis_info info = stb_vorbis_get_info(v);
+			channels = info.channels;
+			rate = info.sample_rate;
+			const unsigned total = stb_vorbis_stream_length_in_samples(v);
+			if (channels >= 1 && channels <= 8 && rate > 0 && total > 0)
 			{
-				const int outn = n / 2;
-				pcm = new (std::nothrow) short[outn];
+				const bool reduce = (size_t)total * channels * sizeof(short) > (2u << 20) && rate >= 32000;
+				const unsigned cap = reduce ? total / 2 + 1 : total * channels;
+				pcm = new (std::nothrow) short[cap];
 				if (pcm != NULL)
 				{
-					for (int i = 0; i < outn; i++)
+					short tmp[4096];
+					unsigned outpos = 0;
+					int carry = 0, havecarry = 0;
+					for (;;)
 					{
-						int acc = 0;
-						for (int c = 0; c < channels; c++)
-							acc += out[(i * 2) * channels + c] + out[(i * 2 + 1) * channels + c];
-						pcm[i] = (short)(acc / (2 * channels));
+						int n = stb_vorbis_get_samples_short_interleaved(v, channels, tmp, (4096 / channels) * channels);
+						if (n <= 0) break;
+						if (!reduce)
+						{
+							unsigned cnt = (unsigned)n * channels;
+							if (outpos + cnt > cap) cnt = cap - outpos;
+							memcpy(pcm + outpos, tmp, cnt * sizeof(short));
+							outpos += cnt;
+						}
+						else
+						{
+							for (int i = 0; i < n; i++)
+							{
+								int m = 0;
+								for (int c = 0; c < channels; c++) m += tmp[i * channels + c];
+								m /= channels;
+								if (!havecarry) { carry = m; havecarry = 1; }
+								else if (outpos < cap) { pcm[outpos++] = (short)((carry + m) / 2); havecarry = 0; }
+							}
+						}
+						if (outpos >= cap) break;
 					}
+					if (reduce) { frames = outpos; channels = 1; rate /= 2; }
+					else frames = outpos / channels;
 				}
-				frames = outn;
-				channels = 1;
-				rate /= 2;
 			}
-			else
-			{
-				pcm = new (std::nothrow) short[n * channels];	// [Vita] no memory: the sound stays silent
-				if (pcm != NULL) memcpy(pcm, out, n * channels * sizeof(short));
-				frames = n;
-			}
+			stb_vorbis_close(v);
 		}
-		free(out);
 	}
 	else if (length >= 4 && memcmp(sfxdata, "fLaC", 4) == 0)
 	{

@@ -598,6 +598,13 @@ static void BuildArgs(int *argc, char ***argv, const std::string &iwad, const st
 			(ext == "deh" || ext == "bex" ? dehs : files).push_back(mods[i]);
 		}
 	}
+	// Vita-specific fixes for mods (baseline copies of textures that are too
+	// big to decode on the Vita, see jpegtexture.cpp); harmless otherwise.
+	if (!files.empty())
+	{
+		FILE *t = fopen("app0:/vita-halodoom.pk3", "rb");
+		if (t != NULL) { fclose(t); files.push_back("app0:/vita-halodoom.pk3"); }
+	}
 	if (!files.empty())
 	{
 		args.push_back("-file");

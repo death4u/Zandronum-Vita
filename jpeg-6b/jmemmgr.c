@@ -321,20 +321,29 @@ alloc_sarray (j_common_ptr cinfo, int pool_id,
 	JSAMPROW workspace;
 	JDIMENSION i;
 
-	/* Calculate max # of rows allowed in one allocation chunk */
-	mem->last_rowsperchunk = numrows;
+	/* [Vita] At most 1 MB per allocation (see alloc_barray). */
+	JDIMENSION rowsperchunk, rowsdone, rows;
+	long rowbytes = (long) samplesperrow * SIZEOF(JSAMPLE);
+	rowsperchunk = rowbytes > 0 ? (JDIMENSION) ((1L << 20) / rowbytes) : numrows;
+	if (rowsperchunk < 1) rowsperchunk = 1;
+	if (rowsperchunk > numrows) rowsperchunk = numrows;
+	mem->last_rowsperchunk = rowsperchunk;
 
 	/* Get space for row pointers (small object) */
 	result = (JSAMPARRAY) alloc_small(cinfo, pool_id,
 		(size_t) (numrows * SIZEOF(JSAMPROW)));
 
 	/* Get the rows themselves (large objects) */
-	workspace = (JSAMPROW) alloc_large(cinfo, pool_id,
-		(size_t) ((size_t) numrows * (size_t) samplesperrow
-		* SIZEOF(JSAMPLE)));
-	for (i = 0; i < numrows; i++) {
-		result[i] = workspace;
-		workspace += samplesperrow;
+	rowsdone = 0;
+	while (rowsdone < numrows) {
+		rows = numrows - rowsdone < rowsperchunk ? numrows - rowsdone : rowsperchunk;
+		workspace = (JSAMPROW) alloc_large(cinfo, pool_id,
+			(size_t) ((size_t) rows * (size_t) samplesperrow * SIZEOF(JSAMPLE)));
+		for (i = 0; i < rows; i++) {
+			result[rowsdone + i] = workspace;
+			workspace += samplesperrow;
+		}
+		rowsdone += rows;
 	}
 
 	return result;
@@ -356,20 +365,31 @@ alloc_barray (j_common_ptr cinfo, int pool_id,
 	JBLOCKROW workspace;
 	JDIMENSION i;
 
-	/* Calculate max # of rows allowed in one allocation chunk */
-	mem->last_rowsperchunk = numrows;
+	/* [Vita] Rows are allocated in chunks of at most 1 MB: a progressive
+	   JPEG's coefficient arrays (15-26 MB for HaloDoom's big textures) then
+	   fit into a fragmented heap. */
+	JDIMENSION rowsperchunk, rowsdone, rows;
+	long rowbytes = (long) blocksperrow * SIZEOF(JBLOCK);
+	rowsperchunk = rowbytes > 0 ? (JDIMENSION) ((1L << 20) / rowbytes) : numrows;
+	if (rowsperchunk < 1) rowsperchunk = 1;
+	if (rowsperchunk > numrows) rowsperchunk = numrows;
+	mem->last_rowsperchunk = rowsperchunk;
 
 	/* Get space for row pointers (small object) */
 	result = (JBLOCKARRAY) alloc_small(cinfo, pool_id,
 		(size_t) (numrows * SIZEOF(JBLOCKROW)));
 
 	/* Get the rows themselves (large objects) */
-	workspace = (JBLOCKROW) alloc_large(cinfo, pool_id,
-		(size_t) ((size_t) numrows * (size_t) blocksperrow
-		* SIZEOF(JBLOCK)));
-	for (i = 0; i < numrows; i++) {
-		result[i] = workspace;
-		workspace += blocksperrow;
+	rowsdone = 0;
+	while (rowsdone < numrows) {
+		rows = numrows - rowsdone < rowsperchunk ? numrows - rowsdone : rowsperchunk;
+		workspace = (JBLOCKROW) alloc_large(cinfo, pool_id,
+			(size_t) ((size_t) rows * (size_t) blocksperrow * SIZEOF(JBLOCK)));
+		for (i = 0; i < rows; i++) {
+			result[rowsdone + i] = workspace;
+			workspace += blocksperrow;
+		}
+		rowsdone += rows;
 	}
 
 	return result;
