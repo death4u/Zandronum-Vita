@@ -817,7 +817,7 @@ else( WIN32 )
 	set( SYSTEM_SOURCES ${PLAT_SDL_SOURCES} )
 	if( VITA )
 		list( REMOVE_ITEM SYSTEM_SOURCES sdl/crashcatcher.c )
-		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} vita/vita_system.cpp vita/vita_compat.cpp vita/vita_launcher.cpp vita/vita_perf.cpp vita/vita_parallel.cpp vita/vita_texcache.cpp vita/vita_controls.cpp sound/vitasound.cpp )
+		set( SYSTEM_SOURCES ${SYSTEM_SOURCES} vita/vita_system.cpp vita/vita_compat.cpp vita/vita_launcher.cpp vita/vita_perf.cpp vita/vita_parallel.cpp vita/vita_texcache.cpp vita/vita_controls.cpp vita/vita_loadscreen.cpp sound/vitasound.cpp )
 		if( NOT NO_GL )
 			set( SYSTEM_SOURCES ${SYSTEM_SOURCES} vita/vita_glu.cpp
 				vita/libtess2/bucketalloc.c vita/libtess2/dict.c vita/libtess2/geom.c

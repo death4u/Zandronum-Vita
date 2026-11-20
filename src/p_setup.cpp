@@ -4005,6 +4005,9 @@ void P_SetupLevel (char *lumpname, int position)
 	// [Vita] Start the new level with as much memory as possible in one piece:
 	// GL textures, models and the bot path buffers of the old level go.
 	{ extern void Vita_FlushLevelMemory(); Vita_FlushLevelMemory(); }
+	extern void Vita_LoadScreenBegin(const char *), Vita_LoadProgress(const char *, int, int, bool), Vita_TexCacheInit();
+	if (stricmp(lumpname, "TITLEMAP")) Vita_LoadScreenBegin(lumpname);
+	Vita_TexCacheInit();
 #endif
 	interpolator.ClearInterpolations();	// [RH] Nothing to interpolate on a fresh level.
 
@@ -4354,6 +4357,9 @@ void P_SetupLevel (char *lumpname, int position)
 	}
 
 	times[10].Clock();
+#ifdef __vita__
+	Vita_LoadProgress("Map", 1, 4, true);
+#endif
 	P_LoadBlockMap (map);
 	times[10].Unclock();
 
@@ -4478,6 +4484,9 @@ void P_SetupLevel (char *lumpname, int position)
 	NETWORK_MakeScriptNameIndex();
 
 	// set up world state
+#ifdef __vita__
+	Vita_LoadProgress("Map", 2, 4, true);
+#endif
 	P_SpawnSpecials ();
 
 	// This must be done BEFORE the PolyObj Spawn!!!
@@ -4664,9 +4673,15 @@ void P_SetupLevel (char *lumpname, int position)
 	if (precache)
 	{
 		TexMan.PrecacheLevel ();
+#ifdef __vita__
+		Vita_LoadProgress("Sounds", 0, 0, true);
+#endif
 		S_PrecacheLevel ();
 	}
 	times[17].Unclock();
+#ifdef __vita__
+	{ extern void Vita_LoadScreenEnd(); Vita_LoadScreenEnd(); }
+#endif
 
 	// Reset announcer "frags/points left" variables.
 	ANNOUNCER_AllowNumFragsAndPointsLeftSounds( );

@@ -60,6 +60,9 @@ static unsigned long long Fnv(unsigned long long h, const void *p, size_t n)
 unsigned long long Vita_TexCacheKey(FTexture *tex, int cm, int kind, bool hires, const void *trans, unsigned transsize)
 {
 	if (!vita_texcache || tex == NULL || tex->bHasCanvas || tex->bWarped) return 0;
+	// Font characters have no name of their own and share their font's lump:
+	// glyphs of one size all got the same key (0035: text was garbled).
+	if (tex->UseType == FTexture::TEX_FontChar || (tex->Name[0] == 0 && tex->SourceLump < 0)) return 0;
 	unsigned long long h = 14695981039346656037ull;
 	if (trans != NULL)
 	{
@@ -126,9 +129,14 @@ static void LoadIndex()
 		}
 		closedir(d);
 	}
+	extern void Vita_LoadScreenBegin(const char *), Vita_LoadScreenEnd(), Vita_LoadProgress(const char *, int, int, bool);
+	extern bool Vita_LoadScreenActive();
+	const bool screenwasactive = Vita_LoadScreenActive();
+	if (flat.Size() > 0 && !screenwasactive) Vita_LoadScreenBegin("(first start of this version)");
 	FILE *idx = fopen(TEXCACHE_DIR "/index.dat", "wb");
 	for (unsigned i = 0; i < flat.Size(); i++)
 	{
+		Vita_LoadProgress("Sorting the texture cache", i, flat.Size(), false);
 		char from[96], to[96], dir[64];
 		snprintf(from, sizeof(from), TEXCACHE_DIR "/%016llx.vtc", flat[i]);
 		snprintf(dir, sizeof(dir), TEXCACHE_DIR "/%02x", (unsigned)(flat[i] >> 56));
@@ -141,7 +149,13 @@ static void LoadIndex()
 		}
 	}
 	if (idx) fclose(idx);
+	if (flat.Size() > 0 && !screenwasactive) Vita_LoadScreenEnd();
 	Vita_BootLog("texture cache: new index, %u textures moved into folders (%llu ms)", Index.CountUsed(), (sceKernelGetProcessTimeWide() - t0) / 1000);
+}
+
+void Vita_TexCacheInit()
+{
+	LoadIndex();
 }
 
 static bool InIndex(unsigned long long key)
@@ -189,9 +203,12 @@ static void UploadLevels(const unsigned char *data, int w, int h, bool dxt5, int
 	vgl_zand_cpu_swizzle = 0;
 }
 
+static bool LoadReady(unsigned long long key, FVitaTexCacheMeta &meta, bool mipmaps);
 bool Vita_TexCacheLoad(unsigned long long key, FVitaTexCacheMeta &meta, bool mipmaps)
 {
-	if (key == 0 || !InIndex(key)) return false;
+	if (key == 0) return false;
+	if (LoadReady(key, meta, mipmaps)) return true;
+	if (!InIndex(key)) return false;
 	char path[96];
 	CachePath(path, sizeof(path), key);
 	FILE *f = fopen(path, "rb");
@@ -199,7 +216,8 @@ bool Vita_TexCacheLoad(unsigned long long key, FVitaTexCacheMeta &meta, bool mip
 	FVtcHeader hd;
 	bool ok = false;
 	if (fread(&hd, sizeof(hd), 1, f) != 1 || hd.Magic != VTC_MAGIC || hd.Version != VTC_VERSION) { fclose(f); return false; }
-	if (hd.Dxt5 == 2)
+	if (hd.Dxt5 == 2) { fclose(f); return false; }	// 0035's raw entries: some were padded (wrong UVs)
+	if (hd.Dxt5 == 3)
 	{
 		// small texture, raw RGBA
 		const unsigned total = hd.Width * hd.Height * 4;
@@ -347,24 +365,23 @@ static bool QueueWrite(unsigned long long key, const FVtcHeader &hd, unsigned ch
 	return room;
 }
 
-bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool mipmaps)
+// Compresses rgba (power-of-two size) into a DXT chain in memory.
+static unsigned char *CompressChain(const unsigned char *rgba, int w, int h, bool mipmaps, bool &dxt5, int &levels, unsigned &total)
 {
-	if (!vita_texcache || !IsPow2(w) || !IsPow2(h) || rgba == NULL) return false;
-
-	bool dxt5 = false;
+	dxt5 = false;
 	{
 		const unsigned *px = (const unsigned *)rgba;
 		const size_t n = (size_t)w * h;
 		for (size_t i = 0; i < n; i++) if ((px[i] >> 24) != 0xff) { dxt5 = true; break; }
 	}
-	int levels = 1;
+	levels = 1;
 	if (mipmaps && vita_texcachemips) { int lw = w, lh = h; while (lw > 4 && lh > 4) { lw /= 2; lh /= 2; levels++; } }
 
-	unsigned total = 0;
+	total = 0;
 	{ int lw = w, lh = h; for (int l = 0; l < levels; l++) { total += LevelSize(lw, lh, dxt5); lw = lw > 4 ? lw / 2 : 4; lh = lh > 4 ? lh / 2 : 4; } }
 	unsigned char *out = (unsigned char *)malloc(total);
 	unsigned char *mip = levels > 1 ? (unsigned char *)malloc((size_t)(w / 2) * (h / 2) * 4 * 2) : NULL;
-	if (out == NULL || (levels > 1 && mip == NULL)) { free(out); free(mip); return false; }
+	if (out == NULL || (levels > 1 && mip == NULL)) { free(out); free(mip); return NULL; }
 
 	// level 0 from the source, the others from successive downsamples
 	unsigned char *dst = out;
@@ -384,6 +401,15 @@ bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool m
 		}
 	}
 	free(mip);
+	return out;
+}
+
+bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool mipmaps)
+{
+	if (!vita_texcache || !IsPow2(w) || !IsPow2(h) || rgba == NULL) return false;
+	bool dxt5; int levels; unsigned total;
+	unsigned char *out = CompressChain(rgba, w, h, mipmaps, dxt5, levels, total);
+	if (out == NULL) return false;
 
 	UploadLevels(out, w, h, dxt5, levels);
 
@@ -404,6 +430,190 @@ bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool m
 	return true;
 }
 
+//==========================================================================
+//
+// Textures prepared on the third core (bot colour skins): reading the
+// cache file, or translating (about 1 s for a 1024x1024 skin) and
+// compressing them, stalled the game every time a bot appeared. The game
+// draws the skin without the colours until it is ready.
+//
+//==========================================================================
+
+struct FVtcJob
+{
+	unsigned long long Key;
+	FVitaBuildFn Build;
+	void *Ctx;
+	int Ctx2, Ctx3;
+	FVitaTexCacheMeta Meta;
+};
+struct FVtcReady
+{
+	FVtcHeader Header;
+	unsigned char *Data;	// NULL: failed
+	unsigned Size;
+	bool FromFile;
+};
+static TArray<FVtcJob> Jobs;
+static TMap<unsigned long long, FVtcReady> Ready;
+static TMap<unsigned long long, bool> Queued;
+static SceUID JobMutex = -1, JobSema = -1, JobThread = -1, JobIdleSema = -1;
+static volatile int JobBusy;
+
+static bool ReadCacheFile(unsigned long long key, FVtcReady &r)
+{
+	char path[96];
+	CachePath(path, sizeof(path), key);
+	FILE *f = fopen(path, "rb");
+	if (f == NULL) return false;
+	bool ok = false;
+	if (fread(&r.Header, sizeof(r.Header), 1, f) == 1 && r.Header.Magic == VTC_MAGIC && r.Header.Version == VTC_VERSION
+		&& r.Header.Dxt5 < 2 && IsPow2(r.Header.Width) && IsPow2(r.Header.Height) && r.Header.Levels >= 1 && r.Header.Levels <= 12)
+	{
+		unsigned total = 0;
+		int w = r.Header.Width, h = r.Header.Height;
+		for (unsigned l = 0; l < r.Header.Levels; l++) { total += LevelSize(w, h, !!r.Header.Dxt5); w = w > 4 ? w / 2 : 4; h = h > 4 ? h / 2 : 4; }
+		r.Data = (unsigned char *)malloc(total);
+		r.Size = total;
+		if (r.Data != NULL && fread(r.Data, 1, total, f) == total) ok = true;
+		else { free(r.Data); r.Data = NULL; }
+	}
+	fclose(f);
+	r.FromFile = true;
+	return ok;
+}
+
+static void RunJob(const FVtcJob &job)
+{
+	FVtcReady r;
+	memset(&r, 0, sizeof(r));
+	bool ok = InIndex(job.Key) && ReadCacheFile(job.Key, r);
+	if (!ok)
+	{
+		int w = 0, h = 0;
+		unsigned char *rgba = NULL;
+		try { rgba = job.Build(job.Ctx, job.Ctx2, job.Ctx3, job.Key, w, h); }
+		catch (...) { rgba = NULL; }
+		if (rgba != NULL && IsPow2(w) && IsPow2(h))
+		{
+			bool dxt5; int levels; unsigned total;
+			r.Data = CompressChain(rgba, w, h, true, dxt5, levels, total);
+			if (r.Data != NULL)
+			{
+				memset(&r.Header, 0, sizeof(r.Header));
+				r.Header.Magic = VTC_MAGIC; r.Header.Version = VTC_VERSION;
+				r.Header.Width = w; r.Header.Height = h; r.Header.Dxt5 = dxt5; r.Header.Levels = levels;
+				r.Header.Masked = job.Meta.Masked;
+				r.Header.IsTransparent = job.Meta.IsTransparent;
+				r.Header.GLIsTransparent = job.Meta.GLIsTransparent;
+				r.Size = total;
+				r.FromFile = false;
+			}
+		}
+		delete[] rgba;
+	}
+	sceKernelLockMutex(JobMutex, 1, NULL);
+	Ready[job.Key] = r;
+	sceKernelUnlockMutex(JobMutex, 1);
+}
+
+static int JobEntry(SceSize, void *)
+{
+	for (;;)
+	{
+		sceKernelWaitSema(JobSema, 1, NULL);
+		sceKernelLockMutex(JobMutex, 1, NULL);
+		if (Jobs.Size() == 0) { sceKernelUnlockMutex(JobMutex, 1); continue; }
+		FVtcJob job = Jobs[0];
+		Jobs.Delete(0);
+		JobBusy = 1;
+		sceKernelUnlockMutex(JobMutex, 1);
+		RunJob(job);
+		sceKernelLockMutex(JobMutex, 1, NULL);
+		JobBusy = 0;
+		const bool idle = Jobs.Size() == 0;
+		sceKernelUnlockMutex(JobMutex, 1);
+		if (idle) sceKernelSignalSema(JobIdleSema, 1);
+	}
+	return 0;
+}
+
+int Vita_TexCacheAsync(unsigned long long key, FVitaBuildFn build, void *ctx, int ctx2, int ctx3, const FVitaTexCacheMeta &meta)
+{
+	if (key == 0 || !vita_texcache) return VTC_ASYNC_NO;
+	LoadIndex();
+	if (JobThread < 0)
+	{
+		JobMutex = sceKernelCreateMutex("vita_texbuild", 0, 0, NULL);
+		JobSema = sceKernelCreateSema("vita_texbuild", 0, 0, 0x7fffffff, NULL);
+		JobIdleSema = sceKernelCreateSema("vita_texidle", 0, 0, 0x7fffffff, NULL);
+		JobThread = sceKernelCreateThread("vita_texbuild", JobEntry, 0x10000100 + 30, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+		if (JobMutex < 0 || JobSema < 0 || JobThread < 0 || JobIdleSema < 0) { JobThread = -1; return VTC_ASYNC_NO; }
+		sceKernelStartThread(JobThread, 0, NULL);
+	}
+	sceKernelLockMutex(JobMutex, 1, NULL);
+	int res;
+	FVtcReady *r = Ready.CheckKey(key);
+	if (r != NULL) res = r->Data != NULL ? VTC_ASYNC_READY : VTC_ASYNC_NO;
+	else if (Queued.CheckKey(key) != NULL) res = VTC_ASYNC_WAIT;
+	else
+	{
+		FVtcJob job = { key, build, ctx, ctx2, ctx3, meta };
+		Jobs.Push(job);
+		Queued[key] = true;
+		res = VTC_ASYNC_WAIT;
+		sceKernelSignalSema(JobSema, 1);
+	}
+	sceKernelUnlockMutex(JobMutex, 1);
+	return res;
+}
+
+// Uploads a ready texture to the bound GL texture (and saves it if it was built).
+static bool LoadReady(unsigned long long key, FVitaTexCacheMeta &meta, bool mipmaps)
+{
+	if (JobThread < 0) return false;
+	sceKernelLockMutex(JobMutex, 1, NULL);
+	FVtcReady *pr = Ready.CheckKey(key);
+	FVtcReady r;
+	const bool have = pr != NULL && pr->Data != NULL;
+	if (have) { r = *pr; Ready.Remove(key); Queued.Remove(key); }
+	sceKernelUnlockMutex(JobMutex, 1);
+	if (!have) return false;
+	const FVtcHeader &hd = r.Header;
+	UploadLevels(r.Data, hd.Width, hd.Height, !!hd.Dxt5, mipmaps ? hd.Levels : 1);
+	meta.Width = hd.Width; meta.Height = hd.Height;
+	meta.Masked = hd.Masked; meta.IsTransparent = hd.IsTransparent; meta.GLIsTransparent = hd.GLIsTransparent;
+	CacheHits++;
+	if (!r.FromFile && QueueWrite(key, hd, r.Data, r.Size)) r.Data = NULL;
+	free(r.Data);
+	return true;
+}
+
+// Waits for the builder (level change: the textures it works on are about to be freed).
+void Vita_TexCacheAsyncDrain()
+{
+	if (JobThread < 0) return;
+	sceKernelLockMutex(JobMutex, 1, NULL);
+	Jobs.Clear();
+	bool busy = JobBusy != 0;
+	sceKernelUnlockMutex(JobMutex, 1);
+	while (busy)
+	{
+		SceUInt timeout = 20000;
+		sceKernelWaitSema(JobIdleSema, 1, &timeout);
+		sceKernelLockMutex(JobMutex, 1, NULL);
+		busy = JobBusy != 0;
+		sceKernelUnlockMutex(JobMutex, 1);
+	}
+	sceKernelLockMutex(JobMutex, 1, NULL);
+	TMapIterator<unsigned long long, FVtcReady> it(Ready);
+	TMap<unsigned long long, FVtcReady>::Pair *pair;
+	while (it.NextPair(pair)) free(pair->Value.Data);
+	Ready.Clear();
+	Queued.Clear();
+	sceKernelUnlockMutex(JobMutex, 1);
+}
+
 void Vita_TexCacheStats(unsigned &hits, unsigned &writes)
 {
 	hits = CacheHits; writes = CacheWrites;
@@ -418,7 +628,7 @@ void Vita_TexCacheSaveRaw(const unsigned char *rgba, int w, int h)
 	FVtcHeader hd;
 	memset(&hd, 0, sizeof(hd));
 	hd.Magic = VTC_MAGIC; hd.Version = VTC_VERSION;
-	hd.Width = w; hd.Height = h; hd.Dxt5 = 2; hd.Levels = 1;
+	hd.Width = w; hd.Height = h; hd.Dxt5 = 3; hd.Levels = 1;
 	hd.Masked = Vita_TexCachePending.Meta.Masked;
 	hd.IsTransparent = Vita_TexCachePending.Meta.IsTransparent;
 	hd.GLIsTransparent = Vita_TexCachePending.Meta.GLIsTransparent;

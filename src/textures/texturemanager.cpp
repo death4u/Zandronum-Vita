@@ -1268,6 +1268,7 @@ void FTextureManager::PrecacheLevel (void)
 		// file read) are loaded when first drawn instead, so the level
 		// starts sooner. Already loaded ones are kept.
 		FTexture *vt = ByIndex(i);
+		{ extern void Vita_LoadProgress(const char *, int, int, bool); Vita_LoadProgress("Textures", cnt - i, cnt, false); }
 		if (hitlist[i] && vt != NULL && vt->UseType == FTexture::TEX_Sprite && stricmp(level.mapname, "TITLEMAP"))
 		{
 			vita_spritesskipped++;

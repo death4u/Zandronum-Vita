@@ -508,8 +508,10 @@ static struct FVitaPressureInit
 // [Vita] Level change: drop the old level's GL textures, models and bot
 // path buffers so the new level's allocations aren't squeezed between them.
 CVAR(Bool, vita_flushonlevel, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+#include "vita/vita_texcache.h"
 void Vita_FlushLevelMemory()
 {
+	Vita_TexCacheAsyncDrain();	// it may be working on a texture of this level
 	if (!vita_flushonlevel) return;
 	const unsigned before = mallinfo().uordblks >> 20;
 	int models = 0;
@@ -1200,6 +1202,7 @@ static void Vita_PrecacheSkins()
 		if (vglMemFree(VGL_MEM_RAM) + vglMemFree(VGL_MEM_VRAM) < (48u << 20)) { why = "GPU memory low"; break; }
 		FMaterial *mat = FMaterial::ValidateTexture(pair->Key);
 		if (mat != NULL) { mat->Precache(); done++; }
+		{ extern void Vita_LoadProgress(const char *, int, int, bool); Vita_LoadProgress("Models", done, total, false); }
 	}
 	Vita_BootLog("precached %d of %d model skins in %llu ms (%s); GPU free RAM %u MB CDRAM %u MB", done, total,
 		(sceKernelGetProcessTimeWide() - start) / 1000, why,

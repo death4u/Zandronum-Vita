@@ -56,6 +56,7 @@
 #include "gl/data/gl_data.h"
 #include "gl/textures/gl_texture.h"
 #include "gl/textures/gl_translate.h"
+#include "doomstat.h"
 #include "gl/textures/gl_bitmap.h"
 #ifdef __vita__
 #include "vita/vita_texcache.h"
@@ -403,6 +404,21 @@ static void Vita_LogSlowTexture(FTexture *tex, int w, int h, int trans, unsigned
 }
 #endif
 
+#ifdef __vita__
+// [Vita] Bot colour skins are made on the third core (vita_texcache.cpp).
+static unsigned char *Vita_BuildTranslated(void *ctx, int cmhires, int translation, unsigned long long key, int &w, int &h)
+{
+	FGLTexture *gt = (FGLTexture *)ctx;
+	const int cm = cmhires & 0xffff;
+	const bool hires = (cmhires >> 16) != 0;
+	const PalEntry *pal = GLTranslationPalette::GetPalette(translation);
+	// the translation slot may have been given other colours meanwhile
+	if (pal == NULL || Vita_TexCacheKey(gt->tex, cm, 0, hires, pal, 256 * sizeof(PalEntry)) != key) return NULL;
+	return gt->CreateTexBuffer(cm, translation, w, h, false, hires ? gt->tex : NULL, 0);
+}
+extern unsigned long long Vita_PrecacheDeadline;
+#endif
+
 const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int translation, FTexture *hirescheck, int warp)
 {
 	int usebright = false;
@@ -457,6 +473,21 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 			const unsigned long long vt0 = Vita_PerfNow();
 			const PalEntry *vpal = translation == 0 ? NULL : GLTranslationPalette::GetPalette(translation);
 			const unsigned long long vkey = warp == 0 && (translation == 0 || vpal != NULL) ? Vita_TexCacheKey(tex, cm, 0, hirescheck != NULL, vpal, 256 * sizeof(PalEntry)) : 0;
+			if (vkey != 0 && translation != 0 && gamestate == GS_LEVEL && Vita_PrecacheDeadline == 0
+				&& tex->GetWidth() >= 64 && tex->GetHeight() >= 64 && (hirescheck == NULL || hirescheck == tex))
+			{
+				FVitaTexCacheMeta meta;
+				meta.Width = meta.Height = 0;
+				meta.Masked = tex->bMasked;
+				meta.IsTransparent = tex->gl_info.mIsTransparent;
+				meta.GLIsTransparent = 0;
+				const int st = Vita_TexCacheAsync(vkey, Vita_BuildTranslated, this, cm | ((hirescheck != NULL) << 16), translation, meta);
+				if (st == VTC_ASYNC_WAIT)
+				{
+					// not ready yet: draw it without the colours meanwhile
+					return Bind(texunit, cm, clampmode, 0, hirescheck, warp);
+				}
+			}
 			if (vkey != 0)
 			{
 				Vita_TexCachePending.LoadKey = vkey;

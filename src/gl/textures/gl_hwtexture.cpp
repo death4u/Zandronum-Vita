@@ -201,10 +201,28 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 #ifdef __vita__
 	if (!vita_done && !vita_nodata && texformat == GL_RGBA8 && !alphatexture && !forcenocompression && (w < 8 || h < 8))
 	{
-		// small texture: uncompressed, kept in the cache as raw RGBA
+		// small texture: uncompressed, kept in the cache as raw RGBA.
+		// NPOT sizes are scaled up to a power of two: vitaGL drew NPOT
+		// RGBA8 glyphs a row off (small font "0" looked like "U").
 		VITA_PERF(VPERF_UPLOAD);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
-		Vita_TexCacheSaveRaw(buffer, rw, rh);
+		auto pot = [](int v) { int p = 1; while (p < v) p *= 2; return p; };
+		unsigned char *src = buffer;
+		const int pw = pot(rw), ph = pot(rh);
+		if (pw != rw || ph != rh)
+		{
+			src = (unsigned char *)calloc(4, (size_t)pw * (ph + 1));	// gluScaleImage may write one row more
+			if (src) gluScaleImage(GL_RGBA, rw, rh, GL_UNSIGNED_BYTE, buffer, pw, ph, GL_UNSIGNED_BYTE, src);
+		}
+		if (src != NULL)
+		{
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pw, ph, 0, GL_RGBA, GL_UNSIGNED_BYTE, src);
+			// Only when the image fills the texture: one copied into a bigger
+			// texture is drawn with smaller UVs, which a cache hit doesn't know.
+			if ((rw == w && rh == h) || wrapparam == GL_REPEAT || rw < w || rh < h) Vita_TexCacheSaveRaw(src, pw, ph);
+			else Vita_TexCachePending.Key = 0;
+			if (src != buffer) free(src);
+		}
+		else glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
 		vita_done = true;
 	}
 	if (!vita_done)

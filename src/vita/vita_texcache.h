@@ -30,4 +30,13 @@ bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool m
 void Vita_TexCacheSaveRaw(const unsigned char *rgba, int w, int h);
 void Vita_TexCacheStats(unsigned &hits, unsigned &writes);
 
+// Textures prepared on the third core. build makes the RGBA image (new[]),
+// or returns NULL; it is called on that thread.
+typedef unsigned char *(*FVitaBuildFn)(void *ctx, int ctx2, int ctx3, unsigned long long key, int &w, int &h);
+enum { VTC_ASYNC_NO, VTC_ASYNC_WAIT, VTC_ASYNC_READY };
+// READY: Vita_TexCacheLoad(key) now uploads it; WAIT: queued, draw
+// something else; NO: do it here.
+int Vita_TexCacheAsync(unsigned long long key, FVitaBuildFn build, void *ctx, int ctx2, int ctx3, const FVitaTexCacheMeta &meta);
+void Vita_TexCacheAsyncDrain();
+
 #endif
