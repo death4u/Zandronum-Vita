@@ -146,6 +146,11 @@ static void RunDeferredLights()
 	DeferredLights.Clear();
 }
 
+void Vita_DropDeferredLights()
+{
+	RunDeferredLights();
+}
+
 //==========================================================================
 //
 // The logic thread

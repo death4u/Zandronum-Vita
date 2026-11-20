@@ -3737,6 +3737,16 @@ void P_FreeLevelData ()
 	Renderer->CleanLevelData();
 	FPolyObj::ClearAllSubsectorLinks(); // can't be done as part of the polyobj deletion process.
 	SN_StopAllSequences ();
+#ifdef __vita__
+	// [Vita] Unlink every dynamic light from the level geometry while it
+	// still exists. A light left linked (deferred by the logic thread, or one
+	// that outlives DestroyAllThinkers) later unlinked itself from freed
+	// sides/subsectors: crashes in ADynamicLight::UnlinkLight on map changes.
+	{
+		extern void Vita_UnlinkAllLights();
+		Vita_UnlinkAllLights();
+	}
+#endif
 	DThinker::DestroyAllThinkers ();
 	level.total_monsters = level.total_items = level.total_secrets =
 		level.killed_monsters = level.found_items = level.found_secrets =

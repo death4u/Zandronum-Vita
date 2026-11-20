@@ -35,6 +35,9 @@
 **
 */
 
+#ifdef __vita__
+#include <psp2/kernel/processmgr.h>
+#endif
 #include "gl/system/gl_system.h"
 #include "c_cvars.h"
 #include "w_wad.h"
@@ -350,8 +353,33 @@ void FTexture::CreateDefaultBrightmap()
 //
 //==========================================================================
 
+#ifdef __vita__
+// [Vita] Even without gl_precache: the level's wall, flat and sky textures
+// and the current sprites of its actors are uploaded while the level loads
+// (with the texture cache that is quick after the first time), so they don't
+// stall the game when they first come into view. Limited to this many
+// seconds per level and stops when GPU memory gets low.
+CVAR(Int, vita_precachelevel, 30, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+unsigned long long Vita_PrecacheDeadline;
+int Vita_PrecacheDone, Vita_PrecacheSkipped;
+#endif
+
 void FTexture::PrecacheGL()
 {
+#ifdef __vita__
+	if (!gl_precache && vita_precachelevel > 0 && Vita_PrecacheDeadline != 0)
+	{
+		if (sceKernelGetProcessTimeWide() > Vita_PrecacheDeadline
+			|| vglMemFree(VGL_MEM_RAM) + vglMemFree(VGL_MEM_VRAM) < (40u << 20))
+		{
+			Vita_PrecacheSkipped++;
+			return;
+		}
+		FMaterial * gltex = FMaterial::ValidateTexture(this);
+		if (gltex) { gltex->Precache(); Vita_PrecacheDone++; }
+		return;
+	}
+#endif
 	if (gl_precache)
 	{
 		FMaterial * gltex = FMaterial::ValidateTexture(this);

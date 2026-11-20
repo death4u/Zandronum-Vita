@@ -72,6 +72,46 @@ extern "C" void Vita_BootLog(const char *fmt, ...)
 	}
 }
 
+// [Vita] System events (PS button, quit requests) are logged to boot.log,
+// with a sign of life every 5 s while the game is in the background, to find
+// out what happens when the game gets closed from the system.
+#include <psp2/appmgr.h>
+static int Vita_EventThread(SceSize, void *)
+{
+	bool background = false;
+	unsigned ticks = 0;
+	for (;;)
+	{
+		SceAppMgrSystemEvent ev;
+		memset(&ev, 0, sizeof(ev));
+		static unsigned lastEvent, lastTick;
+		for (int k = 0; k < 4 && sceAppMgrReceiveSystemEvent(&ev) == 0; k++)
+		{
+			// (Vita3K returns the same event over and over)
+			if (ev.systemEvent == lastEvent && ticks - lastTick < 50) { lastTick = ticks; break; }
+			lastEvent = ev.systemEvent; lastTick = ticks;
+			const char *what = ev.systemEvent == SCE_APPMGR_SYSTEMEVENT_ON_DEACTIVATE ? "deactivated (PS button / system screen)" :
+				ev.systemEvent == SCE_APPMGR_SYSTEMEVENT_ON_ACTIVATE ? "activated again" :
+				ev.systemEvent == SCE_APPMGR_SYSTEMEVENT_ON_RESUME ? "resumed from suspend" :
+				ev.systemEvent == SCE_APPMGR_SYSTEMEVENT_REQUEST_QUIT ? "quit requested by the system" : "other";
+			Vita_BootLog("system event 0x%08x: %s", (unsigned)ev.systemEvent, what);
+			if (ev.systemEvent == SCE_APPMGR_SYSTEMEVENT_ON_DEACTIVATE) background = true;
+			if (ev.systemEvent == SCE_APPMGR_SYSTEMEVENT_ON_ACTIVATE || ev.systemEvent == SCE_APPMGR_SYSTEMEVENT_ON_RESUME) background = false;
+			memset(&ev, 0, sizeof(ev));
+		}
+		sceKernelDelayThread(100 * 1000);
+		++ticks;
+		if (background && (ticks % 50) == 0) Vita_BootLog("still running in the background");
+	}
+	return 0;
+}
+
+static void Vita_StartEventWatch()
+{
+	SceUID t = sceKernelCreateThread("vita_events", Vita_EventThread, 0x10000100 + 60, 0x4000, 0, 0, NULL);
+	if (t >= 0) sceKernelStartThread(t, 0, NULL);
+}
+
 static void Vita_LogExit(void)
 {
 	Vita_BootLog("exit() called");
@@ -107,6 +147,7 @@ extern "C" void Vita_EarlyInit(void)
 				info.size_user / 1024, info.size_cdram / 1024, info.size_phycont / 1024);
 	}
 	atexit(Vita_LogExit);
+	Vita_StartEventWatch();
 
 	scePowerSetArmClockFrequency(444);
 	scePowerSetBusClockFrequency(222);

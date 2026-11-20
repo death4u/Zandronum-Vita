@@ -246,6 +246,9 @@ void GLWall::RenderWall(int textured, float * color2, ADynamicLight * light)
 
 	if (glowing) gl_RenderState.SetGlowParams(topglowcolor, bottomglowcolor);
 
+#ifdef __vita__
+	if (!VitaWalls.Collecting)
+#endif
 	gl_RenderState.Apply();
 
 	// the rest of the code is identical for textured rendering and lights
@@ -464,6 +467,8 @@ void GLWall::RenderTranslucentWall()
 #ifdef __vita__
 FVitaWallBatch VitaWalls;
 
+unsigned Vita_CurColor = 0xffffffff;
+
 void Vita_FlushWalls()
 {
 	if (VitaWalls.Open && VitaWalls.Xyz.Size() > 0)
@@ -471,15 +476,87 @@ void Vita_FlushWalls()
 		gl_RenderState.Apply();
 		glVertexPointer(3, GL_FLOAT, 0, &VitaWalls.Xyz[0]);
 		glTexCoordPointer(2, GL_FLOAT, 0, &VitaWalls.Uv[0]);
+		glColorPointer(4, GL_UNSIGNED_BYTE, 0, &VitaWalls.Rgba[0]);
 		glEnableClientState(GL_VERTEX_ARRAY);
 		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-		glDrawArrays(GL_TRIANGLES, 0, VitaWalls.Xyz.Size() / 3);
+		glEnableClientState(GL_COLOR_ARRAY);
+		// vitaGL draws arrays through a 16-bit index list of 0xC000 entries:
+		// bigger draws read past it (garbage, crashes), so draw in pieces.
+		const unsigned total = VitaWalls.Xyz.Size() / 3;
+		const unsigned piece = 0xC000 / 3 * 3 - 3;
+		for (unsigned start = 0; start < total; start += piece)
+		{
+			const unsigned n = total - start < piece ? total - start : piece;
+			if (start > 0)
+			{
+				glVertexPointer(3, GL_FLOAT, 0, &VitaWalls.Xyz[start * 3]);
+				glTexCoordPointer(2, GL_FLOAT, 0, &VitaWalls.Uv[start * 2]);
+				glColorPointer(4, GL_UNSIGNED_BYTE, 0, &VitaWalls.Rgba[start]);
+			}
+			glDrawArrays(GL_TRIANGLES, 0, n);
+		}
 		glDisableClientState(GL_VERTEX_ARRAY);
 		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+		glDisableClientState(GL_COLOR_ARRAY);
+		// the current colour is undefined after a colour array
+		glColor4ub(Vita_CurColor & 0xff, (Vita_CurColor >> 8) & 0xff, (Vita_CurColor >> 16) & 0xff, Vita_CurColor >> 24);
 	}
 	VitaWalls.Xyz.Clear();
 	VitaWalls.Uv.Clear();
+	VitaWalls.Rgba.Clear();
 	VitaWalls.Open = false;
+}
+
+static inline unsigned Vita_PackColor(float r, float g, float b)
+{
+	int ir = (int)(r * 255.f + 0.5f), ig = (int)(g * 255.f + 0.5f), ib = (int)(b * 255.f + 0.5f);
+	ir = clamp(ir, 0, 255); ig = clamp(ig, 0, 255); ib = clamp(ib, 0, 255);
+	return (unsigned)ir | ((unsigned)ig << 8) | ((unsigned)ib << 16) | 0xff000000u;
+}
+
+void Vita_BatchSurface(FMaterial *tex, int cm, int flags, bool usecurcolor, float r, float g, float b)
+{
+	VitaWalls.NextTex = tex;
+	VitaWalls.NextCm = cm;
+	VitaWalls.NextFlags = flags;
+	VitaWalls.UseCurColor = usecurcolor;
+	if (!usecurcolor) VitaWalls.NextColor = Vita_PackColor(r, g, b);
+}
+
+void Vita_BatchCheck()
+{
+	bool on; PalEntry fc; float fd;
+	gl_RenderState.VitaGetFog(on, fc, fd);
+	const int eq = gl_RenderState.VitaGetBlendEquation();
+	FMaterial *tex = VitaWalls.NextTex;
+	if (!(VitaWalls.Open && VitaWalls.Tex == tex && (tex == NULL || (VitaWalls.CmColormap == VitaWalls.NextCm && VitaWalls.Flags == VitaWalls.NextFlags))
+		&& VitaWalls.FogOn == on && (!on || (VitaWalls.FogColor == fc && VitaWalls.FogDensity == fd)) && VitaWalls.BlendEq == eq))
+	{
+		if (VitaWalls.Open)
+		{
+			// draw the pending run with its own fog and blend equation,
+			// then go on with the new one
+			gl_RenderState.VitaSetFog(VitaWalls.FogOn, VitaWalls.FogColor, VitaWalls.FogDensity);
+			gl_RenderState.VitaSetBlendEquation(VitaWalls.BlendEq);
+			Vita_FlushWalls();
+			gl_RenderState.VitaSetFog(on, fc, fd);
+			gl_RenderState.VitaSetBlendEquation(eq);
+		}
+		if (tex != NULL)
+		{
+			gl_RenderState.EnableGlow(false);
+			tex->Bind(VitaWalls.NextCm, VitaWalls.NextFlags, 0);
+		}
+		VitaWalls.Open = true;
+		VitaWalls.Tex = tex;
+		VitaWalls.CmColormap = VitaWalls.NextCm;
+		VitaWalls.Flags = VitaWalls.NextFlags;
+		VitaWalls.FogOn = on;
+		VitaWalls.FogColor = fc;
+		VitaWalls.FogDensity = fd;
+		VitaWalls.BlendEq = eq;
+	}
+	VitaWalls.Color = VitaWalls.UseCurColor ? Vita_CurColor : VitaWalls.NextColor;
 }
 
 CVAR(Bool, gl_vita_batchwalls, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -499,31 +576,62 @@ void GLWall::Draw(int pass)
 
 
 #ifdef __vita__
-	if (pass == GLPASS_PLAIN && gl_vita_batchwalls && !(flags & GLWF_GLOW)
+	if (pass == GLPASS_PLAIN && gl_vita_batchwalls && !(flags & GLWF_GLOW) && glset.lightmode != 8
 		&& !((flags&GLWF_SKYHACK && type==RENDERWALL_M2S) || type == RENDERWALL_COLORLAYER))
 	{
 		rel = rellight + getExtraLight();
-		bool nofog = type == RENDERWALL_M2SNF;
-		if (!(VitaWalls.Open && VitaWalls.Tex == gltexture && VitaWalls.LightLevel == lightlevel
-			&& VitaWalls.Rel == rel && VitaWalls.Flags == (flags & 3) && VitaWalls.NoFog == nofog
-			&& !memcmp(&VitaWalls.Cm, &Colormap, sizeof(FColormap))))
-		{
-			Vita_FlushWalls();
-			gl_SetColor(lightlevel, rel, &Colormap,1.0f);
-			if (!nofog) gl_SetFog(lightlevel, rel, &Colormap, false);
-			else gl_SetFog(255, 0, NULL, false);
-			gl_RenderState.EnableGlow(false);
-			gltexture->Bind(Colormap.colormap, flags, 0);
-			VitaWalls.Open = true;
-			VitaWalls.Tex = gltexture;
-			VitaWalls.LightLevel = lightlevel;
-			VitaWalls.Rel = rel;
-			VitaWalls.Flags = flags & 3;
-			VitaWalls.NoFog = nofog;
-			VitaWalls.Cm = Colormap;
-		}
+		float r, g, b;
+		gl_SetColor(lightlevel, rel, &Colormap, &r, &g, &b);
+		if (type != RENDERWALL_M2SNF) gl_SetFog(lightlevel, rel, &Colormap, false);
+		else gl_SetFog(255, 0, NULL, false);
+		Vita_BatchSurface(gltexture, Colormap.colormap, flags & 3, false, r, g, b);
 		VitaWalls.Collecting = true;
 		RenderWall(3, NULL);
+		VitaWalls.Collecting = false;
+		return;
+	}
+	// Dynamic light passes (vita_multipasslights): base, light and texture
+	// passes are collected the same way.
+	if (gl_vita_batchwalls && glset.lightmode != 8 && !(flags & GLWF_GLOW) && !(flags&GLWF_FOGGY)
+		&& !((flags&GLWF_SKYHACK && type==RENDERWALL_M2S) || type == RENDERWALL_COLORLAYER)
+		&& (pass == GLPASS_BASE || pass == GLPASS_TEXTURE || pass == GLPASS_LIGHT || pass == GLPASS_LIGHT_ADDITIVE))
+	{
+		if (pass == GLPASS_BASE)
+		{
+			rel = rellight + getExtraLight();
+			gl_SetColor(lightlevel, rel, &Colormap,1.0f);
+			if (type!=RENDERWALL_M2SNF) gl_SetFog(lightlevel, rel, &Colormap, false);
+			else gl_SetFog(255, 0, NULL, false);
+			Vita_BatchSurface(NULL, 0, 0, true);
+			VitaWalls.Collecting = true;
+			RenderWall(2, NULL);
+			VitaWalls.Collecting = false;
+			return;
+		}
+		if (pass == GLPASS_TEXTURE)
+		{
+			Vita_BatchSurface(gltexture, Colormap.colormap, flags & 3, true);
+			VitaWalls.Collecting = true;
+			RenderWall(1, NULL);
+			VitaWalls.Collecting = false;
+			return;
+		}
+		// light passes
+		gl_SetFog((255+lightlevel)>>1, 0, NULL, false);
+		if (seg->sidedef == NULL) node = NULL;
+		else if (!(seg->sidedef->Flags & WALLF_POLYOBJ)) node = seg->sidedef->lighthead[pass==GLPASS_LIGHT_ADDITIVE];
+		else if (sub) node = sub->lighthead[pass==GLPASS_LIGHT_ADDITIVE];
+		else node = NULL;
+		Vita_BatchSurface(NULL, 0, 0, true);
+		VitaWalls.Collecting = true;
+		for (; node; node = node->nextLight)
+		{
+			if (!(node->lightsource->flags2&MF2_DORMANT))
+			{
+				iter_dlight++;
+				RenderWall(1, NULL, node->lightsource);
+			}
+		}
 		VitaWalls.Collecting = false;
 		return;
 	}

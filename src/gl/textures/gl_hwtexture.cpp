@@ -51,6 +51,10 @@
 #include "gl/system/gl_cvars.h"
 #include "gl/renderer/gl_renderer.h"
 #include "gl/textures/gl_material.h"
+#ifdef __vita__
+#include "vita/vita_texcache.h"
+#include "vita/vita_system.h"
+#endif
 
 
 extern TexFilter_s TexFilter[];
@@ -102,6 +106,35 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 	glBindTexture(GL_TEXTURE_2D, glTexID);
 	lastbound[texunit]=glTexID;
 
+#ifdef __vita__
+	// [Vita] Compressed textures: from the texture cache if it has this one,
+	// otherwise compressed here (all mip levels) and saved to the cache.
+	const bool vita_compressed = !alphatexture && !forcenocompression && texformat != GL_RGBA8 && texformat != GL_RGB5_A1
+		&& texformat != GL_RGBA4 && texformat != GL_RGBA2;
+	const bool vita_mips = mipmap && use_mipmapping && !forcenofiltering;
+	bool vita_done = false;
+	const bool vita_nodata = buffer == NULL;
+	if (vita_compressed)
+	{
+		glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, false);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, vita_mips ? TexFilter[gl_texture_filter].minfilter : TexFilter[gl_texture_filter].magfilter);
+	}
+	{ EXTERN_CVAR(Bool, vita_texdebug) if (vita_texdebug) Vita_BootLog("texdbg begin id %u w %d h %d buf %p key %llx", glTexID, w, h, buffer, Vita_TexCachePending.LoadKey); }
+	if (vita_compressed && Vita_TexCachePending.LoadKey != 0)
+	{
+		VITA_PERF(VPERF_UPLOAD);
+		vita_done = Vita_TexCachePending.Loaded = Vita_TexCacheLoad(Vita_TexCachePending.LoadKey, Vita_TexCachePending.Meta, vita_mips);
+	}
+	if (!vita_done && vita_nodata && Vita_TexCachePending.LoadKey != 0)
+	{
+		// not in the cache: the caller decodes the texture and comes back
+		Vita_TexCachePending.LoadKey = 0;
+		return;
+	}
+	Vita_TexCachePending.LoadKey = 0;
+	if (vita_done) buffer = NULL, rw = rh = 0;
+	else
+#endif
 	if (!buffer)
 	{
 		w=texwidth;
@@ -159,10 +192,38 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 			}
 		}
 	}
+#ifdef __vita__
+	if (!vita_done)
+	{
+		VITA_PERF(VPERF_UPLOAD);
+		// NPOT textures are resampled to the nearest power of two first
+		// (vitaGL pads them to one anyway); UVs are normalized, so this only
+		// changes the resolution slightly.
+		unsigned char *vita_src = buffer;
+		int vita_w = rw, vita_h = rh;
+		if (vita_compressed && !vita_nodata && rw >= 4 && rh >= 4 && ((rw & (rw - 1)) || (rh & (rh - 1))))
+		{
+			auto pot = [](int v) { int p = 4; while (p < 1024 && p * 3 / 2 < v) p *= 2; return p; };
+			vita_w = pot(rw); vita_h = pot(rh);
+			vita_src = (unsigned char *)calloc(4, (size_t)vita_w * (vita_h + 1));	// gluScaleImage may write one row more
+			if (vita_src) gluScaleImage(GL_RGBA, rw, rh, GL_UNSIGNED_BYTE, buffer, vita_w, vita_h, GL_UNSIGNED_BYTE, vita_src);
+		}
+		{ EXTERN_CVAR(Bool, vita_texdebug) if (vita_texdebug) Vita_BootLog("texdbg %dx%d -> %dx%d nodata %d", rw, rh, vita_w, vita_h, (int)vita_nodata); }
+		const bool vita_ok = vita_src != NULL && vita_compressed && !vita_nodata && Vita_TexCacheCompressUpload(vita_src, vita_w, vita_h, vita_mips);
+		if (vita_src != buffer) free(vita_src);
+		if (!vita_ok)
+		{
+			if (vita_compressed) glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, vita_mips);
+			glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+		}
+	}
+	Vita_TexCachePending.Key = 0;
+#else
 	{
 		VITA_PERF(VPERF_UPLOAD);
 		glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
 	}
+#endif
 
 	if (deletebuffer) free(buffer);
 

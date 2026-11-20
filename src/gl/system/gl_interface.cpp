@@ -184,6 +184,11 @@ void gl_LoadExtensions()
 		gl_precache = false;	// 0014 had it on; level loads took minutes
 		vita_glconfig = 3;
 	}
+	if (vita_glconfig < 4)
+	{
+		vita_multipasslights = true;	// off before 0032: Schism and other maps lit by dynamic lights were dark
+		vita_glconfig = 4;
+	}
 #else
 
 	const char *version = (const char*)glGetString(GL_VERSION);

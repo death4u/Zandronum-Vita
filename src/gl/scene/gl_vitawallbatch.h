@@ -1,12 +1,14 @@
-// [Vita] Batching of solid walls.
+// [Vita] Batching of walls and flats.
 //
-// Each wall used to be its own glBegin/glEnd, i.e. its own vitaGL draw call,
-// and in big maps those calls were the bulk of the 3D time. The draw lists
-// are sorted by texture and light level, so consecutive walls usually share
-// all their state; GLWall::Draw (plain pass) now collects such runs and draws
-// them with one glDrawArrays. RenderWall and the edge-splitting code emit
-// their vertices through the wrappers below, which either pass them straight
-// to GL or, while collecting, add them to the batch.
+// Each wall or flat used to be its own vitaGL draw call (thousands per frame
+// in big maps, the bulk of the 3D time). While a draw list is drawn, surfaces
+// are collected into one triangle list with a colour per vertex (so different
+// light levels share a batch) and drawn with one glDrawArrays whenever the
+// texture, the fog or the blend equation changes. This is used for the
+// single-pass rendering and for all passes of the dynamic light rendering.
+// RenderWall, DrawSubsectorLights and the edge-splitting code emit their
+// vertices through the wrappers below, which either pass them straight to GL
+// or, while collecting, add them to the batch.
 #ifndef GL_VITAWALLBATCH_H
 #define GL_VITAWALLBATCH_H
 #ifdef __vita__
@@ -19,20 +21,37 @@ struct FVitaWallBatch
 {
 	bool Collecting;		// vertex calls go to the batch
 	bool Open;				// a run with the key below is pending
-	FMaterial *Tex;
-	FColormap Cm;
-	int LightLevel, Rel, Flags;
-	bool NoFog;
+	// key of the pending run
+	FMaterial *Tex;			// bound by the batch when the run starts (NULL: caller's texture state)
+	int CmColormap, Flags;
+	bool FogOn;
+	PalEntry FogColor;
+	float FogDensity;
+	int BlendEq;
+	// key of the surface being added (set by the caller)
+	FMaterial *NextTex;
+	int NextCm, NextFlags;
+	bool UseCurColor;		// take the colour from the last glColor call
+	unsigned NextColor;
 	TArray<float> Xyz, Uv;	// triangles
+	TArray<unsigned> Rgba;	// one colour per vertex
 	TArray<float> FanXyz, FanUv;
 	float U, V;
+	unsigned Color;			// colour of the surface being added
 };
 extern FVitaWallBatch VitaWalls;
+extern unsigned Vita_CurColor;	// last glColor (linker wrappers in vita_perf.cpp)
 void Vita_FlushWalls();
+// Sets the key of the next surface: texture to bind (NULL: none), its
+// colormap and clamp flags, and its colour (UseCurColor: last glColor).
+void Vita_BatchSurface(FMaterial *tex, int cm, int flags, bool usecurcolor, float r = 1, float g = 1, float b = 1);
+// Starts or continues a run with the surface's key and the fog and blend
+// equation currently in gl_RenderState.
+void Vita_BatchCheck();
 
 static inline void VitaGL_Begin(GLenum mode)
 {
-	if (VitaWalls.Collecting) { VitaWalls.FanXyz.Clear(); VitaWalls.FanUv.Clear(); }
+	if (VitaWalls.Collecting) { Vita_BatchCheck(); VitaWalls.FanXyz.Clear(); VitaWalls.FanUv.Clear(); }
 	else glBegin(mode);
 }
 static inline void VitaGL_TexCoord2f(float u, float v)
@@ -64,6 +83,7 @@ static inline void VitaGL_End()
 			VitaWalls.Xyz.Push(VitaWalls.FanXyz[idx[j] * 3 + 2]);
 			VitaWalls.Uv.Push(VitaWalls.FanUv[idx[j] * 2]);
 			VitaWalls.Uv.Push(VitaWalls.FanUv[idx[j] * 2 + 1]);
+			VitaWalls.Rgba.Push(VitaWalls.Color);
 		}
 	}
 }

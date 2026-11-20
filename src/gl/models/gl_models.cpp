@@ -62,6 +62,7 @@
 //#include "gl/gl_intern.h"
 
 #include "gl/system/gl_interface.h"
+#include "s_sound.h"
 #include "gl/renderer/gl_renderer.h"
 #include "gl/scene/gl_drawinfo.h"
 #include "gl/models/gl_models.h"
@@ -263,9 +264,30 @@ public:
 		return best ? best->mReal : NULL;
 	}
 
+	// The player's own weapon (HUD model) is loaded right away instead: a
+	// substitute there showed another weapon's parts at the muzzle.
+	static bool DrawingHUD;
+
+	// The most recently drawn loaded model of its folder is kept loaded, so
+	// a substitute always exists (bots vanished while their model reloaded).
+	bool IsFolderFallback() const
+	{
+		int slash = mPath.LastIndexOf('/');
+		if (slash < 0 || mReal == NULL) return false;
+		for (unsigned i = 0; i < All.Size(); i++)
+		{
+			FLazyModel *c = All[i];
+			if (c == this || c->mReal == NULL || c->mLastUse < mLastUse) continue;
+			if (c->mPath.Len() <= (unsigned)slash || strnicmp(c->mPath.GetChars(), mPath.GetChars(), slash + 1) != 0) continue;
+			if (strchr(c->mPath.GetChars() + slash + 1, '/') != NULL) continue;
+			return false;	// a more recent one of the same folder is loaded
+		}
+		return true;
+	}
+
 	void RenderFrame(FTexture *skin, int frame, int cm, int translation)
 	{
-		FModel *m = Get();
+		FModel *m = Get(DrawingHUD);
 		if (m == NULL && vita_modelsubstitute) m = Substitute(frame, frame);
 		if (m == NULL) return;
 		m->PushSpriteMDLFrame(curSpriteMDLFrame, curMDLIndex);
@@ -274,7 +296,7 @@ public:
 
 	void RenderFrameInterpolated(FTexture *skin, int frame, int frame2, double inter, int cm, int translation)
 	{
-		FModel *m = Get();
+		FModel *m = Get(DrawingHUD);
 		if (m == NULL && vita_modelsubstitute) m = Substitute(frame, frame2);
 		if (m == NULL) return;
 		m->PushSpriteMDLFrame(curSpriteMDLFrame, curMDLIndex);
@@ -300,6 +322,7 @@ public:
 	static void Trim(FLazyModel *keep);
 };
 
+bool FLazyModel::DrawingHUD;
 int FLazyModel::LoadedBytes;
 TArray<FLazyModel *> FLazyModel::All;
 
@@ -495,11 +518,25 @@ void Vita_FlushLevelMemory()
 		if (m->mReal != NULL && m->mAsync.load() != 1) { m->Unload(); models++; }
 	}
 	if (GLRenderer != NULL) GLRenderer->FlushTextures();
+	// sounds that aren't playing (the new level loads what it uses)
+	int sounds = 0;
+	{
+		TArray<bool> playing;
+		playing.Resize(S_sfx.Size());
+		for (unsigned i = 0; i < playing.Size(); i++) playing[i] = false;
+		for (FSoundChan *c = Channels; c != NULL; c = c->NextChan)
+		{
+			if ((unsigned)int(c->SoundID) < playing.Size()) playing[int(c->SoundID)] = true;
+			if ((unsigned)int(c->OrgID) < playing.Size()) playing[int(c->OrgID)] = true;
+		}
+		for (unsigned i = 1; i < S_sfx.Size(); i++)
+			if (S_sfx[i].data.isValid() && !playing[i]) { S_UnloadSound(&S_sfx[i]); sounds++; }
+	}
 	extern void VitaFreeNodePools();
 	VitaFreeNodePools();
 	GC::FullGC();
-	Vita_BootLog("level change: freed %d models, GL textures and bot path buffers; heap %u -> %u MB; GPU free RAM %u MB CDRAM %u MB",
-		models, before, (unsigned)(mallinfo().uordblks >> 20),
+	Vita_BootLog("level change: freed %d models, %d sounds, GL textures and bot path buffers; heap %u -> %u MB; GPU free RAM %u MB CDRAM %u MB",
+		models, sounds, before, (unsigned)(mallinfo().uordblks >> 20),
 		(unsigned)(vglMemFree(VGL_MEM_RAM) >> 20), (unsigned)(vglMemFree(VGL_MEM_VRAM) >> 20));
 }
 
@@ -522,6 +559,7 @@ void FLazyModel::Trim(FLazyModel *keep)
 		{
 			FLazyModel *m = All[i];
 			if (m == keep || m->mReal == NULL) continue;
+			if (m->IsFolderFallback()) continue;
 			if (oldest == NULL || m->mLastUse < oldest->mLastUse) oldest = m;
 		}
 		if (oldest == NULL || I_MSTime() - oldest->mLastUse < 500) break;
@@ -1306,6 +1344,13 @@ float gl_RollAgainstAngleHelper ( const AActor *actor )
 
 void gl_RenderModel(GLSprite * spr, int cm)
 {
+#ifdef __vita__
+	extern int Vita_GLPhase;
+	const int vita_oldphase = Vita_GLPhase;
+	Vita_GLPhase = 4;
+	struct PhaseBack { int p; ~PhaseBack() { extern int Vita_GLPhase; Vita_GLPhase = p; } } phaseback = { vita_oldphase };
+#endif
+
 	FSpriteModelFrame * smf = spr->modelframe;
 
 
@@ -1473,6 +1518,11 @@ void gl_RenderModel(GLSprite * spr, int cm)
 
 void gl_RenderHUDModel(pspdef_t *psp, fixed_t ofsx, fixed_t ofsy, int cm)
 {
+#ifdef __vita__
+	FLazyModel::DrawingHUD = true;
+	struct HUDBack { ~HUDBack() { FLazyModel::DrawingHUD = false; } } hudback;
+#endif
+
 	AActor * playermo=players[consoleplayer].camera;
 	FSpriteModelFrame *smf = gl_FindModelFrame(playermo->player->ReadyWeapon->GetClass(), psp->state->sprite, psp->state->GetFrame(), false);
 

@@ -1293,6 +1293,9 @@ void D_DoomLoop ()
 	Page = Advisory = NULL;
 
 	vid_cursor.Callback();
+#ifdef __vita__
+	{ extern void Vita_ControlsInit(); Vita_ControlsInit(); }
+#endif
 
 	for (;;)
 	{

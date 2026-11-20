@@ -34,6 +34,11 @@
 **
 */
 
+#ifdef __vita__
+#include <psp2/kernel/processmgr.h>
+#include "vita/vita_texcache.h"
+#include "vita/vita_system.h"
+#endif
 #include "doomtype.h"
 #include "doomstat.h"
 #include "w_wad.h"
@@ -1242,10 +1247,30 @@ void FTextureManager::PrecacheLevel (void)
 	memset (hitlist, 0, cnt);
 
 	screen->GetHitlist(hitlist);
+#ifdef __vita__
+	extern unsigned long long Vita_PrecacheDeadline;
+	extern int Vita_PrecacheDone, Vita_PrecacheSkipped;
+	EXTERN_CVAR(Int, vita_precachelevel)
+	const unsigned long long vita_t0 = sceKernelGetProcessTimeWide();
+	Vita_PrecacheDeadline = vita_t0 + (unsigned long long)MAX(0, (int)vita_precachelevel) * 1000000;
+	Vita_PrecacheDone = Vita_PrecacheSkipped = 0;
+	unsigned vita_hits0, vita_writes0;
+	Vita_TexCacheStats(vita_hits0, vita_writes0);
+	// sky and wall/flat textures first (sprites last: hitlist bit 1 is shared)
+#endif
 	for (int i = cnt - 1; i >= 0; i--)
 	{
 		Renderer->PrecacheTexture(ByIndex(i), hitlist[i]);
 	}
+#ifdef __vita__
+	{
+		unsigned hits, writes;
+		Vita_TexCacheStats(hits, writes);
+		Vita_BootLog("precached %d level textures in %llu ms (%d left for later: time limit or GPU memory); texture cache: %u loaded, %u new",
+			Vita_PrecacheDone, (sceKernelGetProcessTimeWide() - vita_t0) / 1000, Vita_PrecacheSkipped, hits - vita_hits0, writes - vita_writes0);
+	}
+	Vita_PrecacheDeadline = 0;
+#endif
 
 	delete[] hitlist;
 }

@@ -341,6 +341,11 @@ const char *KeyNames[NUM_KEYS] =
 	"pad_a", "pad_b", "pad_x", "pad_y"
 };
 
+#ifdef __vita__
+void Vita_NamePadKeys(const char **keynames);
+static struct FVitaPadNames { FVitaPadNames() { Vita_NamePadKeys(KeyNames); } } Vita_PadNamesInit;
+#endif
+
 FKeyBindings Bindings;
 FKeyBindings DoubleBindings;
 FKeyBindings AutomapBindings;
@@ -370,6 +375,14 @@ static int GetKeyFromName (const char *name)
 		if (KeyNames[i] && !stricmp (KeyNames[i], name))
 			return i;
 	}
+#ifdef __vita__
+	// [Vita] The pad keys have their own names; joy1..joy128 still work.
+	if (!strnicmp(name, "joy", 3) && name[3] >= '1' && name[3] <= '9')
+	{
+		int n = atoi(name + 3);
+		if (n >= 1 && n <= 128) return KEY_FIRSTJOYBUTTON + n - 1;
+	}
+#endif
 	return 0;
 }
 

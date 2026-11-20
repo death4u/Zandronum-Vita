@@ -695,7 +695,7 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 //==========================================================================
 void GLDrawList::DoDraw(int pass, int i)
 {
-	if (drawitems[i].rendertype != GLDIT_WALL) Vita_FlushWalls();
+	if (drawitems[i].rendertype == GLDIT_SPRITE) Vita_FlushWalls();	// walls and flats flush themselves when they leave the batch
 	switch(drawitems[i].rendertype)
 	{
 	case GLDIT_FLAT:

@@ -775,3 +775,14 @@ CCMD(listsublights)
 	}
 }
 
+
+#ifdef __vita__
+void Vita_UnlinkAllLights()
+{
+	extern void Vita_DropDeferredLights();
+	Vita_DropDeferredLights();
+	ADynamicLight *l;
+	TThinkerIterator<ADynamicLight> all;
+	while ((l = all.Next()) != NULL) l->UnlinkLight();
+}
+#endif

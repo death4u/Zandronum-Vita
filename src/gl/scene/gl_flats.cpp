@@ -62,6 +62,7 @@
 #include "gl/textures/gl_material.h"
 #include "gl/utility/gl_clock.h"
 #include "gl/utility/gl_convert.h"
+#include "gl/scene/gl_vitawallbatch.h"
 #include "gl/utility/gl_templates.h"
 
 //==========================================================================
@@ -106,6 +107,36 @@ bool gl_SetPlaneTextureRotation(const GLSectorPlane * secplane, FMaterial * glte
 }
 
 
+#ifdef __vita__
+// [Vita] The texture matrix of gl_SetPlaneTextureRotation as a 2D affine
+// transform, so flats can be put into the shared batch with their final UVs.
+struct FVitaUVXform { float a, b, c, d, e, f; };	// u' = a*u + b*v + c, v' = d*u + e*v + f
+static FVitaUVXform Vita_PlaneUV(const GLSectorPlane * secplane, FMaterial * gltexture)
+{
+	FVitaUVXform x = { 1, 0, 0, 0, 1, 0 };
+	if (secplane->xoffs != 0 || secplane->yoffs != 0 ||
+		secplane->xscale != FRACUNIT || secplane->yscale != FRACUNIT ||
+		secplane->angle != 0 ||
+		gltexture->TextureWidth(GLUSE_TEXTURE) != 64 ||
+		gltexture->TextureHeight(GLUSE_TEXTURE) != 64)
+	{
+		float uoffs=FIXED2FLOAT(secplane->xoffs)/gltexture->TextureWidth(GLUSE_TEXTURE);
+		float voffs=FIXED2FLOAT(secplane->yoffs)/gltexture->TextureHeight(GLUSE_TEXTURE);
+		float xscale1=FIXED2FLOAT(secplane->xscale);
+		float yscale1=FIXED2FLOAT(secplane->yscale);
+		if (gltexture->tex->bHasCanvas) yscale1 = 0 - yscale1;
+		float angle=-ANGLE_TO_FLOAT(secplane->angle) * (float)(M_PI / 180.0);
+		float xscale2=64.f/gltexture->TextureWidth(GLUSE_TEXTURE);
+		float yscale2=64.f/gltexture->TextureHeight(GLUSE_TEXTURE);
+		float cs = cosf(angle), sn = sinf(angle);
+		// S1 * T * S2 * R
+		x.a = xscale1 * xscale2 * cs;  x.b = -xscale1 * xscale2 * sn; x.c = xscale1 * uoffs;
+		x.d = yscale1 * yscale2 * sn;  x.e = yscale1 * yscale2 * cs;  x.f = yscale1 * voffs;
+	}
+	return x;
+}
+#endif
+
 //==========================================================================
 //
 // Flats 
@@ -121,6 +152,9 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	seg_t *v;
 
 	FLightNode * node = sub->lighthead[pass==GLPASS_LIGHT_ADDITIVE];
+#ifdef __vita__
+	if (!VitaWalls.Collecting)
+#endif
 	gl_RenderState.Apply();
 	while (node)
 	{
@@ -254,6 +288,28 @@ void GLFlat::DrawSubsector(subsector_t * sub)
 }
 
 #ifdef __vita__
+// Appends a subsector's polygon to the shared wall/flat batch.
+static void Vita_AddSubsectorToBatch(GLFlat *flat, subsector_t * sub, const FVitaUVXform &x)
+{
+	unsigned n = sub->numlines;
+	if (n < 3) return;
+	vertex_t *v0 = sub->firstline[0].v1;
+	for (unsigned k = 1; k + 1 < n; k++)
+	{
+		vertex_t *vs[3] = { v0, sub->firstline[k].v1, sub->firstline[k+1].v1 };
+		for (int j = 0; j < 3; j++)
+		{
+			vertex_t *vt = vs[j];
+			float zc = flat->plane.plane.ZatPoint(vt->fx, vt->fy) + flat->dz;
+			VitaWalls.Xyz.Push(vt->fx); VitaWalls.Xyz.Push(zc); VitaWalls.Xyz.Push(vt->fy);
+			float u = vt->fx/64.f, v = -vt->fy/64.f;
+			VitaWalls.Uv.Push(x.a * u + x.b * v + x.c); VitaWalls.Uv.Push(x.d * u + x.e * v + x.f);
+			VitaWalls.Rgba.Push(VitaWalls.Color);
+		}
+	}
+	flatvertices += n;
+}
+
 // Appends a subsector's polygon as a triangle list.
 void GLFlat::AddSubsectorTriangles(subsector_t * sub, TArray<float> &xyz, TArray<float> &uv)
 {
@@ -285,6 +341,9 @@ void GLFlat::AddSubsectorTriangles(subsector_t * sub, TArray<float> &xyz, TArray
 
 void GLFlat::DrawSubsectors(int pass, bool istrans)
 {
+#ifdef __vita__
+	{ extern unsigned Vita_GLCount[8]; Vita_GLCount[7]++; }
+#endif
 	bool lightsapplied = false;
 
 	gl_RenderState.Apply();
@@ -403,6 +462,91 @@ void GLFlat::Draw(int pass)
 #endif
 
 
+#ifdef __vita__
+	{
+		EXTERN_CVAR(Bool, gl_vita_batchwalls)
+		if (pass == GLPASS_PLAIN && gl_vita_batchwalls && vboindex < 0 && sub == NULL && glset.lightmode != 8)
+		{
+			float r, g, b;
+			gl_SetColor(lightlevel, rel, &Colormap, &r, &g, &b);
+			gl_SetFog(lightlevel, rel, &Colormap, false);
+			Vita_BatchSurface(gltexture, Colormap.colormap, 0, false, r, g, b);
+			Vita_BatchCheck();
+			FVitaUVXform x = Vita_PlaneUV(&plane, gltexture);
+			for (int i=0; i<sector->subsectorcount; i++)
+			{
+				subsector_t * ss = sector->subsectors[i];
+				if (gl_drawinfo->ss_renderflags[ss-subsectors]&renderflags)
+					Vita_AddSubsectorToBatch(this, ss, x);
+			}
+			if (!(renderflags&SSRF_RENDER3DPLANES))
+			{
+				gl_subsectorrendernode * node = (renderflags&SSRF_RENDERFLOOR)?
+					gl_drawinfo->GetOtherFloorPlanes(sector->sectornum) :
+					gl_drawinfo->GetOtherCeilingPlanes(sector->sectornum);
+				for (; node; node = node->next)
+					Vita_AddSubsectorToBatch(this, node->sub, x);
+			}
+			return;
+		}
+		// dynamic light passes (vita_multipasslights)
+		if (gl_vita_batchwalls && vboindex < 0 && sub == NULL && glset.lightmode != 8 && !foggy
+			&& (pass == GLPASS_BASE || pass == GLPASS_TEXTURE || pass == GLPASS_LIGHT || pass == GLPASS_LIGHT_ADDITIVE))
+		{
+			FVitaUVXform x = { 1, 0, 0, 0, 1, 0 };
+			if (pass == GLPASS_BASE)
+			{
+				gl_SetColor(lightlevel, rel, &Colormap,1.0f);
+				gl_SetFog(lightlevel, rel, &Colormap, false);
+				Vita_BatchSurface(NULL, 0, 0, true);
+			}
+			else if (pass == GLPASS_TEXTURE)
+			{
+				Vita_BatchSurface(gltexture, Colormap.colormap, 0, true);
+				x = Vita_PlaneUV(&plane, gltexture);
+			}
+			else
+			{
+				gl_SetFog((255+lightlevel)>>1, 0, &Colormap, false);
+				Vita_BatchSurface(NULL, 0, 0, true);
+				VitaWalls.Collecting = true;
+				for (int i=0; i<sector->subsectorcount; i++)
+				{
+					subsector_t * ss = sector->subsectors[i];
+					if (gl_drawinfo->ss_renderflags[ss-subsectors]&renderflags)
+						DrawSubsectorLights(ss, pass);
+				}
+				if (!(renderflags&SSRF_RENDER3DPLANES))
+				{
+					gl_subsectorrendernode * node = (renderflags&SSRF_RENDERFLOOR)?
+						gl_drawinfo->GetOtherFloorPlanes(sector->sectornum) :
+						gl_drawinfo->GetOtherCeilingPlanes(sector->sectornum);
+					for (; node; node = node->next)
+						DrawSubsectorLights(node->sub, pass);
+				}
+				VitaWalls.Collecting = false;
+				return;
+			}
+			Vita_BatchCheck();
+			for (int i=0; i<sector->subsectorcount; i++)
+			{
+				subsector_t * ss = sector->subsectors[i];
+				if (gl_drawinfo->ss_renderflags[ss-subsectors]&renderflags)
+					Vita_AddSubsectorToBatch(this, ss, x);
+			}
+			if (!(renderflags&SSRF_RENDER3DPLANES))
+			{
+				gl_subsectorrendernode * node = (renderflags&SSRF_RENDERFLOOR)?
+					gl_drawinfo->GetOtherFloorPlanes(sector->sectornum) :
+					gl_drawinfo->GetOtherCeilingPlanes(sector->sectornum);
+				for (; node; node = node->next)
+					Vita_AddSubsectorToBatch(this, node->sub, x);
+			}
+			return;
+		}
+		Vita_FlushWalls();
+	}
+#endif
 	switch (pass)
 	{
 	case GLPASS_BASE:

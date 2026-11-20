@@ -57,6 +57,9 @@
 #include "gl/textures/gl_texture.h"
 #include "gl/textures/gl_translate.h"
 #include "gl/textures/gl_bitmap.h"
+#ifdef __vita__
+#include "vita/vita_texcache.h"
+#endif
 #include "gl/textures/gl_material.h"
 #include "gl/shaders/gl_shader.h"
 
@@ -452,6 +455,23 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 			
 #ifdef __vita__
 			const unsigned long long vt0 = Vita_PerfNow();
+			const unsigned long long vkey = (translation == 0 && warp == 0) ? Vita_TexCacheKey(tex, cm, 0, hirescheck != NULL) : 0;
+			if (vkey != 0)
+			{
+				Vita_TexCachePending.LoadKey = vkey;
+				Vita_TexCachePending.Loaded = false;
+				hwtex->CreateTexture(NULL, 0, 0, true, texunit, cm, translation);
+				if (Vita_TexCachePending.Loaded)
+				{
+					tex->bMasked = !!Vita_TexCachePending.Meta.Masked;
+					tex->gl_info.mIsTransparent = Vita_TexCachePending.Meta.IsTransparent;
+					bIsTransparent = Vita_TexCachePending.Meta.GLIsTransparent;
+					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (clampmode & GLT_CLAMPX)? GL_CLAMP_TO_EDGE : GL_REPEAT);
+					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (clampmode & GLT_CLAMPY)? GL_CLAMP_TO_EDGE : GL_REPEAT);
+					Vita_LogSlowTexture(tex, Vita_TexCachePending.Meta.Width, Vita_TexCachePending.Meta.Height, translation, 0, Vita_PerfNow() - vt0);
+					return hwtex;
+				}
+			}
 #endif
 			if (!tex->bHasCanvas)
 			{
@@ -466,6 +486,13 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 				tex->ProcessData(buffer, w, h, false);
 			}
 #ifdef __vita__
+			if (vkey != 0 && !tex->bMasked)	// masked textures keep data from ProcessData (holes): not cached
+			{
+				Vita_TexCachePending.Key = vkey;
+				Vita_TexCachePending.Meta.Masked = tex->bMasked;
+				Vita_TexCachePending.Meta.IsTransparent = tex->gl_info.mIsTransparent;
+				Vita_TexCachePending.Meta.GLIsTransparent = bIsTransparent;
+			}
 			const unsigned long long vt1 = Vita_PerfNow();
 			const bool vok = hwtex->CreateTexture(buffer, w, h, true, texunit, cm, translation);
 			Vita_LogSlowTexture(tex, w, h, translation, vt1 - vt0, Vita_PerfNow() - vt1);
@@ -527,6 +554,23 @@ const FHardwareTexture * FGLTexture::BindPatch(int texunit, int cm, int translat
 			// Create this texture
 #ifdef __vita__
 			const unsigned long long vt0 = Vita_PerfNow();
+			const unsigned long long vkey = (translation == 0 && warp == 0) ? Vita_TexCacheKey(tex, cm, bExpand ? 2 : 1, false) : 0;
+			if (vkey != 0)
+			{
+				Vita_TexCachePending.LoadKey = vkey;
+				Vita_TexCachePending.Loaded = false;
+				glpatch->CreateTexture(NULL, 0, 0, false, texunit, cm, translation);
+				if (Vita_TexCachePending.Loaded)
+				{
+					tex->bMasked = !!Vita_TexCachePending.Meta.Masked;
+					tex->gl_info.mIsTransparent = Vita_TexCachePending.Meta.IsTransparent;
+					bIsTransparent = Vita_TexCachePending.Meta.GLIsTransparent;
+					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+					Vita_LogSlowTexture(tex, Vita_TexCachePending.Meta.Width, Vita_TexCachePending.Meta.Height, translation, 0, Vita_PerfNow() - vt0);
+					return glpatch;
+				}
+			}
 #endif
 #ifdef __vita__
 			unsigned char * buffer;
@@ -540,6 +584,13 @@ const FHardwareTexture * FGLTexture::BindPatch(int texunit, int cm, int translat
 #endif
 			tex->ProcessData(buffer, w, h, true);
 #ifdef __vita__
+			if (vkey != 0)
+			{
+				Vita_TexCachePending.Key = vkey;
+				Vita_TexCachePending.Meta.Masked = tex->bMasked;
+				Vita_TexCachePending.Meta.IsTransparent = tex->gl_info.mIsTransparent;
+				Vita_TexCachePending.Meta.GLIsTransparent = bIsTransparent;
+			}
 			const bool vok = glpatch->CreateTexture(buffer, w, h, false, texunit, cm, translation);
 			Vita_LogSlowTexture(tex, w, h, translation, vt1 - vt0, Vita_PerfNow() - vt1);
 			if (!vok)

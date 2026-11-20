@@ -394,6 +394,9 @@ void FGLRenderer::RenderScene(int recursion)
 {
 	RenderAll.Clock();
 #ifdef __vita__
+	{ extern unsigned Vita_GLCount[8]; Vita_GLCount[6]++; }
+#endif
+#ifdef __vita__
 	const unsigned long long vita_opaque_t0 = recursion == 0 ? Vita_PerfNow() : 0;
 	extern unsigned long long Vita_TrRenderStart, Vita_TrOpaqueEnd;
 	if (recursion == 0) Vita_TrRenderStart = vita_opaque_t0;
@@ -625,6 +628,11 @@ void FGLRenderer::RenderScene(int recursion)
 void FGLRenderer::RenderTranslucent()
 {
 	RenderAll.Clock();
+#ifdef __vita__
+	extern int Vita_GLPhase;
+	if (Vita_GLPhase == 1) Vita_GLPhase = 2;
+	struct PhaseBack { ~PhaseBack() { extern int Vita_GLPhase; if (Vita_GLPhase == 2) Vita_GLPhase = 1; } } phaseback;
+#endif
 
 	glDepthMask(false);
 	gl_RenderState.SetCameraPos(FIXED2FLOAT(viewx), FIXED2FLOAT(viewy), FIXED2FLOAT(viewz));
@@ -1160,8 +1168,12 @@ void FGLRenderer::RenderView (player_t* player)
 
 	{
 		VITA_PERF(VPERF_SCENE);
+		extern int Vita_GLPhase;
+		Vita_GLPhase = 1;
 		sector_t * viewsector = RenderViewpoint(player->camera, NULL, FieldOfView * 360.0f / FINEANGLES, ratio, fovratio, true, true);
+		Vita_GLPhase = 3;
 		EndDrawScene(viewsector);
+		Vita_GLPhase = 0;
 	}
 
 	All.Unclock();

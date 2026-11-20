@@ -221,6 +221,12 @@ public:
 		return mFogColor;
 	}
 
+	// [Vita] Fog state of the wall/flat batch (gl_vitawallbatch.h).
+	void VitaGetFog(bool &on, PalEntry &c, float &d) const { on = mFogEnabled; c = mFogColor; d = mFogDensity; }
+	void VitaSetFog(bool on, PalEntry c, float d) { mFogEnabled = on; mFogColor = c; mFogDensity = d; }
+	int VitaGetBlendEquation() const { return mBlendEquation; }
+	void VitaSetBlendEquation(int eq) { mBlendEquation = eq; }
+
 	void BlendFunc(int src, int dst)
 	{
 		if (!gl_direct_state_change)

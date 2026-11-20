@@ -47,6 +47,10 @@
 //
 //-----------------------------------------------------------------------------
 
+#ifdef __vita__
+#include <psp2/kernel/processmgr.h>
+#include "vita/vita_perf.h"
+#endif
 #include "astar.h"
 #include "botcommands.h"
 #include "botpath.h"
@@ -615,6 +619,18 @@ void BOTCMD_RunCommand( BOTCMD_e Command, CSkullBot *pBot )
 
 	if ( botdebug_commands )
 		Printf( "bot %s command: %s\n", pBot->GetPlayer( )->userinfo.GetName(), g_BotCommands[Command].pszName );
+#ifdef __vita__
+	if ( Vita_PerfDetail )
+	{
+		static char names[NUM_BOTCMDS][48];
+		if ( names[Command][0] == 0 )
+			snprintf( names[Command], sizeof( names[Command] ), "botcmd_%s", g_BotCommands[Command].pszName );
+		const unsigned long long t0 = sceKernelGetProcessTimeWide( );
+		g_BotCommands[Command].pvFunction( pBot );
+		Vita_PerfThinker( &g_BotCommands[Command], names[Command], sceKernelGetProcessTimeWide( ) - t0 );
+	}
+	else
+#endif
 	g_BotCommands[Command].pvFunction( pBot );
 
 //	if ( pBot->m_ScriptData.lStackPosition != lExpectedStackPosition )
@@ -927,6 +943,42 @@ static void botcmd_StringsAreEqual( CSkullBot *pBot )
 	g_bReturnBool = ( stricmp( szString1, szString2 ) == 0 );
 }
 
+#ifdef __vita__
+//*****************************************************************************
+// [Vita] The LookFor* commands walked all 65536 net IDs whenever no matching
+// item existed (HaloDoom has no "super armor" etc.): about 0.5 ms per call on
+// the Vita, several calls per bot per tic. The net IDs of special (pickup)
+// actors are collected once per tic instead and only those are checked.
+static const TArray<unsigned short> &Vita_SpecialNetIDs( )
+{
+	static TArray<unsigned short> ids;
+	static int builtTic = -1;
+	if ( builtTic != gametic )
+	{
+		builtTic = gametic;
+		ids.Clear( );
+		for ( unsigned int i = 0; i <= ( std::numeric_limits<unsigned short>::max )( ); i++ )
+		{
+			AActor *pActor = g_ActorNetIDList.findPointerByID( static_cast<unsigned short>( i ));
+			if ( pActor && ( pActor->flags & MF_SPECIAL ))
+				ids.Push( static_cast<unsigned short>( i ));
+		}
+	}
+	return ids;
+}
+
+static unsigned Vita_FirstSpecialIndex( const TArray<unsigned short> &ids, unsigned short netID )
+{
+	unsigned lo = 0, hi = ids.Size( );
+	while ( lo < hi )
+	{
+		unsigned mid = ( lo + hi ) / 2;
+		if ( ids[mid] < netID ) lo = mid + 1; else hi = mid;
+	}
+	return lo;
+}
+#endif
+
 //*****************************************************************************
 // [BB] Helperfunction to reduce code duplication.
 template <typename T>
@@ -940,6 +992,18 @@ int botcmd_LookForItemType( CSkullBot *pBot, const char *FunctionName )
 
 	botcmd_ValidateItemNetID( netID, FunctionName );
 
+#ifdef __vita__
+	{
+		const TArray<unsigned short> &ids = Vita_SpecialNetIDs( );
+		for ( unsigned k = Vita_FirstSpecialIndex( ids, netID ); k < ids.Size( ); k++ )
+		{
+			if ( !BOTCMD_IgnoreItem( pBot, ids[k], visibilityCheck ) &&
+				g_ActorNetIDList.findPointerByID( ids[k] )->GetClass( )->IsDescendantOf( RUNTIME_CLASS( T )))
+				return ids[k];
+		}
+		return -1;
+	}
+#endif
 	while (( BOTCMD_IgnoreItem( pBot, netID, visibilityCheck )) ||
 		( g_ActorNetIDList.findPointerByID( netID )->GetClass( )->IsDescendantOf( RUNTIME_CLASS( T )) == false ))
 	{
@@ -985,6 +1049,18 @@ int botcmd_LookForItemWithFlag( CSkullBot *pBot, const int Flag, const char *Fun
 
 	botcmd_ValidateItemNetID( netID, FunctionName );
 
+#ifdef __vita__
+	{
+		const TArray<unsigned short> &ids = Vita_SpecialNetIDs( );
+		for ( unsigned k = Vita_FirstSpecialIndex( ids, netID ); k < ids.Size( ); k++ )
+		{
+			if ( !BOTCMD_IgnoreItem( pBot, ids[k], visibilityCheck ) &&
+				( g_ActorNetIDList.findPointerByID( ids[k] )->STFlags & Flag ))
+				return ids[k];
+		}
+		return -1;
+	}
+#endif
 	while (( BOTCMD_IgnoreItem( pBot, netID, visibilityCheck )) ||
 		(( g_ActorNetIDList.findPointerByID( netID )->STFlags & Flag ) == false ))
 	{

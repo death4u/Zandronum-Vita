@@ -119,6 +119,9 @@ static void I_CheckGUICapture ()
 
 	if (wantCapt != GUICapture)
 	{
+#ifdef __vita__
+		if (wantCapt) { extern void Vita_PadReleaseAll(); Vita_PadReleaseAll(); }
+#endif
 		GUICapture = wantCapt;
 		if (wantCapt)
 		{
@@ -469,6 +472,12 @@ void MessagePump (const SDL_Event &sev)
 	case SDL_JOYBUTTONUP:
 		if (!GUICapture)
 		{
+#ifdef __vita__
+			// tap / hold keys (vita_controls.cpp)
+			extern bool Vita_PadButton(int button, bool down);
+			if (Vita_PadButton(sev.jbutton.button, sev.type == SDL_JOYBUTTONDOWN))
+				break;
+#endif
 			event.type = sev.type == SDL_JOYBUTTONDOWN ? EV_KeyDown : EV_KeyUp;
 			event.data1 = KEY_FIRSTJOYBUTTON + sev.jbutton.button;
 			if(event.data1 != 0)
@@ -523,6 +532,9 @@ void I_GetEvent ()
 	{
 		MessagePump (sev);
 	}
+#ifdef __vita__
+	{ extern void Vita_ControlsFrame(); Vita_ControlsFrame(); }
+#endif
 	if (use_mouse)
 	{
 		MouseRead ();
