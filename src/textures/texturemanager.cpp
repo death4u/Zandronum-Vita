@@ -1252,7 +1252,8 @@ void FTextureManager::PrecacheLevel (void)
 	extern int Vita_PrecacheDone, Vita_PrecacheSkipped;
 	EXTERN_CVAR(Int, vita_precachelevel)
 	const unsigned long long vita_t0 = sceKernelGetProcessTimeWide();
-	Vita_PrecacheDeadline = vita_t0 + (unsigned long long)MAX(0, (int)vita_precachelevel) * 1000000;
+	// (not for the title map: it would only delay the menu)
+	Vita_PrecacheDeadline = !stricmp(level.mapname, "TITLEMAP") ? 0 : vita_t0 + (unsigned long long)MAX(0, (int)vita_precachelevel) * 1000000;
 	Vita_PrecacheDone = Vita_PrecacheSkipped = 0;
 	unsigned vita_hits0, vita_writes0;
 	Vita_TexCacheStats(vita_hits0, vita_writes0);

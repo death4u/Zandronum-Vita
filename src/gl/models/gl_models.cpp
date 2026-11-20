@@ -264,8 +264,9 @@ public:
 		return best ? best->mReal : NULL;
 	}
 
-	// The player's own weapon (HUD model) is loaded right away instead: a
-	// substitute there showed another weapon's parts at the muzzle.
+	// The player's own weapon (HUD model) gets no substitute: another weapon
+	// in your hands for a moment looks wrong. (0032 loaded it synchronously
+	// instead, which froze the game for ~0.9 s on every new weapon.)
 	static bool DrawingHUD;
 
 	// The most recently drawn loaded model of its folder is kept loaded, so
@@ -287,8 +288,8 @@ public:
 
 	void RenderFrame(FTexture *skin, int frame, int cm, int translation)
 	{
-		FModel *m = Get(DrawingHUD);
-		if (m == NULL && vita_modelsubstitute) m = Substitute(frame, frame);
+		FModel *m = Get();
+		if (m == NULL && vita_modelsubstitute && !DrawingHUD) m = Substitute(frame, frame);
 		if (m == NULL) return;
 		m->PushSpriteMDLFrame(curSpriteMDLFrame, curMDLIndex);
 		m->RenderFrame(skin, frame, cm, translation);
@@ -296,8 +297,8 @@ public:
 
 	void RenderFrameInterpolated(FTexture *skin, int frame, int frame2, double inter, int cm, int translation)
 	{
-		FModel *m = Get(DrawingHUD);
-		if (m == NULL && vita_modelsubstitute) m = Substitute(frame, frame2);
+		FModel *m = Get();
+		if (m == NULL && vita_modelsubstitute && !DrawingHUD) m = Substitute(frame, frame2);
 		if (m == NULL) return;
 		m->PushSpriteMDLFrame(curSpriteMDLFrame, curMDLIndex);
 		m->RenderFrameInterpolated(skin, frame, frame2, inter, cm, translation);

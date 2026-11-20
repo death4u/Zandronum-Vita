@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <vitaGL.h>
 
 #define STB_DXT_STATIC
@@ -179,6 +180,71 @@ static void CompressLevel(const unsigned char *rgba, int w, int h, bool dxt5, un
 	}
 }
 
+// Cache files are written by a thread on the third core: creating and
+// renaming files on the memory card took 0.3-0.7 s per texture on the Vita,
+// which stalled the game every time a new texture was compressed.
+struct FVtcWrite { unsigned long long Key; FVtcHeader Header; unsigned char *Data; unsigned Size; };
+static TArray<FVtcWrite> WriteQueue;
+static unsigned WriteQueueBytes;
+static SceUID WriteMutex = -1, WriteSema = -1, WriteThread = -1;
+
+static void WriteFile(const FVtcWrite &w)
+{
+	if (!DirMade) { mkdir(TEXCACHE_DIR, 0777); DirMade = true; }
+	char path[96], tmp[100];
+	CachePath(path, sizeof(path), w.Key);
+	snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+	FILE *f = fopen(tmp, "wb");
+	if (f == NULL) return;
+	bool ok = fwrite(&w.Header, sizeof(w.Header), 1, f) == 1 && fwrite(w.Data, 1, w.Size, f) == w.Size;
+	ok = (fclose(f) == 0) && ok;
+	if (ok) { remove(path); ok = rename(tmp, path) == 0; }
+	if (!ok) remove(tmp);
+	else CacheWrites++;
+}
+
+static int WriterEntry(SceSize, void *)
+{
+	for (;;)
+	{
+		sceKernelWaitSema(WriteSema, 1, NULL);
+		sceKernelLockMutex(WriteMutex, 1, NULL);
+		if (WriteQueue.Size() == 0) { sceKernelUnlockMutex(WriteMutex, 1); continue; }
+		FVtcWrite w = WriteQueue[0];
+		WriteQueue.Delete(0);
+		sceKernelUnlockMutex(WriteMutex, 1);
+		WriteFile(w);
+		sceKernelLockMutex(WriteMutex, 1, NULL);
+		WriteQueueBytes -= w.Size;
+		sceKernelUnlockMutex(WriteMutex, 1);
+		free(w.Data);
+	}
+	return 0;
+}
+
+static bool QueueWrite(unsigned long long key, const FVtcHeader &hd, unsigned char *data, unsigned size)
+{
+	if (WriteThread < 0)
+	{
+		WriteMutex = sceKernelCreateMutex("vita_texcache", 0, 0, NULL);
+		WriteSema = sceKernelCreateSema("vita_texcache", 0, 0, 0x7fffffff, NULL);
+		WriteThread = sceKernelCreateThread("vita_texcache", WriterEntry, 0x10000100 + 20, 0x8000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+		if (WriteMutex < 0 || WriteSema < 0 || WriteThread < 0) { WriteThread = -1; return false; }
+		sceKernelStartThread(WriteThread, 0, NULL);
+	}
+	sceKernelLockMutex(WriteMutex, 1, NULL);
+	const bool room = WriteQueueBytes + size <= (24u << 20);
+	if (room)
+	{
+		FVtcWrite w = { key, hd, data, size };
+		WriteQueue.Push(w);
+		WriteQueueBytes += size;
+	}
+	sceKernelUnlockMutex(WriteMutex, 1);
+	if (room) sceKernelSignalSema(WriteSema, 1);
+	return room;
+}
+
 bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool mipmaps)
 {
 	if (!vita_texcache || !IsPow2(w) || !IsPow2(h) || rgba == NULL) return false;
@@ -221,26 +287,14 @@ bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool m
 
 	if (Vita_TexCachePending.Key != 0)
 	{
-		if (!DirMade) { mkdir(TEXCACHE_DIR, 0777); DirMade = true; }
-		char path[96], tmp[100];
-		CachePath(path, sizeof(path), Vita_TexCachePending.Key);
-		snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-		FILE *f = fopen(tmp, "wb");
-		if (f != NULL)
-		{
-			FVtcHeader hd;
-			memset(&hd, 0, sizeof(hd));
-			hd.Magic = VTC_MAGIC; hd.Version = VTC_VERSION;
-			hd.Width = w; hd.Height = h; hd.Dxt5 = dxt5; hd.Levels = levels;
-			hd.Masked = Vita_TexCachePending.Meta.Masked;
-			hd.IsTransparent = Vita_TexCachePending.Meta.IsTransparent;
-			hd.GLIsTransparent = Vita_TexCachePending.Meta.GLIsTransparent;
-			bool ok = fwrite(&hd, sizeof(hd), 1, f) == 1 && fwrite(out, 1, total, f) == total;
-			ok = (fclose(f) == 0) && ok;
-			if (ok) { remove(path); ok = rename(tmp, path) == 0; }
-			if (!ok) remove(tmp);
-			else CacheWrites++;
-		}
+		FVtcHeader hd;
+		memset(&hd, 0, sizeof(hd));
+		hd.Magic = VTC_MAGIC; hd.Version = VTC_VERSION;
+		hd.Width = w; hd.Height = h; hd.Dxt5 = dxt5; hd.Levels = levels;
+		hd.Masked = Vita_TexCachePending.Meta.Masked;
+		hd.IsTransparent = Vita_TexCachePending.Meta.IsTransparent;
+		hd.GLIsTransparent = Vita_TexCachePending.Meta.GLIsTransparent;
+		if (QueueWrite(Vita_TexCachePending.Key, hd, out, total)) out = NULL;	// the writer frees it
 		Vita_TexCachePending.Key = 0;
 	}
 	free(out);

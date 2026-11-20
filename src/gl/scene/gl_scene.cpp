@@ -686,7 +686,11 @@ void FGLRenderer::DrawScene(bool toscreen)
 	// from there until the decal pass, drawing only uses the draw lists
 	// (see vita/vita_parallel.h).
 	if (Vita_DrawSceneDepth == 1)
-		Vita_PendingLogicBegin = recursion == 0 && toscreen && !GL_MULTIPASS_LIGHTS && Vita_ParallelAllowed();
+		// (Dynamic light passes also read the light lists of walls and
+		// subsectors; lights only (un)link themselves after the overlap,
+		// see Vita_DeferLight, so those are safe too. 0032 left lights out
+		// here, which turned the second core off for the whole game.)
+		Vita_PendingLogicBegin = recursion == 0 && toscreen && Vita_ParallelAllowed();
 #endif
 
 	// Up to this point in the main draw call no rendering is performed so we can wait

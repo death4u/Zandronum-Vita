@@ -102,6 +102,12 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 
 	if (alphatexture) texformat=GL_ALPHA8;
 	else if (forcenocompression) texformat = GL_RGBA8;
+#ifdef __vita__
+	// [Vita] vitaGL's DXT compression breaks on textures under 4x4 (HaloDoom's
+	// 1x1 transparent model placeholder sprites came out as white squares):
+	// small textures stay uncompressed.
+	else if (buffer != NULL && (w < 8 || h < 8)) texformat = GL_RGBA8;
+#endif
 	if (glTexID==0) glGenTextures(1,&glTexID);
 	glBindTexture(GL_TEXTURE_2D, glTexID);
 	lastbound[texunit]=glTexID;
