@@ -26,6 +26,7 @@
 #include "w_wad.h"
 #include "textures/textures.h"
 #include "vita/vita_system.h"
+#include "tarray.h"
 
 CVAR(Bool, vita_texcache, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Int, vita_texcachemips, 1, 0)
@@ -56,10 +57,15 @@ static unsigned long long Fnv(unsigned long long h, const void *p, size_t n)
 	return h;
 }
 
-unsigned long long Vita_TexCacheKey(FTexture *tex, int cm, int kind, bool hires)
+unsigned long long Vita_TexCacheKey(FTexture *tex, int cm, int kind, bool hires, const void *trans, unsigned transsize)
 {
 	if (!vita_texcache || tex == NULL || tex->bHasCanvas || tex->bWarped) return 0;
 	unsigned long long h = 14695981039346656037ull;
+	if (trans != NULL)
+	{
+		h = Fnv(h, "trans", 5);
+		h = Fnv(h, trans, transsize);
+	}
 	h = Fnv(h, &VTC_VERSION, sizeof(VTC_VERSION));
 	h = Fnv(h, tex->Name, strlen(tex->Name));
 	int vals[8] = { tex->SourceLump, 0, 0, tex->GetWidth(), tex->GetHeight(), cm, kind, hires };
@@ -75,9 +81,85 @@ unsigned long long Vita_TexCacheKey(FTexture *tex, int cm, int kind, bool hires)
 	return h ? h : 1;
 }
 
+// Files are spread over 256 folders (texcache/<first two hex digits>/): one
+// folder with hundreds of files made every open on the memory card slow
+// (0.1 s for a file that isn't there, up to 0.7 s to read a cached texture).
+// Which keys exist is kept in texcache/index.dat, so a texture that isn't
+// cached costs no file access at all.
 static void CachePath(char *buf, size_t n, unsigned long long key)
 {
-	snprintf(buf, n, TEXCACHE_DIR "/%016llx.vtc", key);
+	snprintf(buf, n, TEXCACHE_DIR "/%02x/%016llx.vtc", (unsigned)(key >> 56), key);
+}
+
+static TMap<unsigned long long, bool> Index;
+static bool IndexLoaded;
+static SceUID IndexMutex = -1;
+
+#include <dirent.h>
+static void LoadIndex()
+{
+	if (IndexLoaded) return;
+	IndexLoaded = true;
+	IndexMutex = sceKernelCreateMutex("vita_texindex", 0, 0, NULL);
+	const unsigned long long t0 = sceKernelGetProcessTimeWide();
+	FILE *f = fopen(TEXCACHE_DIR "/index.dat", "rb");
+	if (f != NULL)
+	{
+		unsigned long long k;
+		while (fread(&k, sizeof(k), 1, f) == 1) Index[k] = true;
+		fclose(f);
+		Vita_BootLog("texture cache: %u textures in the index (%llu ms)", Index.CountUsed(), (sceKernelGetProcessTimeWide() - t0) / 1000);
+		return;
+	}
+	// No index yet (cache from 0032-0034, or none): move flat files into
+	// the folders once and write the index.
+	mkdir(TEXCACHE_DIR, 0777);
+	DIR *d = opendir(TEXCACHE_DIR);
+	TArray<unsigned long long> flat;
+	if (d != NULL)
+	{
+		struct dirent *de;
+		while ((de = readdir(d)) != NULL)
+		{
+			unsigned long long k;
+			if (strlen(de->d_name) == 20 && sscanf(de->d_name, "%16llx.vtc", &k) == 1) flat.Push(k);
+		}
+		closedir(d);
+	}
+	FILE *idx = fopen(TEXCACHE_DIR "/index.dat", "wb");
+	for (unsigned i = 0; i < flat.Size(); i++)
+	{
+		char from[96], to[96], dir[64];
+		snprintf(from, sizeof(from), TEXCACHE_DIR "/%016llx.vtc", flat[i]);
+		snprintf(dir, sizeof(dir), TEXCACHE_DIR "/%02x", (unsigned)(flat[i] >> 56));
+		mkdir(dir, 0777);
+		CachePath(to, sizeof(to), flat[i]);
+		if (rename(from, to) == 0)
+		{
+			Index[flat[i]] = true;
+			if (idx) fwrite(&flat[i], sizeof(flat[i]), 1, idx);
+		}
+	}
+	if (idx) fclose(idx);
+	Vita_BootLog("texture cache: new index, %u textures moved into folders (%llu ms)", Index.CountUsed(), (sceKernelGetProcessTimeWide() - t0) / 1000);
+}
+
+static bool InIndex(unsigned long long key)
+{
+	LoadIndex();
+	sceKernelLockMutex(IndexMutex, 1, NULL);
+	bool r = Index.CheckKey(key) != NULL;
+	sceKernelUnlockMutex(IndexMutex, 1);
+	return r;
+}
+
+static void AddToIndex(unsigned long long key)	// writer thread
+{
+	sceKernelLockMutex(IndexMutex, 1, NULL);
+	Index[key] = true;
+	sceKernelUnlockMutex(IndexMutex, 1);
+	FILE *f = fopen(TEXCACHE_DIR "/index.dat", "ab");
+	if (f) { fwrite(&key, sizeof(key), 1, f); fclose(f); }
 }
 
 static inline bool IsPow2(int v) { return v >= 4 && (v & (v - 1)) == 0; }
@@ -109,15 +191,33 @@ static void UploadLevels(const unsigned char *data, int w, int h, bool dxt5, int
 
 bool Vita_TexCacheLoad(unsigned long long key, FVitaTexCacheMeta &meta, bool mipmaps)
 {
-	if (key == 0) return false;
+	if (key == 0 || !InIndex(key)) return false;
 	char path[96];
 	CachePath(path, sizeof(path), key);
 	FILE *f = fopen(path, "rb");
 	if (f == NULL) return false;
 	FVtcHeader hd;
 	bool ok = false;
-	if (fread(&hd, sizeof(hd), 1, f) == 1 && hd.Magic == VTC_MAGIC && hd.Version == VTC_VERSION
-		&& IsPow2(hd.Width) && IsPow2(hd.Height) && hd.Levels >= 1 && hd.Levels <= 12)
+	if (fread(&hd, sizeof(hd), 1, f) != 1 || hd.Magic != VTC_MAGIC || hd.Version != VTC_VERSION) { fclose(f); return false; }
+	if (hd.Dxt5 == 2)
+	{
+		// small texture, raw RGBA
+		const unsigned total = hd.Width * hd.Height * 4;
+		unsigned char *data = hd.Width > 0 && hd.Width <= 64 && hd.Height > 0 && hd.Height <= 64 ? (unsigned char *)malloc(total) : NULL;
+		if (data != NULL && fread(data, 1, total, f) == total)
+		{
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, hd.Width, hd.Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+			meta.Width = hd.Width; meta.Height = hd.Height;
+			meta.Masked = hd.Masked; meta.IsTransparent = hd.IsTransparent; meta.GLIsTransparent = hd.GLIsTransparent;
+			ok = true;
+			CacheHits++;
+		}
+		free(data);
+		fclose(f);
+		return ok;
+	}
+	if (IsPow2(hd.Width) && IsPow2(hd.Height) && hd.Levels >= 1 && hd.Levels <= 12)
 	{
 		unsigned total = 0;
 		int w = hd.Width, h = hd.Height;
@@ -191,7 +291,9 @@ static SceUID WriteMutex = -1, WriteSema = -1, WriteThread = -1;
 static void WriteFile(const FVtcWrite &w)
 {
 	if (!DirMade) { mkdir(TEXCACHE_DIR, 0777); DirMade = true; }
-	char path[96], tmp[100];
+	char path[96], tmp[100], dir[64];
+	snprintf(dir, sizeof(dir), TEXCACHE_DIR "/%02x", (unsigned)(w.Key >> 56));
+	mkdir(dir, 0777);
 	CachePath(path, sizeof(path), w.Key);
 	snprintf(tmp, sizeof(tmp), "%s.tmp", path);
 	FILE *f = fopen(tmp, "wb");
@@ -200,7 +302,7 @@ static void WriteFile(const FVtcWrite &w)
 	ok = (fclose(f) == 0) && ok;
 	if (ok) { remove(path); ok = rename(tmp, path) == 0; }
 	if (!ok) remove(tmp);
-	else CacheWrites++;
+	else { CacheWrites++; AddToIndex(w.Key); }
 }
 
 static int WriterEntry(SceSize, void *)
@@ -287,6 +389,7 @@ bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool m
 
 	if (Vita_TexCachePending.Key != 0)
 	{
+		LoadIndex();
 		FVtcHeader hd;
 		memset(&hd, 0, sizeof(hd));
 		hd.Magic = VTC_MAGIC; hd.Version = VTC_VERSION;
@@ -304,4 +407,24 @@ bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool m
 void Vita_TexCacheStats(unsigned &hits, unsigned &writes)
 {
 	hits = CacheHits; writes = CacheWrites;
+}
+
+void Vita_TexCacheSaveRaw(const unsigned char *rgba, int w, int h)
+{
+	const unsigned long long key = Vita_TexCachePending.Key;
+	Vita_TexCachePending.Key = 0;
+	if (key == 0 || !vita_texcache || rgba == NULL || w <= 0 || h <= 0 || w > 64 || h > 64) return;
+	LoadIndex();
+	FVtcHeader hd;
+	memset(&hd, 0, sizeof(hd));
+	hd.Magic = VTC_MAGIC; hd.Version = VTC_VERSION;
+	hd.Width = w; hd.Height = h; hd.Dxt5 = 2; hd.Levels = 1;
+	hd.Masked = Vita_TexCachePending.Meta.Masked;
+	hd.IsTransparent = Vita_TexCachePending.Meta.IsTransparent;
+	hd.GLIsTransparent = Vita_TexCachePending.Meta.GLIsTransparent;
+	const unsigned size = w * h * 4;
+	unsigned char *copy = (unsigned char *)malloc(size);
+	if (copy == NULL) return;
+	memcpy(copy, rgba, size);
+	if (!QueueWrite(key, hd, copy, size)) free(copy);
 }

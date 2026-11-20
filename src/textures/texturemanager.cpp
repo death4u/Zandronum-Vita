@@ -1259,12 +1259,25 @@ void FTextureManager::PrecacheLevel (void)
 	unsigned vita_hits0, vita_writes0;
 	Vita_TexCacheStats(vita_hits0, vita_writes0);
 	// sky and wall/flat textures first (sprites last: hitlist bit 1 is shared)
+	int vita_spritesskipped = 0;
 #endif
 	for (int i = cnt - 1; i >= 0; i--)
 	{
+#ifdef __vita__
+		// Sprites (HaloDoom: mostly 1x1 model placeholders, each a separate
+		// file read) are loaded when first drawn instead, so the level
+		// starts sooner. Already loaded ones are kept.
+		FTexture *vt = ByIndex(i);
+		if (hitlist[i] && vt != NULL && vt->UseType == FTexture::TEX_Sprite && stricmp(level.mapname, "TITLEMAP"))
+		{
+			vita_spritesskipped++;
+			continue;
+		}
+#endif
 		Renderer->PrecacheTexture(ByIndex(i), hitlist[i]);
 	}
 #ifdef __vita__
+	Vita_BootLog("precache: %d sprites left to load when first drawn", vita_spritesskipped);
 	{
 		unsigned hits, writes;
 		Vita_TexCacheStats(hits, writes);

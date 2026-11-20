@@ -455,7 +455,8 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 			
 #ifdef __vita__
 			const unsigned long long vt0 = Vita_PerfNow();
-			const unsigned long long vkey = (translation == 0 && warp == 0) ? Vita_TexCacheKey(tex, cm, 0, hirescheck != NULL) : 0;
+			const PalEntry *vpal = translation == 0 ? NULL : GLTranslationPalette::GetPalette(translation);
+			const unsigned long long vkey = warp == 0 && (translation == 0 || vpal != NULL) ? Vita_TexCacheKey(tex, cm, 0, hirescheck != NULL, vpal, 256 * sizeof(PalEntry)) : 0;
 			if (vkey != 0)
 			{
 				Vita_TexCachePending.LoadKey = vkey;
@@ -554,7 +555,8 @@ const FHardwareTexture * FGLTexture::BindPatch(int texunit, int cm, int translat
 			// Create this texture
 #ifdef __vita__
 			const unsigned long long vt0 = Vita_PerfNow();
-			const unsigned long long vkey = (translation == 0 && warp == 0) ? Vita_TexCacheKey(tex, cm, bExpand ? 2 : 1, false) : 0;
+			const PalEntry *vpal = translation == 0 ? NULL : GLTranslationPalette::GetPalette(translation);
+			const unsigned long long vkey = warp == 0 && (translation == 0 || vpal != NULL) ? Vita_TexCacheKey(tex, cm, bExpand ? 2 : 1, false, vpal, 256 * sizeof(PalEntry)) : 0;
 			if (vkey != 0)
 			{
 				Vita_TexCachePending.LoadKey = vkey;

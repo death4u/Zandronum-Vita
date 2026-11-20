@@ -199,6 +199,14 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 		}
 	}
 #ifdef __vita__
+	if (!vita_done && !vita_nodata && texformat == GL_RGBA8 && !alphatexture && !forcenocompression && (w < 8 || h < 8))
+	{
+		// small texture: uncompressed, kept in the cache as raw RGBA
+		VITA_PERF(VPERF_UPLOAD);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+		Vita_TexCacheSaveRaw(buffer, rw, rh);
+		vita_done = true;
+	}
 	if (!vita_done)
 	{
 		VITA_PERF(VPERF_UPLOAD);
