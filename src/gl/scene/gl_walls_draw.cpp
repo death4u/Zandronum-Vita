@@ -469,42 +469,67 @@ FVitaWallBatch VitaWalls;
 
 unsigned Vita_CurColor = 0xffffffff;
 
+static TArray<FVitaBucket *> VitaBuckets;	// pool, reused every frame
+static unsigned VitaBucketsUsed;
+static int VitaBucketHash[512];			// index + 1 into VitaBuckets, 0 = empty
+static unsigned VitaBucketGen[512], VitaGen = 1;
+
+static void Vita_DrawBucket(FVitaBucket *b)
+{
+	const unsigned total = b->Xyz.Size() / 3;
+	if (total == 0) return;
+	gl_RenderState.VitaSetFog(b->FogOn, b->FogColor, b->FogDensity);
+	gl_RenderState.VitaSetBlendEquation(b->BlendEq);
+	if (b->Tex != NULL)
+	{
+		gl_RenderState.EnableGlow(false);
+		b->Tex->Bind(b->CmColormap, b->Flags, 0);
+	}
+	gl_RenderState.Apply();
+	// vitaGL draws arrays through a 16-bit index list of 0xC000 entries:
+	// bigger draws read past it (garbage, crashes), so draw in pieces.
+	const unsigned piece = 0xC000 / 3 * 3 - 3;
+	for (unsigned start = 0; start < total; start += piece)
+	{
+		const unsigned n = total - start < piece ? total - start : piece;
+		glVertexPointer(3, GL_FLOAT, 0, &b->Xyz[start * 3]);
+		glTexCoordPointer(2, GL_FLOAT, 0, &b->Uv[start * 2]);
+		glColorPointer(4, GL_UNSIGNED_BYTE, 0, &b->Rgba[start]);
+		glDrawArrays(GL_TRIANGLES, 0, n);
+	}
+}
+
 void Vita_FlushWalls()
 {
-	if (VitaWalls.Open && VitaWalls.Xyz.Size() > 0)
+	if (VitaWalls.Open && VitaBucketsUsed > 0)
 	{
-		gl_RenderState.Apply();
-		glVertexPointer(3, GL_FLOAT, 0, &VitaWalls.Xyz[0]);
-		glTexCoordPointer(2, GL_FLOAT, 0, &VitaWalls.Uv[0]);
-		glColorPointer(4, GL_UNSIGNED_BYTE, 0, &VitaWalls.Rgba[0]);
+		bool fogon; PalEntry fc; float fd;
+		gl_RenderState.VitaGetFog(fogon, fc, fd);
+		const int eq = gl_RenderState.VitaGetBlendEquation();
 		glEnableClientState(GL_VERTEX_ARRAY);
 		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 		glEnableClientState(GL_COLOR_ARRAY);
-		// vitaGL draws arrays through a 16-bit index list of 0xC000 entries:
-		// bigger draws read past it (garbage, crashes), so draw in pieces.
-		const unsigned total = VitaWalls.Xyz.Size() / 3;
-		const unsigned piece = 0xC000 / 3 * 3 - 3;
-		for (unsigned start = 0; start < total; start += piece)
-		{
-			const unsigned n = total - start < piece ? total - start : piece;
-			if (start > 0)
-			{
-				glVertexPointer(3, GL_FLOAT, 0, &VitaWalls.Xyz[start * 3]);
-				glTexCoordPointer(2, GL_FLOAT, 0, &VitaWalls.Uv[start * 2]);
-				glColorPointer(4, GL_UNSIGNED_BYTE, 0, &VitaWalls.Rgba[start]);
-			}
-			glDrawArrays(GL_TRIANGLES, 0, n);
-		}
+		// buckets using the caller's texture state first, before any bind
+		for (unsigned i = 0; i < VitaBucketsUsed; i++) if (VitaBuckets[i]->Tex == NULL) Vita_DrawBucket(VitaBuckets[i]);
+		for (unsigned i = 0; i < VitaBucketsUsed; i++) if (VitaBuckets[i]->Tex != NULL) Vita_DrawBucket(VitaBuckets[i]);
 		glDisableClientState(GL_VERTEX_ARRAY);
 		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 		glDisableClientState(GL_COLOR_ARRAY);
 		// the current colour is undefined after a colour array
 		glColor4ub(Vita_CurColor & 0xff, (Vita_CurColor >> 8) & 0xff, (Vita_CurColor >> 16) & 0xff, Vita_CurColor >> 24);
+		gl_RenderState.VitaSetFog(fogon, fc, fd);
+		gl_RenderState.VitaSetBlendEquation(eq);
+		for (unsigned i = 0; i < VitaBucketsUsed; i++)
+		{
+			VitaBuckets[i]->Xyz.Clear();
+			VitaBuckets[i]->Uv.Clear();
+			VitaBuckets[i]->Rgba.Clear();
+		}
 	}
-	VitaWalls.Xyz.Clear();
-	VitaWalls.Uv.Clear();
-	VitaWalls.Rgba.Clear();
+	VitaBucketsUsed = 0;
+	VitaGen++;
 	VitaWalls.Open = false;
+	VitaWalls.Cur = NULL;
 }
 
 static inline unsigned Vita_PackColor(float r, float g, float b)
@@ -529,32 +554,39 @@ void Vita_BatchCheck()
 	gl_RenderState.VitaGetFog(on, fc, fd);
 	const int eq = gl_RenderState.VitaGetBlendEquation();
 	FMaterial *tex = VitaWalls.NextTex;
-	if (!(VitaWalls.Open && VitaWalls.Tex == tex && (tex == NULL || (VitaWalls.CmColormap == VitaWalls.NextCm && VitaWalls.Flags == VitaWalls.NextFlags))
-		&& VitaWalls.FogOn == on && (!on || (VitaWalls.FogColor == fc && VitaWalls.FogDensity == fd)) && VitaWalls.BlendEq == eq))
+	const int cm = tex != NULL ? VitaWalls.NextCm : 0, flags = tex != NULL ? VitaWalls.NextFlags : 0;
+	if (!on) { fc = 0; fd = 0; }
+	FVitaBucket *cur = VitaWalls.Cur;
+	if (cur == NULL || cur->Tex != tex || cur->CmColormap != cm || cur->Flags != flags || cur->FogOn != on
+		|| cur->FogColor != fc || cur->FogDensity != fd || cur->BlendEq != eq)
 	{
-		if (VitaWalls.Open)
+		unsigned h = (unsigned)(((uintptr_t)tex >> 4) * 2654435761u) ^ (unsigned)cm * 31 ^ (unsigned)flags * 17 ^ (unsigned)fc.d * 7 ^ (unsigned)(fd * 100000.f) * 13 ^ (unsigned)eq ^ (on ? 0x5555 : 0);
+		h &= 511;
+		cur = NULL;
+		for (int probe = 0; probe < 512; probe++, h = (h + 1) & 511)
 		{
-			// draw the pending run with its own fog and blend equation,
-			// then go on with the new one
-			gl_RenderState.VitaSetFog(VitaWalls.FogOn, VitaWalls.FogColor, VitaWalls.FogDensity);
-			gl_RenderState.VitaSetBlendEquation(VitaWalls.BlendEq);
-			Vita_FlushWalls();
-			gl_RenderState.VitaSetFog(on, fc, fd);
-			gl_RenderState.VitaSetBlendEquation(eq);
+			if (VitaBucketGen[h] != VitaGen) break;	// empty slot
+			FVitaBucket *b = VitaBuckets[VitaBucketHash[h] - 1];
+			if (b->Tex == tex && b->CmColormap == cm && b->Flags == flags && b->FogOn == on && b->FogColor == fc && b->FogDensity == fd && b->BlendEq == eq) { cur = b; break; }
 		}
-		if (tex != NULL)
+		if (cur == NULL)
 		{
-			gl_RenderState.EnableGlow(false);
-			tex->Bind(VitaWalls.NextCm, VitaWalls.NextFlags, 0);
+			if (VitaBucketsUsed >= 400)
+			{
+				// too many states in one list: draw what we have
+				Vita_FlushWalls();
+				Vita_BatchCheck();
+				return;
+			}
+			if (VitaBucketsUsed == VitaBuckets.Size()) VitaBuckets.Push(new FVitaBucket);
+			cur = VitaBuckets[VitaBucketsUsed++];
+			cur->Tex = tex; cur->CmColormap = cm; cur->Flags = flags;
+			cur->FogOn = on; cur->FogColor = fc; cur->FogDensity = fd; cur->BlendEq = eq;
+			VitaBucketGen[h] = VitaGen;
+			VitaBucketHash[h] = VitaBucketsUsed;
 		}
+		VitaWalls.Cur = cur;
 		VitaWalls.Open = true;
-		VitaWalls.Tex = tex;
-		VitaWalls.CmColormap = VitaWalls.NextCm;
-		VitaWalls.Flags = VitaWalls.NextFlags;
-		VitaWalls.FogOn = on;
-		VitaWalls.FogColor = fc;
-		VitaWalls.FogDensity = fd;
-		VitaWalls.BlendEq = eq;
 	}
 	VitaWalls.Color = VitaWalls.UseCurColor ? Vita_CurColor : VitaWalls.NextColor;
 }

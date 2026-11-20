@@ -266,8 +266,57 @@ bool FRenderState::ApplyShader()
 //
 //==========================================================================
 
+#ifdef __vita__
+FVitaSpriteState VitaSpriteState;
+
+// Issues the held-back blend/alpha state (drawing the pending sprites first
+// if it changes anything).
+// Last values issued while in sprite mode (-1: unknown).
+static int VKSrc, VKDst, VKAFunc, VKEq, VKATest;
+static float VKAThr;
+
+static void Vita_ApplySpriteState(bool ffchange)
+{
+	FVitaSpriteState &v = VitaSpriteState;
+	// setters called again with the values already in effect change nothing
+	if (v.DirtyBlend && v.Src == VKSrc && v.Dst == VKDst) v.DirtyBlend = false;
+	if (v.DirtyAlpha && v.AFunc == VKAFunc && v.AThr == VKAThr) v.DirtyAlpha = false;
+	if (v.DirtyAlphaTest && (int)v.ATest == VKATest) v.DirtyAlphaTest = false;
+	if (v.DirtyEq && v.Eq == VKEq) v.DirtyEq = false;
+	if (v.DirtyBlend) { VKSrc = v.Src; VKDst = v.Dst; }
+	if (v.DirtyAlpha) { VKAFunc = v.AFunc; VKAThr = v.AThr; }
+	if (v.DirtyAlphaTest) VKATest = v.ATest;
+	if (v.DirtyEq) VKEq = v.Eq;
+	if (v.Pending && (ffchange || v.DirtyBlend || v.DirtyAlpha || v.DirtyAlphaTest || v.DirtyEq)) Vita_FlushSprites();
+	if (v.DirtyBlend) glBlendFunc(v.Src, v.Dst);
+	if (v.DirtyAlpha) ::glAlphaFunc(v.AFunc, v.AThr);
+	if (v.DirtyAlphaTest) { if (v.ATest) glEnable(GL_ALPHA_TEST); else glDisable(GL_ALPHA_TEST); }
+	if (v.DirtyEq) ::glBlendEquation(v.Eq);
+	v.DirtyBlend = v.DirtyAlpha = v.DirtyAlphaTest = v.DirtyEq = false;
+}
+
+void Vita_SpriteModeBegin()
+{
+	if (VitaSpriteState.Mode) return;
+	VitaSpriteState.Mode = true;
+	VKSrc = VKDst = VKAFunc = VKEq = VKATest = -1; VKAThr = -1.f;
+	VitaSpriteState.DirtyBlend = VitaSpriteState.DirtyAlpha = VitaSpriteState.DirtyAlphaTest = VitaSpriteState.DirtyEq = false;
+}
+
+void Vita_SpriteModeEnd()
+{
+	if (!VitaSpriteState.Mode) return;
+	Vita_FlushSprites();
+	Vita_ApplySpriteState(false);
+	VitaSpriteState.Mode = false;
+}
+#endif
+
 void FRenderState::Apply(bool forcenoshader)
 {
+#ifdef __vita__
+	if (VitaSpriteState.Mode) Vita_ApplySpriteState(VitaFFWouldChange());
+#endif
 	if (!gl_direct_state_change)
 	{
 		if (mSrcBlend != glSrcBlend || mDstBlend != glDstBlend)

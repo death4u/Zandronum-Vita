@@ -695,7 +695,15 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 //==========================================================================
 void GLDrawList::DoDraw(int pass, int i)
 {
-	if (drawitems[i].rendertype == GLDIT_SPRITE) Vita_FlushWalls();	// walls and flats flush themselves when they leave the batch
+#ifdef __vita__
+	if (drawitems[i].rendertype == GLDIT_SPRITE)
+	{
+		Vita_FlushWalls();	// walls and flats flush themselves when they leave the batch
+		EXTERN_CVAR(Bool, gl_vita_batchsprites)
+		if (gl_vita_batchsprites) Vita_SpriteModeBegin();
+	}
+	else Vita_SpriteModeEnd();
+#endif
 	switch(drawitems[i].rendertype)
 	{
 	case GLDIT_FLAT:
@@ -771,6 +779,9 @@ void GLDrawList::DrawSorted()
 		sorted=DoSort(SortNodes[SortNodeStart]);
 	}
 	DoDrawSorted(sorted);
+#ifdef __vita__
+	Vita_SpriteModeEnd();
+#endif
 }
 
 //==========================================================================
@@ -785,6 +796,9 @@ void GLDrawList::Draw(int pass)
 		DoDraw(pass, i);
 	}
 	Vita_FlushWalls();
+#ifdef __vita__
+	Vita_SpriteModeEnd();
+#endif
 }
 
 //==========================================================================

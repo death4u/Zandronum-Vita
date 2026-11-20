@@ -118,9 +118,75 @@ CVAR(Bool, gl_nolayer, false, 0)
 // 
 //
 //==========================================================================
+#ifdef __vita__
+//==========================================================================
+//
+// [Vita] Sprite batching: consecutive sprites (and particles) whose GL state
+// is the same are drawn with one call. Each sprite used to be its own
+// glBegin/glEnd (600+ a frame in HaloDoom fights, ~100 ms on the Vita).
+// The batch is drawn before anything changes the GL state: a different
+// texture (glBindTexture wrapper), blend/alpha state (held back in
+// gl_RenderState until Apply), fog or texture mode (Apply).
+//
+//==========================================================================
+CVAR(Bool, gl_vita_batchsprites, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+static TArray<float> VSXyz, VSUv;
+static TArray<unsigned> VSRgba;
+static unsigned VitaBoundTex;
+
+void Vita_FlushSprites()
+{
+	VitaSpriteState.Pending = false;
+	const unsigned total = VSXyz.Size() / 3;
+	if (total == 0) return;
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	glEnableClientState(GL_COLOR_ARRAY);
+	const unsigned piece = 0xC000 / 6 * 6;
+	for (unsigned start = 0; start < total; start += piece)
+	{
+		const unsigned n = total - start < piece ? total - start : piece;
+		glVertexPointer(3, GL_FLOAT, 0, &VSXyz[start * 3]);
+		glTexCoordPointer(2, GL_FLOAT, 0, &VSUv[start * 2]);
+		glColorPointer(4, GL_UNSIGNED_BYTE, 0, &VSRgba[start]);
+		glDrawArrays(GL_TRIANGLES, 0, n);
+	}
+	glDisableClientState(GL_VERTEX_ARRAY);
+	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+	glDisableClientState(GL_COLOR_ARRAY);
+	extern unsigned Vita_CurColor;
+	glColor4ub(Vita_CurColor & 0xff, (Vita_CurColor >> 8) & 0xff, (Vita_CurColor >> 16) & 0xff, Vita_CurColor >> 24);
+	VSXyz.Clear(); VSUv.Clear(); VSRgba.Clear();
+}
+
+// called by the glBindTexture wrapper (vita_perf.cpp) before the bind
+void Vita_SpriteBindHook(unsigned id)
+{
+	if (VitaSpriteState.Pending && id != VitaBoundTex) Vita_FlushSprites();
+	VitaBoundTex = id;
+}
+
+static void Vita_AddSpriteQuad(const Vector &v1, const Vector &v2, const Vector &v3, const Vector &v4, float ul, float ur, float vt, float vb)
+{
+	extern unsigned Vita_CurColor;
+	const Vector *vs[6] = { &v1, &v2, &v3, &v3, &v2, &v4 };
+	const float us[6] = { ul, ur, ul, ul, ur, ur }, vv[6] = { vt, vt, vb, vb, vt, vb };
+	for (int i = 0; i < 6; i++)
+	{
+		VSXyz.Push((*vs[i])[0]); VSXyz.Push((*vs[i])[1]); VSXyz.Push((*vs[i])[2]);
+		VSUv.Push(us[i]); VSUv.Push(vv[i]);
+		VSRgba.Push(Vita_CurColor);
+	}
+	VitaSpriteState.Pending = true;
+}
+#endif
+
 void GLSprite::Draw(int pass)
 {
 	if (pass!=GLPASS_PLAIN && pass != GLPASS_ALL && pass!=GLPASS_TRANSLUCENT) return;
+#ifdef __vita__
+	if (modelframe) Vita_SpriteModeEnd();	// models change the GL state directly
+#endif
 
 	// Hack to enable bright sprites in faded maps
 	uint32 backupfade = Colormap.FadeColor.d;
@@ -296,6 +362,16 @@ void GLSprite::Draw(int pass)
 			v4 = Vector(x2, z2, y2);
 		}
 
+#ifdef __vita__
+		if (VitaSpriteState.Mode && !foglayer)
+		{
+			if (gltexture) Vita_AddSpriteQuad(v1, v2, v3, v4, ul, ur, vt, vb);
+			else Vita_AddSpriteQuad(v1, v2, v3, v4, 0, 0, 0, 0);
+		}
+		else
+		{
+		if (VitaSpriteState.Mode) Vita_SpriteModeEnd();
+#endif
 		glBegin(GL_TRIANGLE_STRIP);
 		if (gltexture)
 		{
@@ -313,6 +389,9 @@ void GLSprite::Draw(int pass)
 		}
 
 		glEnd();
+#ifdef __vita__
+		}
+#endif
 
 		if (foglayer)
 		{

@@ -6,6 +6,25 @@
 
 EXTERN_CVAR(Bool, gl_direct_state_change)
 
+#ifdef __vita__
+// [Vita] While consecutive sprites are drawn, blend/alpha state changes are
+// held back until Apply, so sprites with the same state can be drawn
+// together (gl_sprite.cpp).
+struct FVitaSpriteState
+{
+	bool Mode;				// sprites are being drawn: defer the setters below
+	bool Pending;			// a batch is waiting to be drawn
+	bool DirtyBlend, DirtyAlpha, DirtyAlphaTest, DirtyEq;
+	int Src, Dst, AFunc, Eq;
+	float AThr;
+	bool ATest;
+};
+extern FVitaSpriteState VitaSpriteState;
+void Vita_FlushSprites();
+void Vita_SpriteModeBegin();
+void Vita_SpriteModeEnd();
+#endif
+
 struct FStateAttr
 {
 	static int ChangeCounter;
@@ -137,6 +156,13 @@ public:
 
 	int SetupShader(bool cameratexture, int &shaderindex, int &cm, float warptime);
 	void Apply(bool forcenoshader = false);
+#ifdef __vita__
+	bool VitaFFWouldChange() const
+	{
+		return mTextureMode != ffTextureMode || mTextureEnabled != ffTextureEnabled || mFogEnabled != ffFogEnabled
+			|| (mFogEnabled && (ffFogColor != mFogColor || ffFogDensity != mFogDensity)) || mSpecialEffect != ffSpecialEffect;
+	}
+#endif
 
 	void SetTextureMode(int mode)
 	{
@@ -236,6 +262,9 @@ public:
 		}
 		else
 		{
+#ifdef __vita__
+			if (VitaSpriteState.Mode) { VitaSpriteState.Src = src; VitaSpriteState.Dst = dst; VitaSpriteState.DirtyBlend = true; return; }
+#endif
 			glBlendFunc(src, dst);
 		}
 	}
@@ -249,6 +278,9 @@ public:
 		}
 		else
 		{
+#ifdef __vita__
+			if (VitaSpriteState.Mode) { VitaSpriteState.AFunc = func; VitaSpriteState.AThr = thresh; VitaSpriteState.DirtyAlpha = true; return; }
+#endif
 			::glAlphaFunc(func, thresh);
 		}
 	}
@@ -261,6 +293,9 @@ public:
 		}
 		else
 		{
+#ifdef __vita__
+			if (VitaSpriteState.Mode) { VitaSpriteState.ATest = on; VitaSpriteState.DirtyAlphaTest = true; return; }
+#endif
 			if (on) glEnable(GL_ALPHA_TEST);
 			else glDisable(GL_ALPHA_TEST);
 		}
@@ -274,6 +309,9 @@ public:
 		}
 		else
 		{
+#ifdef __vita__
+			if (VitaSpriteState.Mode) { VitaSpriteState.Eq = eq; VitaSpriteState.DirtyEq = true; return; }
+#endif
 			::glBlendEquation(eq);
 		}
 	}

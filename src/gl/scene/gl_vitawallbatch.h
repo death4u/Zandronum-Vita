@@ -17,24 +17,33 @@
 #include "gl/renderer/gl_colormap.h"
 class FMaterial;
 
-struct FVitaWallBatch
+// One bucket per state (texture, fog, blend equation). Within a draw list
+// the order of opaque surfaces doesn't matter (depth buffer), so all
+// surfaces with the same state are drawn with one call when the list ends
+// (0036 on the Vita: up to 1800 draw calls a frame, mostly because the fog
+// density changes with every sector's light level).
+struct FVitaBucket
 {
-	bool Collecting;		// vertex calls go to the batch
-	bool Open;				// a run with the key below is pending
-	// key of the pending run
-	FMaterial *Tex;			// bound by the batch when the run starts (NULL: caller's texture state)
+	FMaterial *Tex;			// bound when drawn (NULL: caller's texture state)
 	int CmColormap, Flags;
 	bool FogOn;
 	PalEntry FogColor;
 	float FogDensity;
 	int BlendEq;
+	TArray<float> Xyz, Uv;	// triangles
+	TArray<unsigned> Rgba;	// one colour per vertex
+};
+
+struct FVitaWallBatch
+{
+	bool Collecting;		// vertex calls go to the batch
+	bool Open;				// buckets hold surfaces
+	FVitaBucket *Cur;		// bucket of the surface being added
 	// key of the surface being added (set by the caller)
 	FMaterial *NextTex;
 	int NextCm, NextFlags;
 	bool UseCurColor;		// take the colour from the last glColor call
 	unsigned NextColor;
-	TArray<float> Xyz, Uv;	// triangles
-	TArray<unsigned> Rgba;	// one colour per vertex
 	TArray<float> FanXyz, FanUv;
 	float U, V;
 	unsigned Color;			// colour of the surface being added
@@ -78,12 +87,13 @@ static inline void VitaGL_End()
 		unsigned idx[3] = { 0, k, k + 1 };
 		for (int j = 0; j < 3; j++)
 		{
-			VitaWalls.Xyz.Push(VitaWalls.FanXyz[idx[j] * 3]);
-			VitaWalls.Xyz.Push(VitaWalls.FanXyz[idx[j] * 3 + 1]);
-			VitaWalls.Xyz.Push(VitaWalls.FanXyz[idx[j] * 3 + 2]);
-			VitaWalls.Uv.Push(VitaWalls.FanUv[idx[j] * 2]);
-			VitaWalls.Uv.Push(VitaWalls.FanUv[idx[j] * 2 + 1]);
-			VitaWalls.Rgba.Push(VitaWalls.Color);
+			FVitaBucket *b = VitaWalls.Cur;
+			b->Xyz.Push(VitaWalls.FanXyz[idx[j] * 3]);
+			b->Xyz.Push(VitaWalls.FanXyz[idx[j] * 3 + 1]);
+			b->Xyz.Push(VitaWalls.FanXyz[idx[j] * 3 + 2]);
+			b->Uv.Push(VitaWalls.FanUv[idx[j] * 2]);
+			b->Uv.Push(VitaWalls.FanUv[idx[j] * 2 + 1]);
+			b->Rgba.Push(VitaWalls.Color);
 		}
 	}
 }

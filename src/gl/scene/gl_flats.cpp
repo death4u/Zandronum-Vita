@@ -301,10 +301,11 @@ static void Vita_AddSubsectorToBatch(GLFlat *flat, subsector_t * sub, const FVit
 		{
 			vertex_t *vt = vs[j];
 			float zc = flat->plane.plane.ZatPoint(vt->fx, vt->fy) + flat->dz;
-			VitaWalls.Xyz.Push(vt->fx); VitaWalls.Xyz.Push(zc); VitaWalls.Xyz.Push(vt->fy);
+			FVitaBucket *b = VitaWalls.Cur;
+			b->Xyz.Push(vt->fx); b->Xyz.Push(zc); b->Xyz.Push(vt->fy);
 			float u = vt->fx/64.f, v = -vt->fy/64.f;
-			VitaWalls.Uv.Push(x.a * u + x.b * v + x.c); VitaWalls.Uv.Push(x.d * u + x.e * v + x.f);
-			VitaWalls.Rgba.Push(VitaWalls.Color);
+			b->Uv.Push(x.a * u + x.b * v + x.c); b->Uv.Push(x.d * u + x.e * v + x.f);
+			b->Rgba.Push(VitaWalls.Color);
 		}
 	}
 	flatvertices += n;

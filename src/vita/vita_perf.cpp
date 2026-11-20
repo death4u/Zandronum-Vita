@@ -235,6 +235,7 @@ void Vita_PerfFrame()
 // [Vita] GL call counters for the render detail line (linked with --wrap).
 unsigned Vita_GLCount[8];	// draws, glBegin, binds, colour, fog, vertices
 
+void Vita_SpriteBindHook(unsigned id);
 extern "C" {
 void __real_glDrawArrays(unsigned mode, int first, int count);
 static void *Vita_DrawCallers[64]; static unsigned Vita_DrawCallerN[64];
@@ -248,7 +249,8 @@ void __wrap_glDrawRangeElements(unsigned mode, unsigned s, unsigned e, int count
 void __real_glBegin(unsigned mode);
 void __wrap_glBegin(unsigned mode) { Vita_GLCount[1]++; Vita_GLPhaseDraws[Vita_GLPhase]++; __real_glBegin(mode); }
 void __real_glBindTexture(unsigned t, unsigned id);
-void __wrap_glBindTexture(unsigned t, unsigned id) { Vita_GLCount[2]++; __real_glBindTexture(t, id); }
+
+void __wrap_glBindTexture(unsigned t, unsigned id) { Vita_SpriteBindHook(id); Vita_GLCount[2]++; __real_glBindTexture(t, id); }
 void __real_glColor4f(float r, float g, float b, float a);
 static inline unsigned Vita_ClampByte(float v) { int i = (int)(v * 255.f + 0.5f); return i < 0 ? 0 : i > 255 ? 255 : i; }
 static inline void Vita_NoteColor(float r, float g, float b, float a) { extern unsigned Vita_CurColor; Vita_CurColor = Vita_ClampByte(r) | (Vita_ClampByte(g) << 8) | (Vita_ClampByte(b) << 16) | (Vita_ClampByte(a) << 24); }
