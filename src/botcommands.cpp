@@ -957,12 +957,16 @@ static const TArray<unsigned short> &Vita_SpecialNetIDs( )
 	{
 		builtTic = gametic;
 		ids.Clear( );
-		for ( unsigned int i = 0; i <= ( std::numeric_limits<unsigned short>::max )( ); i++ )
+		// walk the actors (a few thousand) rather than all 65536 net IDs
+		TThinkerIterator<AActor> it;
+		AActor *pActor;
+		while (( pActor = it.Next( )) != NULL )
 		{
-			AActor *pActor = g_ActorNetIDList.findPointerByID( static_cast<unsigned short>( i ));
-			if ( pActor && ( pActor->flags & MF_SPECIAL ))
-				ids.Push( static_cast<unsigned short>( i ));
+			if (( pActor->flags & MF_SPECIAL ) && g_ActorNetIDList.findPointerByID( pActor->NetID ) == pActor )
+				ids.Push( pActor->NetID );
 		}
+		if ( ids.Size( ) > 1 )
+			qsort( &ids[0], ids.Size( ), sizeof( unsigned short ), []( const void *a, const void *b ) { return (int)*(const unsigned short *)a - (int)*(const unsigned short *)b; } );
 	}
 	return ids;
 }
@@ -997,8 +1001,10 @@ int botcmd_LookForItemType( CSkullBot *pBot, const char *FunctionName )
 		const TArray<unsigned short> &ids = Vita_SpecialNetIDs( );
 		for ( unsigned k = Vita_FirstSpecialIndex( ids, netID ); k < ids.Size( ); k++ )
 		{
-			if ( !BOTCMD_IgnoreItem( pBot, ids[k], visibilityCheck ) &&
-				g_ActorNetIDList.findPointerByID( ids[k] )->GetClass( )->IsDescendantOf( RUNTIME_CLASS( T )))
+			// cheap test first: BOTCMD_IgnoreItem may do a sight check
+			AActor *pActor = g_ActorNetIDList.findPointerByID( ids[k] );
+			if ( pActor && pActor->GetClass( )->IsDescendantOf( RUNTIME_CLASS( T )) &&
+				!BOTCMD_IgnoreItem( pBot, ids[k], visibilityCheck ))
 				return ids[k];
 		}
 		return -1;
@@ -1054,8 +1060,9 @@ int botcmd_LookForItemWithFlag( CSkullBot *pBot, const int Flag, const char *Fun
 		const TArray<unsigned short> &ids = Vita_SpecialNetIDs( );
 		for ( unsigned k = Vita_FirstSpecialIndex( ids, netID ); k < ids.Size( ); k++ )
 		{
-			if ( !BOTCMD_IgnoreItem( pBot, ids[k], visibilityCheck ) &&
-				( g_ActorNetIDList.findPointerByID( ids[k] )->STFlags & Flag ))
+			AActor *pActor = g_ActorNetIDList.findPointerByID( ids[k] );
+			if ( pActor && ( pActor->STFlags & Flag ) &&
+				!BOTCMD_IgnoreItem( pBot, ids[k], visibilityCheck ))
 				return ids[k];
 		}
 		return -1;

@@ -486,7 +486,7 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 				tex->ProcessData(buffer, w, h, false);
 			}
 #ifdef __vita__
-			if (vkey != 0 && !tex->bMasked)	// masked textures keep data from ProcessData (holes): not cached
+			if (vkey != 0)	// (a cached masked texture just isn't split into its solid areas: a draw-time optimisation)
 			{
 				Vita_TexCachePending.Key = vkey;
 				Vita_TexCachePending.Meta.Masked = tex->bMasked;

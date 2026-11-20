@@ -36,6 +36,7 @@
 
 #ifdef __vita__
 #include <psp2/kernel/processmgr.h>
+#include <vitaGL.h>
 #include "vita/vita_texcache.h"
 #include "vita/vita_system.h"
 #endif
@@ -1249,12 +1250,12 @@ void FTextureManager::PrecacheLevel (void)
 	screen->GetHitlist(hitlist);
 #ifdef __vita__
 	extern unsigned long long Vita_PrecacheDeadline;
-	extern int Vita_PrecacheDone, Vita_PrecacheSkipped;
+	extern int Vita_PrecacheDone, Vita_PrecacheSkipped, Vita_PrecacheSkippedTime;
 	EXTERN_CVAR(Int, vita_precachelevel)
 	const unsigned long long vita_t0 = sceKernelGetProcessTimeWide();
 	// (not for the title map: it would only delay the menu)
 	Vita_PrecacheDeadline = !stricmp(level.mapname, "TITLEMAP") ? 0 : vita_t0 + (unsigned long long)MAX(0, (int)vita_precachelevel) * 1000000;
-	Vita_PrecacheDone = Vita_PrecacheSkipped = 0;
+	Vita_PrecacheDone = Vita_PrecacheSkipped = Vita_PrecacheSkippedTime = 0;
 	unsigned vita_hits0, vita_writes0;
 	Vita_TexCacheStats(vita_hits0, vita_writes0);
 	// sky and wall/flat textures first (sprites last: hitlist bit 1 is shared)
@@ -1267,8 +1268,10 @@ void FTextureManager::PrecacheLevel (void)
 	{
 		unsigned hits, writes;
 		Vita_TexCacheStats(hits, writes);
-		Vita_BootLog("precached %d level textures in %llu ms (%d left for later: time limit or GPU memory); texture cache: %u loaded, %u new",
-			Vita_PrecacheDone, (sceKernelGetProcessTimeWide() - vita_t0) / 1000, Vita_PrecacheSkipped, hits - vita_hits0, writes - vita_writes0);
+		Vita_BootLog("precached %d level textures in %llu ms (%d left for later: %d time limit, %d GPU memory low); texture cache: %u loaded, %u new; GPU free RAM %u MB CDRAM %u MB",
+			Vita_PrecacheDone, (sceKernelGetProcessTimeWide() - vita_t0) / 1000, Vita_PrecacheSkipped, Vita_PrecacheSkippedTime,
+			Vita_PrecacheSkipped - Vita_PrecacheSkippedTime, hits - vita_hits0, writes - vita_writes0,
+			(unsigned)(vglMemFree(VGL_MEM_RAM) >> 20), (unsigned)(vglMemFree(VGL_MEM_VRAM) >> 20));
 	}
 	Vita_PrecacheDeadline = 0;
 #endif

@@ -285,7 +285,8 @@ static void ScanDir(const std::string &dir, const std::string &prefix, std::vect
 		if (S_ISDIR(st.st_mode))
 		{
 			std::string lname = Lower(name);
-			if (depth > 0 && lname != "saves" && lname != "screenshots" && lname != "cache")
+			if (depth > 0 && lname != "saves" && lname != "screenshots" && lname != "cache"
+				&& lname != "texcache" && lname != "controls")	// the texture cache has hundreds of files
 				subdirs.push_back(name);
 			continue;
 		}

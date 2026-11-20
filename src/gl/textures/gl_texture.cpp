@@ -361,7 +361,7 @@ void FTexture::CreateDefaultBrightmap()
 // seconds per level and stops when GPU memory gets low.
 CVAR(Int, vita_precachelevel, 30, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 unsigned long long Vita_PrecacheDeadline;
-int Vita_PrecacheDone, Vita_PrecacheSkipped;
+int Vita_PrecacheDone, Vita_PrecacheSkipped, Vita_PrecacheSkippedTime;
 #endif
 
 void FTexture::PrecacheGL()
@@ -369,12 +369,8 @@ void FTexture::PrecacheGL()
 #ifdef __vita__
 	if (!gl_precache && vita_precachelevel > 0 && Vita_PrecacheDeadline != 0)
 	{
-		if (sceKernelGetProcessTimeWide() > Vita_PrecacheDeadline
-			|| vglMemFree(VGL_MEM_RAM) + vglMemFree(VGL_MEM_VRAM) < (40u << 20))
-		{
-			Vita_PrecacheSkipped++;
-			return;
-		}
+		if (sceKernelGetProcessTimeWide() > Vita_PrecacheDeadline) { Vita_PrecacheSkipped++; Vita_PrecacheSkippedTime++; return; }
+		if (vglMemFree(VGL_MEM_RAM) + vglMemFree(VGL_MEM_VRAM) < (40u << 20)) { Vita_PrecacheSkipped++; return; }
 		FMaterial * gltex = FMaterial::ValidateTexture(this);
 		if (gltex) { gltex->Precache(); Vita_PrecacheDone++; }
 		return;
