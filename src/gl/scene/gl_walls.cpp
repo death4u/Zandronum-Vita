@@ -97,10 +97,17 @@ void GLWall::CheckGlowing()
 // 
 //
 //==========================================================================
+#ifdef __vita__
+void Vita_WallCacheNotePut(const GLWall *w, bool translucent, int type);
+void Vita_WallCacheNoteMissing(side_t *side, subsector_t *sub, fixed_t height, bool upper);
+#endif
 void GLWall::PutWall(bool translucent)
 {
 	GLPortal * portal;
 	int list;
+#ifdef __vita__
+	Vita_WallCacheNotePut(this, translucent, type);
+#endif
 
 	static char passflag[]={
 		0,		//RENDERWALL_NONE,             
@@ -1673,6 +1680,9 @@ void GLWall::Process(seg_t *seg, sector_t * frontsector, sector_t * backsector)
 				else if (!(seg->sidedef->Flags & WALLF_POLYOBJ))
 				{
 					gl_drawinfo->AddUpperMissingTexture(seg->sidedef, sub, bch1a);
+#ifdef __vita__
+					Vita_WallCacheNoteMissing(seg->sidedef, sub, bch1a, true);
+#endif
 				}
 			}
 		}
@@ -1742,6 +1752,9 @@ void GLWall::Process(seg_t *seg, sector_t * frontsector, sector_t * backsector)
 				!(seg->sidedef->Flags & WALLF_POLYOBJ))
 			{
 				gl_drawinfo->AddLowerMissingTexture(seg->sidedef, sub, bfh1);
+#ifdef __vita__
+				Vita_WallCacheNoteMissing(seg->sidedef, sub, bfh1, false);
+#endif
 			}
 		}
 	}

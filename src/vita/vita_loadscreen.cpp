@@ -80,6 +80,7 @@ CVAR(Bool, vita_levelwarmup, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 static bool Warmup;
 static unsigned long long WarmupStart, WarmupLastFrame;
 static int WarmupGoodFrames;
+static unsigned long long WarmupCalmSince;	// 0047: last frame over 200 ms
 extern bool Vita_TexBuildIdle();
 
 void Vita_WarmupBegin()
@@ -88,6 +89,7 @@ void Vita_WarmupBegin()
 	Warmup = true;
 	WarmupStart = WarmupLastFrame = sceKernelGetProcessTimeWide();
 	WarmupGoodFrames = 0;
+	WarmupCalmSince = WarmupStart;
 }
 
 bool Vita_WarmupActive() { return Warmup; }
@@ -99,9 +101,11 @@ void Vita_WarmupOverlay()
 	const unsigned long long now = sceKernelGetProcessTimeWide();
 	const unsigned long long ft = now - WarmupLastFrame;
 	WarmupLastFrame = now;
-	if (ft < 200000) WarmupGoodFrames++; else WarmupGoodFrames = 0;
-	if (gamestate != GS_LEVEL || now - WarmupStart > 10000000ull ||
-		(level.maptime >= TICRATE && WarmupGoodFrames >= 8 && Vita_TexBuildIdle()))
+	if (ft < 200000) WarmupGoodFrames++; else { WarmupGoodFrames = 0; WarmupCalmSince = now; }
+	// 0047: shown after 2 s in a row without a frame over 200 ms (0046's
+	// 8 frames let HaloDoom through while it was still freezing), 30 s at most
+	if (gamestate != GS_LEVEL || now - WarmupStart > 30000000ull ||
+		(level.maptime >= TICRATE && now - WarmupCalmSince >= 2000000ull && Vita_TexBuildIdle()))
 	{
 		Vita_BootLog("level start: game shown after %llu ms of warm-up (%d game tics)", (now - WarmupStart) / 1000, level.maptime);
 		Warmup = false;

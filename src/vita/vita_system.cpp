@@ -128,6 +128,7 @@ static int Vita_LogThreadFunc(SceSize, void *)
 		// written at most once a second (0045)
 		sceKernelDelayThread(1000000);
 		VitaLogPending = 0;
+		{ extern void Vita_PerfLogThreadHook(); Vita_PerfLogThreadHook(); }
 		for (int i = 0; i < 2; i++) Vita_LogFlushFile(i);
 	}
 	return 0;
@@ -169,6 +170,20 @@ static void Vita_LogAppend(int file, const char *text, unsigned len)
 		break;
 	}
 	if (!VitaLogPending) { VitaLogPending = 1; sceKernelSignalSema(VitaLogSema, 1); }
+}
+
+// [Vita] 0046/0047: helper threads off the game's cores.
+void Vita_ThreadToCore2(int prioOffset)
+{
+	const SceUID me = sceKernelGetThreadId();
+	sceKernelChangeThreadCpuAffinityMask(me, SCE_KERNEL_CPU_MASK_USER_2);
+	sceKernelChangeThreadPriority(me, 0x10000100 + prioOffset);
+}
+
+// Wakes the log thread (profiler report waiting).
+void Vita_LogKick()
+{
+	if (VitaLogThread >= 0 && !VitaLogPending) { VitaLogPending = 1; sceKernelSignalSema(VitaLogSema, 1); }
 }
 
 // Writes out everything pending, from this thread (fatal errors, exit).
@@ -281,6 +296,7 @@ extern "C" void Vita_EarlyInit(void)
 	Vita_StartEventWatch();
 	Vita_LogStartThread();
 	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("main"); }
+	{ extern void Vita_SetMainThread(); Vita_SetMainThread(); }
 
 	scePowerSetArmClockFrequency(444);
 	scePowerSetBusClockFrequency(222);
@@ -727,3 +743,34 @@ int Vita_BigSelfTest()
 	free(r);
 	return Vita_BigCount == 0 ? 0 : 6;
 }
+
+// [Vita] 0047: time the game threads spend in memory-card reads (open,
+// seek, read). Linked with --wrap. Per frame in the [perf] line, per watched
+// actor update in the slow-tick line.
+#include <psp2/io/fcntl.h>
+extern "C" SceSSize __real_sceIoRead(SceUID fd, void *buf, SceSize nbyte);
+extern "C" SceUID __real_sceIoOpen(const char *file, int flags, SceMode mode);
+extern "C" SceOff __real_sceIoLseek(SceUID fd, SceOff offset, int whence);
+unsigned long long Vita_IoUsMain, Vita_IoUsLogic, Vita_TickIoUs;
+extern bool Vita_OnLogicThread();
+struct FVitaIoTimer
+{
+	unsigned long long t0; int who;	// 0 other, 1 main, 2 logic
+	FVitaIoTimer()
+	{
+		const SceUID me = sceKernelGetThreadId();
+		who = me == Vita_MainThreadId ? 1 : Vita_OnLogicThread() ? 2 : 0;
+		t0 = who || (Vita_TickWatchThread >= 0 && Vita_TickWatchThread == me) ? sceKernelGetProcessTimeWide() : 0;
+	}
+	~FVitaIoTimer()
+	{
+		if (!t0) return;
+		const unsigned long long dt = sceKernelGetProcessTimeWide() - t0;
+		if (who == 1) Vita_IoUsMain += dt; else if (who == 2) Vita_IoUsLogic += dt;
+		if (Vita_TickWatchThread >= 0 && Vita_TickWatchThread == sceKernelGetThreadId()) Vita_TickIoUs += dt;
+	}
+};
+void Vita_SetMainThread() {}	// (Vita_MainThreadId is set at start-up)
+extern "C" SceSSize __wrap_sceIoRead(SceUID fd, void *buf, SceSize nbyte) { FVitaIoTimer t; return __real_sceIoRead(fd, buf, nbyte); }
+extern "C" SceUID __wrap_sceIoOpen(const char *file, int flags, SceMode mode) { FVitaIoTimer t; return __real_sceIoOpen(file, flags, mode); }
+extern "C" SceOff __wrap_sceIoLseek(SceUID fd, SceOff offset, int whence) { FVitaIoTimer t; return __real_sceIoLseek(fd, offset, whence); }

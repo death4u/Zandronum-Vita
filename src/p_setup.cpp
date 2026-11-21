@@ -4008,6 +4008,8 @@ void P_SetupLevel (char *lumpname, int position)
 	// [Vita] Start the new level with as much memory as possible in one piece:
 	// GL textures, models and the bot path buffers of the old level go.
 	{ extern void Vita_LearnSave(); Vita_LearnSave(); }
+	{ extern void Vita_WallCacheClear(); Vita_WallCacheClear(); }
+	{ extern void Vita_SurfCacheClear(); Vita_SurfCacheClear(); }
 	{ extern void Vita_FlushLevelMemory(); Vita_FlushLevelMemory(); }
 	extern void Vita_LoadScreenBegin(const char *), Vita_LoadProgress(const char *, int, int, bool), Vita_TexCacheInit();
 	if (stricmp(lumpname, "TITLEMAP")) Vita_LoadScreenBegin(lumpname);

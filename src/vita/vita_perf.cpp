@@ -115,6 +115,8 @@ struct FPerfSnap
 	unsigned long long GCTime, LogicStartDelay, LogicRunTime;
 	unsigned HeapMB, BigKB, ObjMB, VglRam, VglVram, PoolPeak, PoolSize;
 	char Callers[256];
+	unsigned WallHits, WallMisses, SurfHits, SurfMisses;
+	unsigned long long IoMain, IoLogic;
 };
 static FPerfSnap PerfSnap;
 static unsigned long long Vita_PerfGpuQueryUs;
@@ -129,7 +131,7 @@ static void Vita_PerfFormat(FPerfSnap &S)
 			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f (players %.1f [bot AI %.1f, weapons %.1f, move %.1f, use %.1f], thinkers %.1f, hud %.1f, bot aim %.1f, particles %.1f), 3D %.1f (bsp %.1f, opaque %.1f [sky %.1f, batch draws %.1f], waiting for logic %.1f, decals %.1f, portals+sky %.1f, translucent %.1f, models %.1f [expand %.1f draw %.1f bind %.1f]), 2D+swap %.1f (swap %.1f)"
 			" | in %.0f s: %d texture uploads %.0f ms (decode %.0f ms), %d warp updates %.0f ms, %d model loads %.0f ms | logic thread: start delay %.1f, run %.1f | heap reserved %u MB + %u MB outside (objects %u MB, gc %.1f ms/frame)"
 #ifndef NO_GL
-			", vitaGL free RAM %u MB CDRAM %u MB, immediate-mode pool peak %u of %u KB"
+			", vitaGL free RAM %u MB CDRAM %u MB, immediate-mode pool peak %u of %u KB | kept between frames: walls %u%%, wall vertices %u%% | memory card waits per frame: main %.1f ms, logic %.1f ms"
 #endif
 			"\n",
 			S.Frames * 1e6 / S.Period, S.Worst / 1000.0,
@@ -146,7 +148,7 @@ static void Vita_PerfFormat(FPerfSnap &S)
 			S.LogicStartDelay * f / 1000.0, S.LogicRunTime * f / 1000.0,
 			S.HeapMB, S.BigKB >> 10, S.ObjMB, S.GCTime * f / 1000.0
 #ifndef NO_GL
-			, S.VglRam, S.VglVram, (S.PoolPeak >> 10), S.PoolSize
+			, S.VglRam, S.VglVram, (S.PoolPeak >> 10), S.PoolSize, S.WallHits + S.WallMisses ? S.WallHits * 100 / (S.WallHits + S.WallMisses) : 0, S.SurfHits + S.SurfMisses ? S.SurfHits * 100 / (S.SurfHits + S.SurfMisses) : 0, S.IoMain * f / 1000.0, S.IoLogic * f / 1000.0
 #endif
 			);
 		Vita_ConsoleWrite(line);
@@ -194,7 +196,11 @@ static void Vita_PerfFormat(FPerfSnap &S)
 				S.Acc[VPERF_DSPRITES] * f / 1000.0, S.Calls[VPERF_DSPRITES] * f,
 				S.Acc[VPERF_DLIGHTS] * f / 1000.0, S.Calls[VPERF_DLIGHTS] * f);
 			Vita_ConsoleWrite(line);
-						snprintf(line, sizeof(line), "[perf]   sprites per frame (ms): dynamic lights %.1f, texture binds/first loads %.1f, models %.1f | translucent sort/split %.1f\n",
+						snprintf(line, sizeof(line), "[perf]   bsp per frame (ms): walls %.1f (x%.0f), things %.1f, sectors/flats %.1f | wall draw: setup %.1f, emit %.1f (x%.0f), light selection %.1f\n",
+				S.Acc[VPERF_BSPWALLS] * f / 1000.0, S.Calls[VPERF_BSPWALLS] * f, S.Acc[VPERF_BSPTHINGS] * f / 1000.0, S.Acc[VPERF_BSPFLATS] * f / 1000.0,
+				S.Acc[VPERF_WSETUP] * f / 1000.0, S.Acc[VPERF_WEMIT] * f / 1000.0, S.Calls[VPERF_WEMIT] * f, S.Acc[VPERF_WLSEL] * f / 1000.0);
+			Vita_ConsoleWrite(line);
+			snprintf(line, sizeof(line), "[perf]   sprites per frame (ms): dynamic lights %.1f, texture binds/first loads %.1f, models %.1f | translucent sort/split %.1f\n",
 				S.Acc[VPERF_SPRLIGHT] * f / 1000.0, S.Acc[VPERF_SPRBIND] * f / 1000.0, S.Acc[VPERF_SPRMODEL] * f / 1000.0, S.Acc[VPERF_TSORT] * f / 1000.0);
 			Vita_ConsoleWrite(line);
 			const char *cb = S.Callers;
@@ -248,11 +254,38 @@ static unsigned Vita_HeapReservedMB()
 	return (unsigned)(__malloc_current_mallinfo.arena >> 20);
 }
 
+// 0047: formatted by the log thread (Vita_PerfLogThreadHook); the main
+// thread only copies the counters. If the log thread hasn't taken the last
+// copy after 5 s, it is formatted here (so the report never goes missing).
+static volatile int PerfPending;
+static unsigned long long PerfPendingSince;
+void Vita_PerfLogThreadHook()
+{
+	if (__atomic_load_n(&PerfPending, __ATOMIC_ACQUIRE))
+	{
+		Vita_PerfFormat(PerfSnap);
+		__atomic_store_n(&PerfPending, 0, __ATOMIC_RELEASE);
+	}
+}
 static void Vita_PerfSnapshot(int frames, unsigned long long period, unsigned long long worst)
 {
+	if (__atomic_load_n(&PerfPending, __ATOMIC_ACQUIRE))
+	{
+		if (Vita_PerfNow() - PerfPendingSince < 5000000ull) return;	// log thread still busy with the last one
+		Vita_PerfFormat(PerfSnap);
+		PerfPending = 0;
+		Vita_BootLog("profiler report written by the game thread (log thread late)");
+	}
 	FPerfSnap &S = PerfSnap;
 	S.Detail = Vita_PerfDetail;
 	S.Frames = frames; S.Period = period; S.Worst = worst;
+	{
+		extern unsigned Vita_WallCacheHits, Vita_WallCacheMisses, Vita_SurfHits, Vita_SurfMisses;
+		S.WallHits = Vita_WallCacheHits; S.WallMisses = Vita_WallCacheMisses; S.SurfHits = Vita_SurfHits; S.SurfMisses = Vita_SurfMisses;
+		Vita_WallCacheHits = Vita_WallCacheMisses = Vita_SurfHits = Vita_SurfMisses = 0;
+		extern unsigned long long Vita_IoUsMain, Vita_IoUsLogic;
+		S.IoMain = Vita_IoUsMain; S.IoLogic = Vita_IoUsLogic; Vita_IoUsMain = Vita_IoUsLogic = 0;
+	}
 	memcpy(S.Acc, Vita_PerfAcc, sizeof(S.Acc));
 	memcpy(S.Calls, Vita_PerfCalls, sizeof(S.Calls));
 	S.GCTime = Vita_GCTime; S.LogicStartDelay = Vita_LogicStartDelay; S.LogicRunTime = Vita_LogicRunTime;
@@ -289,7 +322,9 @@ static void Vita_PerfSnapshot(int frames, unsigned long long period, unsigned lo
 	// 0045: formatted right here again. 0044 handed this to its own thread,
 	// whose output never appeared on the Vita (fine in Vita3K); the stalls
 	// came from mallinfo(), which is gone.
-	Vita_PerfFormat(S);
+	PerfPendingSince = Vita_PerfNow();
+	__atomic_store_n(&PerfPending, 1, __ATOMIC_RELEASE);
+	{ extern void Vita_LogKick(); Vita_LogKick(); }
 }
 
 unsigned Vita_FrameNo;
@@ -513,7 +548,7 @@ void Vita_TickWatchBegin()
 	Vita_TickWaitId = -1; Vita_TickWaitType = 0; Vita_TickWaitIdCount = 0;
 	for (int i = 0; i < 16; i++) Vita_Threads[i].RunWhileWaiting = 0;
 	Vita_TickLogUs = Vita_TickScriptStartUs = 0;
-	{ extern unsigned long long Vita_TickMallocUs; extern unsigned Vita_TickMallocCalls; Vita_TickMallocUs = 0; Vita_TickMallocCalls = 0; }
+	{ extern unsigned long long Vita_TickMallocUs, Vita_TickIoUs; extern unsigned Vita_TickMallocCalls; Vita_TickMallocUs = 0; Vita_TickMallocCalls = 0; Vita_TickIoUs = 0; }
 	Vita_TickWatchThread = sceKernelGetThreadId();
 }
 void Vita_TickWatchEnd() { Vita_TickWatchThread = -1; }
@@ -529,7 +564,7 @@ const char *Vita_TickWatchReport()
 		else if (sceKernelGetSemaInfo(Vita_TickWaitId, &si) >= 0) snprintf(what, sizeof(what), "semaphore %s", si.name);
 		else snprintf(what, sizeof(what), "type %x id %x", Vita_TickWaitType, (unsigned)Vita_TickWaitId);
 	}
-	extern unsigned long long Vita_TickMallocUs; extern unsigned Vita_TickMallocCalls;
+	extern unsigned long long Vita_TickMallocUs, Vita_TickIoUs; extern unsigned Vita_TickMallocCalls;
 	char others[96] = "";
 	{
 		size_t ol = 0;
@@ -539,7 +574,7 @@ const char *Vita_TickWatchReport()
 				ol += snprintf(others + ol, sizeof(others) - ol, "%s%s %u", ol ? ", " : "", Vita_Threads[i].Name, Vita_Threads[i].RunWhileWaiting);
 		if (ol == 0) snprintf(others, sizeof(others), "none of the game's threads");
 	}
-	snprintf(buf, sizeof(buf), "samples every 2 ms: running %u, preempted %u, waiting %u (mostly on %s); memory allocation %llu ms in %u calls, log writing %llu ms, script starts %llu ms; running meanwhile: %s",
-		Vita_TickSamples[0], Vita_TickSamples[1], Vita_TickSamples[2], what, Vita_TickMallocUs / 1000, Vita_TickMallocCalls, Vita_TickLogUs / 1000, Vita_TickScriptStartUs / 1000, others);
+	snprintf(buf, sizeof(buf), "samples every 2 ms: running %u, preempted %u, waiting %u (mostly on %s); memory allocation %llu ms in %u calls, memory card %llu ms, log writing %llu ms, script starts %llu ms; running meanwhile: %s",
+		Vita_TickSamples[0], Vita_TickSamples[1], Vita_TickSamples[2], what, Vita_TickMallocUs / 1000, Vita_TickMallocCalls, Vita_TickIoUs / 1000, Vita_TickLogUs / 1000, Vita_TickScriptStartUs / 1000, others);
 	return buf;
 }

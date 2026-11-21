@@ -81,6 +81,12 @@ bool Vita_VertexLightsOn();
 bool Vita_SetupPolyLights(struct FLightNode *head0, struct FLightNode *head1, const float *p0, const float *p1, const float *p2);
 // Back to the surface's own bucket after the lit triangles.
 void Vita_EndPolyLights();
+// Surface cache (gl_vitasurfcache.cpp, 0047)
+bool Vita_SurfTry(const void *a, const void *b, unsigned kind, unsigned sig);
+void Vita_SurfNote(FVitaBucket *b, unsigned first, unsigned count, bool uv2);
+void Vita_SurfBad();
+void Vita_SurfEnd();
+
 // Adds a lit triangle to the current bucket (after Vita_SetupPolyLights).
 void Vita_EmitLitTriangle(const float *p0, const float *p1, const float *p2, const float *uv0, const float *uv1, const float *uv2);
 
@@ -114,6 +120,7 @@ static inline void VitaGL_End()
 		// plane from the corners farthest apart (fans can have split points)
 		if (Vita_SetupPolyLights(VitaWalls.LightHead[0], VitaWalls.LightHead[1], f, f + 3 * (n / 2), f + 3 * (n - 1)))
 		{
+			Vita_SurfBad();
 			for (unsigned k = 1; k + 1 < n; k++)
 				Vita_EmitLitTriangle(f, f + 3 * k, f + 3 * (k + 1), t, t + 2 * k, t + 2 * (k + 1));
 			Vita_EndPolyLights();
@@ -130,6 +137,7 @@ static inline void VitaGL_End()
 	// reserve once, then write (TArray::Push per float was a noticeable cost)
 	FVitaBucket *b = VitaWalls.Cur;
 	const unsigned tris = n - 2;
+	const unsigned vfirst = b->Rgba.Size();
 	float *xyz = &b->Xyz[b->Xyz.Reserve(tris * 9)];
 	float *uv = &b->Uv[b->Uv.Reserve(tris * 6)];
 	unsigned *rgba = &b->Rgba[b->Rgba.Reserve(tris * 3)];
@@ -146,6 +154,7 @@ static inline void VitaGL_End()
 			*rgba++ = color;
 		}
 	}
+	Vita_SurfNote(b, vfirst, tris * 3, false);
 }
 
 #define glBegin VitaGL_Begin

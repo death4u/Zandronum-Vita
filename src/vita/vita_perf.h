@@ -46,6 +46,12 @@ enum
 	VPERF_DSPRITES,		// detail only: sprites drawn from draw lists
 	VPERF_DLIGHTS,		// detail only: dynamic light passes (walls + flats)
 	VPERF_WARP,
+	VPERF_BSPWALLS,	// bsp: wall processing (detail)
+	VPERF_BSPTHINGS,	// bsp: sprites/things (detail)
+	VPERF_BSPFLATS,	// bsp: sector/flat processing (detail)
+	VPERF_WSETUP,	// wall draw: colour/fog/batch setup (detail)
+	VPERF_WEMIT,	// wall draw: vertex emission incl. light prep (detail)
+	VPERF_WLSEL,	// wall draw: light selection (detail)
 	VPERF_SPRLIGHT,	// sprite drawing: dynamic light lookup (detail)
 	VPERF_SPRBIND,	// sprite drawing: texture bind incl. first loads (detail)
 	VPERF_SPRMODEL,	// sprite drawing: models (detail)

@@ -147,6 +147,9 @@ public:
 
 public:
 	seg_t * seg;			// this gives the easiest access to all other structs involved
+#ifdef __vita__
+	void Vita_Put(bool translucent) { PutWall(translucent); }	// wall cache replay (gl_vitawallcache.cpp)
+#endif
 	subsector_t * sub;		// For polyobjects
 private:
 

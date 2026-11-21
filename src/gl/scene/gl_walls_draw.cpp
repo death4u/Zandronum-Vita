@@ -602,6 +602,7 @@ void Vita_EmitLightPassFan()
 		}
 	}
 	FVitaBucket *b = w.Cur;
+	const unsigned vfirst = b->Rgba.Size();
 	for (unsigned k = 1; k + 1 < n; k++)
 	{
 		const unsigned idx[3] = { 0, k, k + 1 };
@@ -614,6 +615,7 @@ void Vita_EmitLightPassFan()
 			b->Rgba.Push(w.Color);
 		}
 	}
+	Vita_SurfNote(b, vfirst, (n - 2) * 3, true);
 }
 
 void Vita_FlushWalls()
@@ -915,6 +917,40 @@ void Vita_EmitLitTriangle(const float *p0, const float *p1, const float *p2, con
 }
 #endif
 
+#ifdef __vita__
+// [Vita] Surface cache signatures (gl_vitasurfcache.cpp)
+static inline unsigned VSMix(unsigned h, unsigned v) { return (h ^ v) * 16777619u; }
+static inline unsigned VSMixF(unsigned h, float f) { unsigned v; memcpy(&v, &f, 4); return VSMix(h, v); }
+unsigned Vita_WallGeomSig(const GLWall *w)
+{
+	unsigned h = 2166136261u;
+	h = VSMixF(h, w->glseg.x1); h = VSMixF(h, w->glseg.y1); h = VSMixF(h, w->glseg.x2); h = VSMixF(h, w->glseg.y2);
+	h = VSMixF(h, w->glseg.fracleft); h = VSMixF(h, w->glseg.fracright);
+	for (int i = 0; i < 2; i++) { h = VSMixF(h, w->ztop[i]); h = VSMixF(h, w->zbottom[i]); h = VSMixF(h, w->zceil[i]); h = VSMixF(h, w->zfloor[i]); }
+	h = VSMixF(h, w->uplft.u); h = VSMixF(h, w->uplft.v); h = VSMixF(h, w->uprgt.u); h = VSMixF(h, w->uprgt.v);
+	h = VSMixF(h, w->lolft.u); h = VSMixF(h, w->lolft.v); h = VSMixF(h, w->lorgt.u); h = VSMixF(h, w->lorgt.v);
+	h = VSMix(h, w->flags); h = VSMix(h, w->type);
+	for (int i = 0; i < 2; i++)
+	{
+		const vertex_t *v = w->vertexes[i];
+		if (v == NULL) continue;
+		h = VSMix(h, (unsigned)v->numheights);
+		for (int k = 0; k < v->numheights && k < 8; k++) h = VSMixF(h, v->heightlist[k]);
+	}
+	return h;
+}
+static unsigned Vita_BatchStateSig(unsigned h, bool color = true)
+{
+	bool on; PalEntry fc; float fd;
+	gl_RenderState.VitaGetFog(on, fc, fd);
+	h = VSMix(h, (unsigned)(uintptr_t)VitaWalls.NextTex); h = VSMix(h, (unsigned)VitaWalls.NextCm); h = VSMix(h, (unsigned)VitaWalls.NextFlags);
+	if (color) { h = VSMix(h, VitaWalls.UseCurColor ? Vita_CurColor : VitaWalls.NextColor); h = VSMix(h, VitaWalls.UseCurColor ? 1 : 0); }
+	h = VSMix(h, on ? 1 : 0); if (on) { h = VSMix(h, fc.d); h = VSMixF(h, fd); }
+	h = VSMix(h, (unsigned)gl_RenderState.VitaGetBlendEquation()); h = VSMix(h, (unsigned)VitaWalls.LightPassMode);
+	return h ? h : 1;
+}
+#endif
+
 void GLWall::Draw(int pass)
 {
 	FLightNode * node;
@@ -934,10 +970,13 @@ void GLWall::Draw(int pass)
 	{
 		rel = rellight + getExtraLight();
 		float r, g, b;
+		{
+		VITA_PERF_D(VPERF_WSETUP);
 		gl_SetColor(lightlevel, rel, &Colormap, &r, &g, &b);
 		if (type != RENDERWALL_M2SNF) gl_SetFog(lightlevel, rel, &Colormap, false);
 		else gl_SetFog(255, 0, NULL, false);
 		Vita_BatchSurface(gltexture, Colormap.colormap, flags & 3, false, r, g, b);
+		}
 		VitaWalls.LightHead[0] = VitaWalls.LightHead[1] = NULL;
 		if (Vita_VertexLightsOn() && seg->sidedef != NULL)
 		{
@@ -945,7 +984,16 @@ void GLWall::Draw(int pass)
 			else if (sub) { VitaWalls.LightHead[0] = sub->lighthead[0]; VitaWalls.LightHead[1] = sub->lighthead[1]; }
 		}
 		VitaWalls.Collecting = true;
-		RenderWall(3, NULL);
+		{
+			VITA_PERF_D(VPERF_WEMIT);
+			const bool vcache = VitaWalls.LightHead[0] == NULL && VitaWalls.LightHead[1] == NULL;
+			if (!vcache || !Vita_SurfTry(seg, this == NULL ? NULL : (const void *)(uintptr_t)type, 0x100 | (unsigned)(ztop[0] * 4.f) << 9,
+				Vita_BatchStateSig(Vita_WallGeomSig(this))))
+			{
+				RenderWall(3, NULL);
+				Vita_SurfEnd();
+			}
+		}
 		VitaWalls.Collecting = false;
 		VitaWalls.LightHead[0] = VitaWalls.LightHead[1] = NULL;
 		return;
@@ -1002,10 +1050,31 @@ void GLWall::Draw(int pass)
 		FLightNode *vhead = node;
 		for (; node; node = node->nextLight)
 		{
-			if (!(node->lightsource->flags2&MF2_DORMANT) && Vita_LightAllowed(vhead, node->lightsource))
+			bool vok;
+			{ VITA_PERF_D(VPERF_WLSEL); vok = !(node->lightsource->flags2&MF2_DORMANT) && Vita_LightAllowed(vhead, node->lightsource); }
+			if (vok)
 			{
 				iter_dlight++;
-				RenderWall(1, NULL, node->lightsource);
+				VITA_PERF_D(VPERF_WEMIT);
+				ADynamicLight *vl = node->lightsource;
+				EXTERN_CVAR(Float, gl_lights_size)
+				EXTERN_CVAR(Float, gl_lights_intensity)
+				unsigned vs = Vita_WallGeomSig(this);
+				vs = VSMix(vs, (unsigned)vl->x); vs = VSMix(vs, (unsigned)vl->y); vs = VSMix(vs, (unsigned)vl->z);
+				vs = VSMixF(vs, vl->GetRadius()); vs = VSMix(vs, vl->GetRed() | (vl->GetGreen() << 8) | (vl->GetBlue() << 16));
+				vs = VSMix(vs, vl->IsSubtractive() ? 1 : 0); vs = VSMix(vs, vl->IsAdditive() ? 1 : 0);
+				vs = VSMixF(vs, gl_lights_size); vs = VSMixF(vs, gl_lights_intensity);
+				vs = VSMix(vs, (unsigned)Colormap.colormap); vs = VSMix(vs, (unsigned)lightlevel);
+				EXTERN_CVAR(Bool, gl_lights_additive)
+				vs = VSMix(vs, gl_lights_additive ? 1 : 0); vs = VSMix(vs, (flags & GLWF_FOGGY) ? 1 : 0);
+				// (PrepareLight sets the blend equation; set it first so the cached copy goes into the same batch)
+				gl_RenderState.BlendEquation(vl->IsSubtractive() ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);
+				vs = Vita_BatchStateSig(vs, false);
+				if (!Vita_SurfTry(seg, vl, 0x200 | (unsigned)type | (unsigned)(ztop[0] * 4.f) << 9 | (pass == GLPASS_LIGHT_ADDITIVE ? 0x80 : 0), vs))
+				{
+					RenderWall(1, NULL, vl);
+					Vita_SurfEnd();
+				}
 			}
 		}
 		VitaWalls.Collecting = false;

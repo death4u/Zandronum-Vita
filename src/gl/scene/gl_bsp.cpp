@@ -48,6 +48,9 @@
 #include "gl/renderer/gl_renderer.h"
 #include "gl/data/gl_data.h"
 #include "gl/data/gl_vertexbuffer.h"
+#ifdef __vita__
+#include "vita/vita_perf.h"
+#endif
 #include "gl/scene/gl_clipper.h"
 #include "gl/scene/gl_portal.h"
 #include "gl/scene/gl_wall.h"
@@ -191,7 +194,20 @@ static void AddLine (seg_t *seg)
 			{
 				GLWall wall;
 				wall.sub = currentsubsector;
+#ifdef __vita__
+				VITA_PERF_D(VPERF_BSPWALLS);
+				extern bool Vita_WallCacheTry(seg_t *, sector_t *, sector_t *, subsector_t *, unsigned &);
+				extern void Vita_WallCacheRecordBegin(seg_t *, unsigned), Vita_WallCacheRecordEnd();
+				unsigned vsig;
+				if (!Vita_WallCacheTry(seg, currentsector, backsector, currentsubsector, vsig))
+				{
+					Vita_WallCacheRecordBegin(seg, vsig);
+					wall.Process(seg, currentsector, backsector);
+					Vita_WallCacheRecordEnd();
+				}
+#else
 				wall.Process(seg, currentsector, backsector);
+#endif
 			}
 			/*
 			else
@@ -339,6 +355,9 @@ static inline void RenderThings(subsector_t * sub, sector_t * sector)
 {
 
 	SetupSprite.Clock();
+#ifdef __vita__
+	VITA_PERF_D(VPERF_BSPTHINGS);
+#endif
 	sector_t * sec=sub->sector;
 	if (sec->thinglist != NULL)
 	{
@@ -479,6 +498,9 @@ static void DoSubsector(subsector_t * sub)
 					SetupFlat.Clock();
 					//if (!gl_multithreading)
 					{
+#ifdef __vita__
+						VITA_PERF_D(VPERF_BSPFLATS);
+#endif
 						GLRenderer->ProcessSector(fakesector);
 					}
 					/*
