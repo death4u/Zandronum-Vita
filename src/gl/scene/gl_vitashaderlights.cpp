@@ -1,15 +1,13 @@
 // [Vita] 0048: dynamic lights in a shader.
 //
 // With the fixed-function renderer every dynamic light on a wall or flat was
-// an extra drawing pass of that surface (2,500-4,200 light passes a frame in
-// HaloDoom: their vertex work was most of the 35 ms "opaque" time). Now the
-// batched walls and flats are drawn once; each batch that has lights is
-// drawn with a small vitaGL shader that adds up to 16 lights per pixel:
-// texture x (sector light + sum of lights), lit only on the side of the
-// surface the light is on, fog as vitaGL's own GL_EXP fog, alpha test as the
-// renderer's. Light falloff is linear with distance (the light passes used a
-// projected round texture with a similar falloff). vita_shaderlights 0 goes
-// back to the light passes.
+// an extra drawing pass of that surface. Now the batched walls and flats are
+// drawn once; each batch that has lights is drawn with a small vitaGL shader
+// that adds up to 16 lights at every vertex (0049; 0048 did it per pixel and
+// the GPU was far too slow). Each surface contributes only its strongest
+// vita_maxsurfacelights lights within vita_lightdistance. Sector light is
+// fogged, the lights are added on top (as the light passes did); alpha test
+// as the renderer's. vita_shaderlights 0 goes back to the light passes.
 
 #include "gl/system/gl_system.h"
 #include "c_cvars.h"
@@ -25,7 +23,6 @@
 #include "gl/renderer/gl_lightdata.h"
 
 CVAR(Bool, vita_shaderlights, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-CVAR(Int, vita_shadertest, 0, 0)	// test: 1 = transpose matrices
 EXTERN_CVAR(Bool, gl_vita_batchwalls)
 EXTERN_CVAR(Float, gl_lights_size)
 EXTERN_CVAR(Float, gl_lights_intensity)
@@ -37,45 +34,48 @@ static FVitaLightProg Progs[3];
 static int ShaderState;	// 0 not tried, 1 ready, -1 failed
 unsigned Vita_ShaderDraws, Vita_ShaderLightSum;
 
-static const char *VertSrc =
+// 0049: lights per vertex. 0048 added them up per pixel and the Vita's GPU
+// couldn't keep up (swap 95 ms average, up to 183 ms). The vertex shader
+// adds the lights at each corner; the pixel shader is as cheap as plain
+// texturing.
+static const char *VertFmt =
+	"#define NL %d\n"
 	"uniform float4x4 mv;\n"
 	"uniform float4x4 proj;\n"
+	"uniform float4 lpos[NL];\n"
+	"uniform float4 lcol[NL];\n"
 	"void main(float3 aPos, float2 aUv, float4 aCol, float3 aNrm,\n"
-	"	float2 out vUv : TEXCOORD0, float4 out vCol : COLOR, float3 out vWorld : TEXCOORD1, float3 out vNrm : TEXCOORD2, float out vDist : TEXCOORD3,\n"
+	"	float2 out vUv : TEXCOORD0, float4 out vCol : COLOR, float3 out vLight : TEXCOORD1, float out vDist : TEXCOORD2,\n"
 	"	float4 out gl_Position : POSITION)\n"
 	"{\n"
 	"	float4 eye = mul(float4(aPos, 1.0f), mv);\n"
 	"	gl_Position = mul(eye, proj);\n"
 	"	vDist = abs(eye.z);\n"
-	"	vUv = aUv; vCol = aCol; vWorld = aPos; vNrm = aNrm;\n"
-	"}\n";
-
-static const char *FragFmt =
-	"#define NL %d\n#define RED %d\n#define SUMV %d\n"
-	"uniform float4 lpos[NL];\n"
-	"uniform float4 lcol[NL];\n"
-	"uniform float4 fogcol;\n"
-	"uniform float aref;\n"
-	"uniform sampler2D tex : TEXUNIT0;\n"
-	"float4 main(float2 vUv : TEXCOORD0, float4 vCol : COLOR, float3 vWorld : TEXCOORD1, float3 vNrm : TEXCOORD2, float vDist : TEXCOORD3)\n"
-	"{\n"
-	"	if (RED) return float4(1.0f, 0.0f, 0.0f, 1.0f);\n"
-	"	float4 t = tex2D(tex, vUv);\n"
+	"	vUv = aUv; vCol = aCol;\n"
 	"	float3 sum = float3(0.0f, 0.0f, 0.0f);\n"
 	"	for (int i = 0; i < NL; i++)\n"
 	"	{\n"
-	"		float3 d = lpos[i].xyz - vWorld;\n"
+	"		float3 d = lpos[i].xyz - aPos;\n"
 	"		float att = saturate(1.0f - length(d) / lpos[i].w);\n"
-	"		if (dot(d, vNrm) <= 0.0f) att = 0.0f;\n"
+	"		if (dot(d, aNrm) <= 0.0f) att = 0.0f;\n"
 	"		sum += lcol[i].rgb * att;\n"
 	"	}\n"
-	"	if (SUMV) return float4(sum, 1.0f);\n"
+	"	vLight = sum;\n"
+	"}\n";
+
+static const char *FragSrc =
+	"uniform float4 fogcol;\n"
+	"uniform float aref;\n"
+	"uniform sampler2D tex : TEXUNIT0;\n"
+	"float4 main(float2 vUv : TEXCOORD0, float4 vCol : COLOR, float3 vLight : TEXCOORD1, float vDist : TEXCOORD2)\n"
+	"{\n"
+	"	float4 t = tex2D(tex, vUv);\n"
 	"	float4 c;\n"
 	"	c.a = t.a * vCol.a;\n"
 	"	if (c.a < aref) discard;\n"
 	"	float3 base = t.rgb * vCol.rgb;\n"
 	"	if (fogcol.a > 0.0f) base = lerp(fogcol.rgb, base, saturate(exp(-fogcol.a * vDist * 1.442695f)));\n"
-	"	c.rgb = saturate(base + t.rgb * sum);\n"
+	"	c.rgb = saturate(base + t.rgb * vLight);\n"
 	"	return c;\n"
 	"}\n";
 
@@ -100,14 +100,14 @@ static GLuint Compile(GLenum type, const char *src)
 
 static bool Init()
 {
-	GLuint vs = Compile(GL_CG_VERTEX_SHADER_EXT, VertSrc);
-	if (vs == 0) return false;
+	GLuint fs = Compile(GL_CG_FRAGMENT_SHADER_EXT, FragSrc);
+	if (fs == 0) return false;
 	for (int k = 0; k < 3; k++)
 	{
 		char src[2048];
-		snprintf(src, sizeof(src), FragFmt, VitaShaderCounts[k], (vita_shadertest & 2) ? 1 : 0, (vita_shadertest & 4) ? 1 : 0);
-		GLuint fs = Compile(GL_CG_FRAGMENT_SHADER_EXT, src);
-		if (fs == 0) return false;
+		snprintf(src, sizeof(src), VertFmt, VitaShaderCounts[k]);
+		GLuint vs = Compile(GL_CG_VERTEX_SHADER_EXT, src);
+		if (vs == 0) return false;
 		GLuint p = glCreateProgram();
 		glAttachShader(p, vs);
 		glAttachShader(p, fs);
@@ -125,7 +125,7 @@ static bool Init()
 		g.LPos = glGetUniformLocation(p, "lpos"); g.LCol = glGetUniformLocation(p, "lcol");
 		g.Fog = glGetUniformLocation(p, "fogcol"); g.ARef = glGetUniformLocation(p, "aref");
 	}
-	Vita_BootLog("shader lights: ready");
+	Vita_BootLog("shader lights: ready (per vertex)");
 	return true;
 }
 
@@ -136,6 +136,8 @@ bool Vita_ShaderLightsOn()
 	return ShaderState > 0;
 }
 
+bool Vita_LightAllowed(FLightNode *head, ADynamicLight *light);
+
 void Vita_ShaderAddLights(FVitaBucket *b, FLightNode *h0, FLightNode *h1)
 {
 	FLightNode *heads[2] = { h0, h1 };
@@ -144,6 +146,7 @@ void Vita_ShaderAddLights(FVitaBucket *b, FLightNode *h0, FLightNode *h1)
 		{
 			ADynamicLight *l = n->lightsource;
 			if (l == NULL || (l->flags2 & MF2_DORMANT)) continue;
+			if (!Vita_LightAllowed(heads[j], l)) continue;	// vita_maxsurfacelights / vita_lightdistance
 			unsigned i;
 			for (i = 0; i < b->Lights.Size(); i++) if (b->Lights[i] == l) break;
 			if (i == b->Lights.Size() && b->Lights.Size() < 64) b->Lights.Push(l);
@@ -217,12 +220,8 @@ bool Vita_ShaderDrawBucket(FVitaBucket *b, unsigned piece)
 	float mv[16], proj[16];
 	glGetFloatv(GL_MODELVIEW_MATRIX, mv);
 	glGetFloatv(GL_PROJECTION_MATRIX, proj);
-	if (vita_shadertest & 1)
-	{
-		for (int r = 0; r < 4; r++) for (int c = r + 1; c < 4; c++) { float t = mv[r*4+c]; mv[r*4+c] = mv[c*4+r]; mv[c*4+r] = t; t = proj[r*4+c]; proj[r*4+c] = proj[c*4+r]; proj[c*4+r] = t; }
-	}
 	float fog[4] = { 0, 0, 0, 0 };
-	if (b->FogOn && !(vita_shadertest & 8)) { fog[0] = b->FogColor.r / 255.f; fog[1] = b->FogColor.g / 255.f; fog[2] = b->FogColor.b / 255.f; fog[3] = b->FogDensity / 64000.f; }
+	if (b->FogOn) { fog[0] = b->FogColor.r / 255.f; fog[1] = b->FogColor.g / 255.f; fog[2] = b->FogColor.b / 255.f; fog[3] = b->FogDensity / 64000.f; }
 	bool atest; float athr;
 	gl_RenderState.VitaGetAlpha(atest, athr);
 	Vita_ShaderDraws++; Vita_ShaderLightSum += ns;
