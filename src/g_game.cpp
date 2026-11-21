@@ -1584,7 +1584,9 @@ static void Vita_TestReborn()
 	if (level.maptime == vita_testreborn + 70 && p->playerstate == PST_DEAD)
 	{
 		Vita_BootLog("test: respawn requested (%s thread)", Vita_OnLogicThread() ? "logic" : "main");
-		p->playerstate = PST_REBORN;
+		// what P_DeathThink does in single player when use is pressed (0052:
+		// it's PST_ENTER there, not PST_REBORN - 0051 only caught the latter)
+		p->playerstate = NETWORK_GetState() != NETSTATE_SINGLE || (level.flags2 & LEVEL2_ALLOWRESPAWN) ? PST_REBORN : PST_ENTER;
 	}
 }
 #endif
@@ -1596,14 +1598,15 @@ void G_Ticker ()
 		if (!Vita_OnLogicThread()) Vita_NeedMainTic = false;
 		else
 		{
-			// 0051: single player, dead, use pressed: G_DoReborn reloads the
+			// 0051/0052: single player, dead, use pressed (PST_ENTER): G_DoReborn reloads the
 			// level right away (G_InitNew). That must not run on the logic
 			// thread while the main thread draws the old level (0049/0050
 			// crashes after getting killed): this tic is left to the main
 			// thread's next frame.
 			if (!vita_testnofix && NETWORK_GetState() == NETSTATE_SINGLE && !(level.flags2 & LEVEL2_ALLOWRESPAWN))
 				for (int vi = 0; vi < MAXPLAYERS; vi++)
-					if (playeringame[vi] && (players[vi].playerstate == PST_REBORN || players[vi].playerstate == PST_REBORNNOINVENTORY))
+					if (playeringame[vi] && (players[vi].playerstate == PST_REBORN || players[vi].playerstate == PST_REBORNNOINVENTORY
+						|| players[vi].playerstate == PST_ENTER || players[vi].playerstate == PST_ENTERNOINVENTORY))
 					{
 						Vita_NeedMainTic = true;
 						return;
