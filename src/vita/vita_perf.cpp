@@ -277,3 +277,38 @@ void __real_glFogfv(unsigned p, const float *v);
 void __wrap_glFogfv(unsigned p, const float *v) { Vita_GLCount[4]++; __real_glFogfv(p, v); }
 }
 #endif
+
+// [Vita] ACS watchdog: a thread on the third core notices when one ACS
+// instruction (not in the fast path) runs for over 30 ms and logs which
+// one once it's done (0042: a 26-instruction bot script took 224 ms).
+#include <psp2/kernel/threadmgr.h>
+volatile int Vita_ACSPcd, Vita_ACSScript, Vita_ACSActive;
+volatile unsigned Vita_ACSSeq;
+static int Vita_ACSWatchFunc(SceSize, void *)
+{
+	unsigned last = 0;
+	int pcd = 0, script = 0;
+	unsigned long long since = 0;
+	bool slow = false;
+	for (;;)
+	{
+		sceKernelDelayThread(10000);
+		const unsigned seq = Vita_ACSSeq;
+		const unsigned long long now = sceKernelGetProcessTimeWide();
+		if (seq != last)
+		{
+			if (slow) Vita_BootLog("slow ACS instruction: pcode %d in script %d took about %llu ms", pcd, script, (now - since) / 1000);
+			last = seq; since = now; pcd = Vita_ACSPcd; script = Vita_ACSScript; slow = false;
+		}
+		else if (Vita_ACSActive > 0 && !slow && now - since > 30000) slow = true;
+	}
+	return 0;
+}
+void Vita_ACSWatchStart()
+{
+	static bool started = false;
+	if (started) return;
+	started = true;
+	SceUID t = sceKernelCreateThread("vita_acswatch", Vita_ACSWatchFunc, 0x10000100 + 50, 0x2000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+	if (t >= 0) sceKernelStartThread(t, 0, NULL);
+}

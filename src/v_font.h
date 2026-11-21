@@ -83,6 +83,8 @@ public:
 #ifdef __vita__
 	// [Vita] Calls fn for every character picture of every loaded font.
 	static void Vita_ForEachChar(void (*fn)(FTexture *pic, void *data), void *data);
+	// every character in every text colour drawn before (hudcolors.txt)
+	static void Vita_ForEachColoredChar(void (*fn)(FTexture *pic, int translation, void *data), void *data);
 #endif
 	virtual int GetCharWidth (int code) const;
 	FRemapTable *GetColorTranslation (EColorRange range) const;

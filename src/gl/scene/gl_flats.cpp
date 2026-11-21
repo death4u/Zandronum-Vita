@@ -153,6 +153,8 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 
 	FLightNode * node = sub->lighthead[pass==GLPASS_LIGHT_ADDITIVE];
 #ifdef __vita__
+	FLightNode *vhead = node;
+	extern bool Vita_LightAllowed(FLightNode *head, ADynamicLight *light);
 	if (!VitaWalls.Collecting)
 #endif
 	gl_RenderState.Apply();
@@ -160,7 +162,11 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	{
 		ADynamicLight * light = node->lightsource;
 		
+#ifdef __vita__
+		if ((light->flags2&MF2_DORMANT) || !Vita_LightAllowed(vhead, light))
+#else
 		if (light->flags2&MF2_DORMANT)
+#endif
 		{
 			node=node->nextLight;
 			continue;

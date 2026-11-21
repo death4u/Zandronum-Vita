@@ -1306,6 +1306,23 @@ void Vita_PrecacheHud(FTextureManager *tm)
 	FVitaHudPre p = { sceKernelGetProcessTimeWide() + 2000000ull, 0, 0, false };
 	const unsigned long long t0 = sceKernelGetProcessTimeWide();
 	FFont::Vita_ForEachChar(Vita_PreHudOne, &p);
+	// coloured text: the colours used before (2 s more at most)
+	{
+		struct FCol { unsigned long long deadline; int done; bool timeout; } c = { sceKernelGetProcessTimeWide() + 2000000ull, 0, false };
+		static TMap<QWORD, bool> doneCol;
+		FFont::Vita_ForEachColoredChar([](FTexture *pic, int translation, void *data) {
+			FCol *c = (FCol *)data;
+			const QWORD key = ((QWORD)(size_t)pic << 16) ^ (QWORD)(unsigned)translation;
+			if (doneCol.CheckKey(key) != NULL) return;
+			if (sceKernelGetProcessTimeWide() > c->deadline) { c->timeout = true; return; }
+			FMaterial *mat = FMaterial::ValidateTexture(pic);
+			if (mat == NULL) return;
+			mat->BindPatch(CM_DEFAULT, translation);
+			doneCol[key] = true;
+			c->done++;
+		}, &c);
+		Vita_BootLog("precached %d coloured font characters%s", c.done, c.timeout ? " (time limit)" : "");
+	}
 	for (int i = 0; i < tm->NumTextures(); i++)
 	{
 		FTexture *tex = tm->ByIndex(i);

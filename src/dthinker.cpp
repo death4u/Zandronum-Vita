@@ -547,10 +547,11 @@ int DThinker::TickThinkers (FThinkerList *list, FThinkerList *dest)
 					if (vdt > 50000)
 					{
 						FState *vs1 = (va && !(node->ObjectFlags & OF_EuthanizeMe)) ? va->state : NULL;
-						Vita_BootLog("slow tick: %s %llu ms (%llu ms waiting for file access), state %s%c (action %p) -> %s%c (action %p), %ld actors spawned, health %d",
+						extern const char *Vita_ActionName(actionf_p f);
+						Vita_BootLog("slow tick: %s %llu ms (%llu ms waiting for file access), state %s%c (%s) -> %s%c (%s), %ld actors spawned, health %d",
 							cls->TypeName.GetChars(), vdt / 1000, (Vita_ArchiveWaitLogicUs - vwait0) / 1000,
-							vs0 ? sprites[vs0->sprite].name : "-", vs0 ? 'A' + vs0->Frame : '-', vs0 ? (void *)vs0->ActionFunc : NULL,
-							vs1 ? sprites[vs1->sprite].name : "-", vs1 ? 'A' + vs1->Frame : '-', vs1 ? (void *)vs1->ActionFunc : NULL,
+							vs0 ? sprites[vs0->sprite].name : "-", vs0 ? 'A' + vs0->Frame : '-', vs0 ? Vita_ActionName(vs0->ActionFunc) : "-",
+							vs1 ? sprites[vs1->sprite].name : "-", vs1 ? 'A' + vs1->Frame : '-', vs1 ? Vita_ActionName(vs1->ActionFunc) : "-",
 							(long)(g_lSpawnCount - vspawn0), va ? va->health : 0);
 					}
 				}

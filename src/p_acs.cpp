@@ -9272,10 +9272,21 @@ static inline int Vita_BotPollDelay(AActor *activator, int script)
 }
 #endif
 
+// [Vita] Watchdog for single slow ACS instructions (vita_perf.cpp): the
+// slow-path opcode being run and a counter bumped for each.
+extern volatile int Vita_ACSPcd, Vita_ACSScript, Vita_ACSActive;
+extern volatile unsigned Vita_ACSSeq;
+void Vita_ACSWatchStart();
+
 int DLevelScript::RunScript ()
 {
 #ifdef __vita__
 	// [Vita] Profile ACS time per script (see vita/vita_perf).
+	Vita_ACSWatchStart();
+	const int vprevscript = Vita_ACSScript;
+	Vita_ACSScript = script;
+	Vita_ACSActive++;
+	struct VitaACSLeave { int prev; ~VitaACSLeave() { Vita_ACSActive--; Vita_ACSScript = prev; Vita_ACSSeq++; } } vleave = { vprevscript };
 	if (!Vita_PerfDetail)
 	{
 		// one run over 40 ms is logged (0039: 190-260 ms ACS spikes in fights)
@@ -9527,6 +9538,8 @@ vita_nextop:
 			}
 		}
 vita_slowop:
+		Vita_ACSPcd = pcd;
+		Vita_ACSSeq++;
 #endif
 
 		switch (pcd)

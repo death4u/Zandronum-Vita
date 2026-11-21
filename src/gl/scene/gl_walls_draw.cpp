@@ -530,6 +530,45 @@ static void Vita_DrawBucket(FVitaBucket *b)
 }
 
 unsigned Vita_LightTexId;
+
+// [Vita] Light passes per wall/flat: lights far from the camera are left
+// out, and only the strongest few lights of a surface are drawn (0042: up to
+// 4900 light passes a frame on Lockup). vita_maxsurfacelights 0 /
+// vita_lightdistance 0 = no limit.
+CVAR(Int, vita_maxsurfacelights, 3, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, vita_lightdistance, 1536, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+static inline float Vita_LightScore(ADynamicLight *l)
+{
+	// bigger and closer to the camera first
+	const float dx = FIXED2FLOAT(l->x - viewx), dy = FIXED2FLOAT(l->y - viewy), dz = FIXED2FLOAT(l->z - viewz);
+	return l->GetRadius() * 4.f - sqrtf(dx * dx + dy * dy + dz * dz);
+}
+bool Vita_LightAllowed(FLightNode *head, ADynamicLight *light)
+{
+	if (vita_lightdistance > 0)
+	{
+		const float dx = FIXED2FLOAT(light->x - viewx), dy = FIXED2FLOAT(light->y - viewy), dz = FIXED2FLOAT(light->z - viewz);
+		const float maxd = (float)vita_lightdistance + light->GetRadius();
+		if (dx * dx + dy * dy + dz * dz > maxd * maxd) return false;
+	}
+	if (vita_maxsurfacelights <= 0) return true;
+	const float mine = Vita_LightScore(light);
+	int better = 0;
+	for (FLightNode *n = head; n != NULL; n = n->nextLight)
+	{
+		ADynamicLight *o = n->lightsource;
+		if (o == NULL || o == light || (o->flags2 & MF2_DORMANT)) continue;
+		if (vita_lightdistance > 0)
+		{
+			const float dx = FIXED2FLOAT(o->x - viewx), dy = FIXED2FLOAT(o->y - viewy), dz = FIXED2FLOAT(o->z - viewz);
+			const float maxd = (float)vita_lightdistance + o->GetRadius();
+			if (dx * dx + dy * dy + dz * dz > maxd * maxd) continue;
+		}
+		const float sc = Vita_LightScore(o);
+		if (sc > mine || (sc == mine && o < light)) { if (++better >= vita_maxsurfacelights) return false; }
+	}
+	return true;
+}
 CVAR(Bool, vita_lighttexpass, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 // Light pass fan (see VitaWalls.LightPassMode): light UVs from the fan,
@@ -960,9 +999,10 @@ void GLWall::Draw(int pass)
 		}
 		else Vita_BatchSurface(NULL, 0, 0, true);
 		VitaWalls.Collecting = true;
+		FLightNode *vhead = node;
 		for (; node; node = node->nextLight)
 		{
-			if (!(node->lightsource->flags2&MF2_DORMANT))
+			if (!(node->lightsource->flags2&MF2_DORMANT) && Vita_LightAllowed(vhead, node->lightsource))
 			{
 				iter_dlight++;
 				RenderWall(1, NULL, node->lightsource);

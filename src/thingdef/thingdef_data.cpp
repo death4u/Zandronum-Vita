@@ -701,3 +701,14 @@ void InitThingdef()
 	}
 }
 
+
+#ifdef __vita__
+// [Vita] name of a DECORATE action function (slow-tick log)
+const char *Vita_ActionName(actionf_p f)
+{
+	if (f == NULL) return "none";
+	for (unsigned i = 0; i < AFTable.Size(); i++)
+		if (AFTable[i].Function == f) return AFTable[i].Name;
+	return "?";
+}
+#endif

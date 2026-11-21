@@ -172,17 +172,98 @@ static void TextCentered(int row, unsigned color, const char *s)
 static bool LoadingActive = false;
 static std::vector<std::string> LoadingLines;
 
+// Progress bar at the bottom: time since the start compared with how long
+// the last start-up took (ux0:data/zandronum/startup-time.txt). A thread
+// redraws it four times a second, so it keeps moving during long steps.
+#define STARTUP_TIME_FILE "ux0:data/zandronum/startup-time.txt"
+static unsigned long long LoadStart, LoadExpected = 60000000ull;
+static SceUID LoadDrawMutex = -1, LoadBarThread = -1;
+static volatile bool LoadBarRun;
+enum { BAR_X = 60, BAR_W = SCR_W - 120, BAR_Y = SCR_H - 26, BAR_H = 12 };
+
+static void FillRectIn(unsigned *fb, int x, int y, int w, int h, unsigned color)
+{
+	for (int yy = y; yy < y + h && yy < SCR_H; ++yy)
+	{
+		unsigned *p = fb + yy * SCR_W;
+		for (int xx = x; xx < x + w && xx < SCR_W; ++xx) p[xx] = color;
+	}
+}
+
+static void DrawBarIn(unsigned *fb)
+{
+	if (fb == NULL || LoadStart == 0) return;
+	unsigned long long el = sceKernelGetProcessTimeWide() - LoadStart;
+	double f = (double)el / (double)LoadExpected;
+	if (f > 0.97) f = 0.97;
+	FillRectIn(fb, BAR_X - 2, BAR_Y - 2, BAR_W + 4, BAR_H + 4, C_DIM);
+	FillRectIn(fb, BAR_X, BAR_Y, BAR_W, BAR_H, C_PANEL);
+	FillRectIn(fb, BAR_X, BAR_Y, (int)(BAR_W * f), BAR_H, C_TITLE);
+}
+
+static int LoadBarFunc(SceSize, void *)
+{
+	while (LoadBarRun)
+	{
+		sceKernelLockMutex(LoadDrawMutex, 1, NULL);
+		if (LoadBarRun)
+		{
+			DrawBarIn(Fb[0]);
+			DrawBarIn(Fb[1]);
+		}
+		sceKernelUnlockMutex(LoadDrawMutex, 1);
+		sceKernelDelayThread(250000);
+	}
+	return 0;
+}
+
 static void DrawLoading()
 {
+	if (LoadDrawMutex >= 0) sceKernelLockMutex(LoadDrawMutex, 1, NULL);
 	FillRect(0, 0, SCR_W, SCR_H, C_BG);
 	FillRect(0, 0, SCR_W, 4 * CHAR_H, C_PANEL);
 	DrawLogo((4 * CHAR_H - VITA_LOGO_H) / 2);
 	TextCentered(4, C_TITLE, "LOADING");
-	int first = (int)LoadingLines.size() - (ROWS - 6);
+	int first = (int)LoadingLines.size() - (ROWS - 8);
 	if (first < 0) first = 0;
 	for (int i = first, row = 6; i < (int)LoadingLines.size(); ++i, ++row)
 		Text(1, row, i + 1 == (int)LoadingLines.size() ? C_TEXT : C_DIM, LoadingLines[i].c_str(), COLS - 2);
+	DrawBarIn(Fb[FbCur]);
 	FbFlip();
+	if (LoadDrawMutex >= 0) sceKernelUnlockMutex(LoadDrawMutex, 1);
+}
+
+static void StartLoadBar()
+{
+	LoadStart = sceKernelGetProcessTimeWide();
+	FILE *f = fopen(STARTUP_TIME_FILE, "r");
+	if (f != NULL)
+	{
+		unsigned ms = 0;
+		if (fscanf(f, "%u", &ms) == 1 && ms >= 5000 && ms <= 600000) LoadExpected = ms * 1000ull;
+		fclose(f);
+	}
+	LoadDrawMutex = sceKernelCreateMutex("vita_loadbar", 0, 0, NULL);
+	LoadBarRun = true;
+	LoadBarThread = sceKernelCreateThread("vita_loadbar", LoadBarFunc, 0x10000100 + 30, 0x2000, 0, 0, NULL);
+	if (LoadBarThread >= 0) sceKernelStartThread(LoadBarThread, 0, NULL);
+}
+
+static void StopLoadBar()
+{
+	if (LoadStart == 0) return;
+	if (LoadBarThread >= 0)
+	{
+		LoadBarRun = false;
+		sceKernelWaitThreadEnd(LoadBarThread, NULL, NULL);
+		sceKernelDeleteThread(LoadBarThread);
+		LoadBarThread = -1;
+	}
+	const unsigned ms = (unsigned)((sceKernelGetProcessTimeWide() - LoadStart) / 1000);
+	FILE *f = fopen(STARTUP_TIME_FILE, "w");
+	if (f != NULL) { fprintf(f, "%u\n", ms); fclose(f); }
+	Vita_BootLog("start-up took %u ms (progress bar expected %llu ms)", ms, LoadExpected / 1000);
+	LoadStart = 0;
 }
 
 extern "C" void Vita_LoadingStatus(const char *line)
@@ -199,6 +280,7 @@ extern "C" void Vita_LoadingStatus(const char *line)
 
 extern "C" void Vita_LoadingDone(void)
 {
+	StopLoadBar();
 	LoadingActive = false;
 	LoadingLines.clear();
 
@@ -900,6 +982,7 @@ extern "C" void Vita_RunLauncher(int *argc, char ***argv)
 	if (!quit)
 	{
 		LoadingActive = true;
+		StartLoadBar();
 		LoadingLines.push_back("Starting...");
 		DrawLoading();
 	}

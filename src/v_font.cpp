@@ -83,6 +83,9 @@ The FON2 header is followed by variable length data:
 #include "doomtype.h"
 #include "m_swap.h"
 #include "v_font.h"
+#ifdef __vita__
+#include "gl/textures/gl_translate.h"
+#endif
 #include "v_video.h"
 #include "w_wad.h"
 #include "i_system.h"
@@ -775,12 +778,35 @@ void FFont::BuildTranslations (const double *luminosity, const BYTE *identity,
 //
 //==========================================================================
 
+#ifdef __vita__
+// [Vita] Text colours drawn per font, remembered across sessions
+// (ux0:data/zandronum/hudcolors.txt), so their characters can be loaded
+// during the loading screen: building each coloured character the first
+// time it was drawn froze HUD messages for 0.1-0.5 s.
+struct FVitaFontColor { FString font; int range; };
+static TArray<FVitaFontColor> Vita_FontColors;
+static bool Vita_FontColorsLoaded, Vita_FontColorsDirty;
+static void Vita_NoteFontColor(const char *font, int range)
+{
+	if (font == NULL || range == CR_UNTRANSLATED) return;
+	for (unsigned i = 0; i < Vita_FontColors.Size(); i++)
+		if (Vita_FontColors[i].range == range && !Vita_FontColors[i].font.CompareNoCase(font)) return;
+	if (Vita_FontColors.Size() >= 256) return;
+	FVitaFontColor c = { font, range };
+	Vita_FontColors.Push(c);
+	Vita_FontColorsDirty = true;
+}
+#endif
+
 FRemapTable *FFont::GetColorTranslation (EColorRange range) const
 {
 	if (ActiveColors == 0)
 		return NULL;
 	else if (range >= NumTextColors)
 		range = CR_UNTRANSLATED;
+#ifdef __vita__
+	Vita_NoteFontColor(Name, range);
+#endif
 	return &Ranges[range];
 }
 
@@ -2786,6 +2812,48 @@ void FFont::Vita_ForEachChar(void (*fn)(FTexture *pic, void *data), void *data)
 		{
 			FTexture *pic = f->Chars[c - f->FirstChar].Pic;
 			if (pic != NULL) fn(pic, data);
+		}
+	}
+}
+#endif
+
+#ifdef __vita__
+#define VITA_HUDCOLORS "ux0:data/zandronum/hudcolors.txt"
+void FFont::Vita_ForEachColoredChar(void (*fn)(FTexture *pic, int translation, void *data), void *data)
+{
+	if (!Vita_FontColorsLoaded)
+	{
+		Vita_FontColorsLoaded = true;
+		FILE *f = fopen(VITA_HUDCOLORS, "r");
+		if (f != NULL)
+		{
+			char name[64]; int range;
+			while (fscanf(f, "%63s %d", name, &range) == 2) Vita_NoteFontColor(name, range);
+			fclose(f);
+		}
+	}
+	for (unsigned i = 0; i < Vita_FontColors.Size(); i++)
+	{
+		FFont *font = V_GetFont(Vita_FontColors[i].font);
+		if (font == NULL || font->Chars == NULL || font->ActiveColors == 0 || Vita_FontColors[i].range >= NumTextColors) continue;
+		FRemapTable *remap = &font->Ranges[Vita_FontColors[i].range];
+		GLTranslationPalette *pal = static_cast<GLTranslationPalette *>(remap->GetNative());
+		if (pal == NULL) continue;
+		const int translation = -pal->GetIndex();
+		for (int c = font->FirstChar; c <= font->LastChar; c++)
+		{
+			FTexture *pic = font->Chars[c - font->FirstChar].Pic;
+			if (pic != NULL) fn(pic, translation, data);
+		}
+	}
+	if (Vita_FontColorsDirty)
+	{
+		Vita_FontColorsDirty = false;
+		FILE *f = fopen(VITA_HUDCOLORS, "w");
+		if (f != NULL)
+		{
+			for (unsigned i = 0; i < Vita_FontColors.Size(); i++) fprintf(f, "%s %d\n", Vita_FontColors[i].font.GetChars(), Vita_FontColors[i].range);
+			fclose(f);
 		}
 	}
 }
