@@ -121,6 +121,9 @@ struct FZipLump : public FResourceLump
 	virtual FileReader *GetReader();
 	virtual int FillCache();
 	virtual FileReaderBase *OpenStream();
+#ifdef __vita__
+	virtual char *Vita_ReadRaw(long &rawsize);
+#endif
 
 private:
 	void SetLumpAddress();
@@ -448,6 +451,9 @@ FileReaderBase *FZipLump::OpenStream()
 	FVitaArchiveLock vitalock;
 #endif
 	if (Method != METHOD_STORED && Method != METHOD_DEFLATE) return NULL;
+#ifdef __vita__
+	Vita_ArchiveWhat(FullName);
+#endif
 	if (Flags & LUMPFZIP_NEEDFILESTART) SetLumpAddress();
 	FZipLumpStream *stream = new FZipLumpStream;
 	if (!stream->Open(Owner->Filename, Position, Method == METHOD_DEFLATE, LumpSize))
@@ -463,6 +469,21 @@ FileReaderBase *FZipLump::OpenStream()
 // Fills the lump cache and performs decompression
 //
 //==========================================================================
+
+#ifdef __vita__
+// Called by CacheLump with the archive lock held.
+char *FZipLump::Vita_ReadRaw(long &rawsize)
+{
+	if (Method != METHOD_DEFLATE || LumpSize < 16384 || CompressedSize <= 0) return NULL;
+	if (Flags & LUMPFZIP_NEEDFILESTART) SetLumpAddress();
+	if (Owner->Reader->GetBuffer() != NULL) return NULL;
+	char *raw = new char[CompressedSize];
+	Owner->Reader->Seek(Position, SEEK_SET);
+	if (Owner->Reader->Read(raw, CompressedSize) != CompressedSize) { delete[] raw; return NULL; }
+	rawsize = CompressedSize;
+	return raw;
+}
+#endif
 
 int FZipLump::FillCache()
 {

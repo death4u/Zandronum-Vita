@@ -31,6 +31,7 @@ void Vita_GCCatchUp();				// main thread, after the join
 bool Vita_ParallelAllowed();		// called by the renderer at the overlap point
 void Vita_LogicBegin();
 void Vita_LogicEnd();
+void Vita_RunDeferred();	// after the frame: deferred light links and console commands
 void Vita_SetFrameAllowsOverlap(bool allow);
 
 // Dynamic light (un)linking requested by the logic thread during the overlap.
@@ -40,6 +41,8 @@ bool Vita_DeferCommand(const char *cmd, int keynum);
 
 void Vita_ArchiveLock();
 void Vita_ArchiveUnlock();
+void Vita_ArchiveWhat(const char *what);	// what the holder is reading (for the wait log)
+unsigned long long Vita_ThreadLockUs();	// main/logic thread: total time waited for it
 void Vita_PrintLock();
 void Vita_PrintUnlock();
 

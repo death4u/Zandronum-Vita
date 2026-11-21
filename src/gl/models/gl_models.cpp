@@ -499,10 +499,11 @@ static void Vita_FreeModelsForMemory()
 	for (unsigned i = 0; i < FLazyModel::All.Size(); i++)
 	{
 		FLazyModel *m = FLazyModel::All[i];
-		if (m->mReal != NULL && I_MSTime() - m->mLastUse >= 500) { m->Unload(); freed++; }
+		if (m->mReal != NULL && m->mAsync.load() != 1 && I_MSTime() - m->mLastUse >= 100) { m->Unload(); freed++; }
 	}
 	Vita_BootLog("low memory: unloaded %d models", freed);
 }
+int Vita_ModelBytes() { return FLazyModel::LoadedBytes; }
 static struct FVitaPressureInit
 {
 	FVitaPressureInit() { extern void (*Vita_MemoryPressureHook)(void); Vita_MemoryPressureHook = Vita_FreeModelsForMemory; }

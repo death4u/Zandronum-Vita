@@ -2,6 +2,7 @@
 // to stay on the last frame for the whole load).
 
 #include <psp2/kernel/processmgr.h>
+#include <malloc.h>
 #include "doomdef.h"
 #include "doomstat.h"
 #include "v_video.h"
@@ -107,7 +108,13 @@ void Vita_WarmupOverlay()
 	if (gamestate != GS_LEVEL || now - WarmupStart > 30000000ull ||
 		(level.maptime >= TICRATE && now - WarmupCalmSince >= 2000000ull && Vita_TexBuildIdle()))
 	{
-		Vita_BootLog("level start: game shown after %llu ms of warm-up (%d game tics)", (now - WarmupStart) / 1000, level.maptime);
+		{
+			extern unsigned Vita_BigBlocksKB();
+			extern int Vita_ModelBytes();
+			struct mallinfo mi = mallinfo();
+			Vita_BootLog("level start: game shown after %llu ms of warm-up (%d game tics); heap in use %u MB, free in heap %u MB, big blocks %u MB, models %d MB",
+				(now - WarmupStart) / 1000, level.maptime, (unsigned)(mi.uordblks >> 20), (unsigned)(mi.fordblks >> 20), Vita_BigBlocksKB() >> 10, Vita_ModelBytes() >> 20);
+		}
 		Warmup = false;
 		return;
 	}

@@ -171,15 +171,16 @@ EXTERN_CVAR(Bool, hud_althud)
 void DrawHUD();
 #ifdef __vita__
 // [Vita] Logs parts of the 2D/HUD step that take over 50 ms (0038: one 4 s frame there).
-static unsigned long long Vita2DMark, Vita2DIo;
+static unsigned long long Vita2DMark, Vita2DIo, Vita2DLock;
 static void Vita_2D(const char *part)
 {
-	extern unsigned long long Vita_ThreadIoUs();
-	const unsigned long long now = sceKernelGetProcessTimeWide(), io = Vita_ThreadIoUs();
+	extern unsigned long long Vita_ThreadIoUs(), Vita_ThreadLockUs();
+	const unsigned long long now = sceKernelGetProcessTimeWide(), io = Vita_ThreadIoUs(), lk = Vita_ThreadLockUs();
 	if (part != NULL && Vita2DMark != 0 && now - Vita2DMark > 50000)
-		Vita_BootLog("slow 2D: %s %llu ms (memory card %llu ms)", part, (now - Vita2DMark) / 1000, (io - Vita2DIo) / 1000);
+		Vita_BootLog("slow 2D: %s %llu ms (memory card %llu ms, waiting for file lock %llu ms)", part, (now - Vita2DMark) / 1000, (io - Vita2DIo) / 1000, (lk - Vita2DLock) / 1000);
 	Vita2DMark = now;
 	Vita2DIo = io;
+	Vita2DLock = lk;
 }
 #define VITA_2D(p) Vita_2D(p)
 #else
@@ -1425,6 +1426,7 @@ void D_DoomLoop ()
 				D_Display ();
 				Vita_SetFrameAllowsOverlap(false);
 				Vita_LogicEnd();
+				Vita_RunDeferred();
 				// The garbage collector never runs while the logic thread does
 				// (normally it takes a step after every thinker), so it catches
 				// up here, once the frame is drawn and nothing points at

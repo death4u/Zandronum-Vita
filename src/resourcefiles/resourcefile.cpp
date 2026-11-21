@@ -213,8 +213,48 @@ FileReader *FResourceLump::NewReader()
 void *FResourceLump::CacheLump()
 {
 #ifdef __vita__
-	FVitaArchiveLock vitalock;
-#endif
+	// 0050: a compressed lump is decompressed without the archive lock held,
+	// so other threads' file reads don't wait for it (only the raw read is
+	// done under the lock).
+	Vita_ArchiveLock();
+	if (Cache != NULL)
+	{
+		if (RefCount > 0) RefCount++;
+		Vita_ArchiveUnlock();
+		return Cache;
+	}
+	if (LumpSize <= 0) { Vita_ArchiveUnlock(); return Cache; }
+	Vita_ArchiveWhat(FullName != NULL ? FullName : Name);
+	long rawsize = 0;
+	char *raw = Vita_ReadRaw(rawsize);
+	if (raw == NULL)
+	{
+		FillCache();
+		Vita_ArchiveUnlock();
+		return Cache;
+	}
+	Vita_ArchiveUnlock();
+	char *buf = new char[LumpSize];
+	{
+		MemoryReader mr(raw, rawsize);
+		FileReaderZ frz(mr, true);
+		frz.Read(buf, LumpSize);
+	}
+	delete[] raw;
+	Vita_ArchiveLock();
+	if (Cache != NULL)
+	{
+		delete[] buf;	// another thread cached it meanwhile
+		if (RefCount > 0) RefCount++;
+	}
+	else
+	{
+		Cache = buf;
+		RefCount = 1;
+	}
+	Vita_ArchiveUnlock();
+	return Cache;
+#else
 	if (Cache != NULL)
 	{
 		if (RefCount > 0) RefCount++;
@@ -224,6 +264,7 @@ void *FResourceLump::CacheLump()
 		FillCache();
 	}
 	return Cache;
+#endif
 }
 
 //==========================================================================

@@ -272,6 +272,7 @@ static void Vita_SqliteFree(void *p) { free(p); }
 static char vita_net_memory[VITA_NET_MEMORY];
 
 static SceUID Vita_MainThreadId = -1;	// see Vita_RetryAlloc
+SceUID Vita_GetMainThreadId() { return Vita_MainThreadId; }
 
 extern "C" void Vita_EarlyInit(void)
 {
@@ -450,7 +451,7 @@ static int Vita_BigFind(void *p)
 
 static void *Vita_BigAlloc(size_t size)
 {
-	if (size < (1u << 20)) return NULL;
+	if (size < (256u << 10)) return NULL;
 	size_t rounded = (size + 0xFFF) & ~(size_t)0xFFF;
 	SceUID uid = sceKernelAllocMemBlock("zandbig", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, rounded, NULL);
 	if (uid < 0) return NULL;
@@ -530,7 +531,7 @@ extern "C" void *__wrap_malloc(size_t size)
 {
 	FVitaMallocTimer vt;
 	void *p = __real_malloc(size);
-	if (p == NULL && size >= (1u << 20))
+	if (p == NULL && size >= (256u << 10))
 	{
 		p = Vita_BigAlloc(size);
 		if (p != NULL) return p;
@@ -555,7 +556,7 @@ extern "C" void *__wrap_realloc(void *old, size_t size)
 		return n;
 	}
 	void *p = __real_realloc(old, size);
-	if (p == NULL && size >= (1u << 20))
+	if (p == NULL && size >= (256u << 10))
 	{
 		p = Vita_BigAlloc(size);
 		if (p != NULL)
@@ -753,6 +754,7 @@ extern "C" SceSSize __real_sceIoRead(SceUID fd, void *buf, SceSize nbyte);
 extern "C" SceUID __real_sceIoOpen(const char *file, int flags, SceMode mode);
 extern "C" SceOff __real_sceIoLseek(SceUID fd, SceOff offset, int whence);
 unsigned long long Vita_IoUsMain, Vita_IoUsLogic, Vita_TickIoUs;
+static unsigned long long IoTotalMain, IoTotalLogic;	// never reset (0049 had the window reset make differences negative)
 extern bool Vita_OnLogicThread();
 struct FVitaIoTimer
 {
@@ -767,7 +769,7 @@ struct FVitaIoTimer
 	{
 		if (!t0) return;
 		const unsigned long long dt = sceKernelGetProcessTimeWide() - t0;
-		if (who == 1) Vita_IoUsMain += dt; else if (who == 2) Vita_IoUsLogic += dt;
+		if (who == 1) { Vita_IoUsMain += dt; IoTotalMain += dt; } else if (who == 2) { Vita_IoUsLogic += dt; IoTotalLogic += dt; }
 		if (Vita_TickWatchThread >= 0 && Vita_TickWatchThread == sceKernelGetThreadId()) Vita_TickIoUs += dt;
 	}
 };
@@ -780,7 +782,7 @@ extern "C" SceOff __wrap_sceIoLseek(SceUID fd, SceOff offset, int whence) { FVit
 unsigned long long Vita_ThreadIoUs()
 {
 	const SceUID me = sceKernelGetThreadId();
-	if (me == Vita_MainThreadId) return Vita_IoUsMain;
-	if (Vita_OnLogicThread()) return Vita_IoUsLogic;
+	if (me == Vita_MainThreadId) return IoTotalMain;
+	if (Vita_OnLogicThread()) return IoTotalLogic;
 	return 0;
 }

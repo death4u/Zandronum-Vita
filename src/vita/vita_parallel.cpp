@@ -47,18 +47,76 @@ static void MakeLocks()
 // [Vita] Time the logic thread spends waiting for the archive lock (shown in
 // the slow-tick log: 0039 had weapon pickups taking 75-125 ms per tick).
 unsigned long long Vita_ArchiveWaitLogicUs;
+// 0050: who holds the lock and what it's reading, and each thread's total
+// wait, so a stall on it says what it waited for (0048/0049: the match-start
+// HUD stall was 1.5-1.9 s with only ~0.1 s of memory card time).
+static volatile SceUID HolderId = -1;
+static volatile unsigned long long HolderSince;
+static const char *volatile HolderWhat;
+static int HolderDepth;
+static unsigned long long LockWaitMain, LockWaitLogic;
+extern SceUID Vita_GetMainThreadId();
+#define Vita_MainThreadId Vita_GetMainThreadId()
+
+void Vita_ArchiveWhat(const char *what)
+{
+	if (HolderId == sceKernelGetThreadId()) HolderWhat = what;
+}
+
+unsigned long long Vita_ThreadLockUs()
+{
+	const SceUID me = sceKernelGetThreadId();
+	if (me == Vita_MainThreadId) return LockWaitMain;
+	if (Vita_OnLogicThread()) return LockWaitLogic;
+	return 0;
+}
+
+static void Taken()
+{
+	const SceUID me = sceKernelGetThreadId();
+	if (HolderId == me) { HolderDepth++; return; }
+	HolderDepth = 1;
+	HolderWhat = NULL;
+	HolderSince = sceKernelGetProcessTimeWide();
+	HolderId = me;
+}
+
+static const char *ThreadName(SceUID id, char *buf)
+{
+	if (id == Vita_MainThreadId) return "main thread";
+	if (id == LogicThreadId) return "logic thread";
+	SceKernelThreadInfo info;
+	info.size = sizeof(info);
+	if (id >= 0 && sceKernelGetThreadInfo(id, &info) >= 0) { snprintf(buf, 32, "%s", info.name); return buf; }
+	return "?";
+}
+
 void Vita_ArchiveLock()
 {
 	if (!LocksMade) MakeLocks();
 	{ extern void Vita_IoBusy(unsigned ms); Vita_IoBusy(100); }	// the cache writer waits
-	if (sceKernelTryLockLwMutex(&ArchiveMutex, 1) >= 0) return;
-	const unsigned long long t0 = sceKernelGetProcessTimeWide();
+	if (sceKernelTryLockLwMutex(&ArchiveMutex, 1) >= 0) { Taken(); return; }
+	const SceUID holder = HolderId;
+	const char *what = HolderWhat;
+	const unsigned long long t0 = sceKernelGetProcessTimeWide(), held0 = HolderSince;
 	sceKernelLockLwMutex(&ArchiveMutex, 1, NULL);
-	if (Vita_OnLogicThread()) Vita_ArchiveWaitLogicUs += sceKernelGetProcessTimeWide() - t0;
+	const unsigned long long dt = sceKernelGetProcessTimeWide() - t0;
+	Taken();
+	const SceUID me = sceKernelGetThreadId();
+	if (Vita_OnLogicThread()) { Vita_ArchiveWaitLogicUs += dt; LockWaitLogic += dt; }
+	else if (me == Vita_MainThreadId) LockWaitMain += dt;
+	if (dt > 50000)
+	{
+		char b1[32], b2[32];
+		Vita_BootLog("file lock: %s waited %llu ms; held by %s (for %llu ms when the wait began) reading %s",
+			ThreadName(me, b1), dt / 1000, ThreadName(holder, b2), held0 != 0 && t0 > held0 ? (t0 - held0) / 1000 : 0ull,
+			what != NULL ? what : "(file positions / not named)");
+	}
 }
 
 void Vita_ArchiveUnlock()
 {
+	if (HolderId == sceKernelGetThreadId() && --HolderDepth <= 0) { HolderId = -1; HolderWhat = NULL; }
 	sceKernelUnlockLwMutex(&ArchiveMutex, 1);
 }
 
@@ -156,6 +214,14 @@ static void RunDeferredLights()
 void Vita_DropDeferredLights()
 {
 	RunDeferredLights();
+}
+
+// Main thread, after the frame is drawn and the logic thread joined.
+void Vita_RunDeferred()
+{
+	if (Vita_Overlap) return;
+	RunDeferredLights();
+	RunDeferredCommands();
 }
 
 //==========================================================================
@@ -261,8 +327,10 @@ void Vita_LogicEnd()
 	}
 	Vita_Overlap = false;
 	Vita_LogicDone = true;
-	RunDeferredLights();
-	RunDeferredCommands();
+	// 0050: the deferred light links and console commands now run after the
+	// whole frame is drawn (Vita_RunDeferred). Running them here, in the
+	// middle of RenderScene, let a command free level data the rest of the
+	// frame still drew from (0049 crash: decal pass, freed seg).
 	if (LogicError)
 	{
 		std::exception_ptr e = LogicError;

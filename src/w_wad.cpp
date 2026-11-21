@@ -1557,6 +1557,7 @@ FWadLump::FWadLump(FResourceLump *lump, bool alwayscache)
 {
 #ifdef __vita__
 	FVitaArchiveLock vitalock;
+	Vita_ArchiveWhat(lump->FullName);
 #endif
 	FileReader *f = lump->GetReader();
 

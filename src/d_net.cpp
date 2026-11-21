@@ -74,6 +74,7 @@
 #include "chat.h"
 #ifdef __vita__
 #include "vita/vita_parallel.h"
+#include "vita/vita_system.h"
 #endif
 
 EXTERN_CVAR (Int, disableautosave)
@@ -1942,7 +1943,30 @@ void TryRunTics (void)
 			if (Vita_OnLogicThread() && (gameaction != ga_nothing || gamestate != GS_LEVEL))
 				break;
 #endif
-			{ VITA_PERF(VPERF_TIC); Vita_TraceTic(true); G_Ticker (); Vita_TraceTic(false); }
+			{
+				VITA_PERF(VPERF_TIC); Vita_TraceTic(true);
+				// 0050: a whole tic over 100 ms is logged with where its time went
+				// (0048/0049 had 1.6-1.8 s logic stalls with no slow-script or
+				// slow-thinker line).
+				extern unsigned long long Vita_ThreadIoUs(), Vita_ThreadLockUs();
+				static const int vslots[] = { VPERF_THINKERS, VPERF_PLAYERS, VPERF_BOTTICK, VPERF_SBAR, VPERF_BOTAIM, VPERF_EFFECTS, VPERF_ACSNEW, VPERF_DB, VPERF_GC, VPERF_PICKUP, VPERF_MODELLOAD };
+				unsigned long long vacc[sizeof(vslots) / sizeof(vslots[0])];
+				for (unsigned k = 0; k < sizeof(vslots) / sizeof(vslots[0]); k++) vacc[k] = Vita_PerfAcc[vslots[k]];
+				const int vga = gameaction;
+				const unsigned long long vt0 = Vita_PerfNow(), vio0 = Vita_ThreadIoUs(), vlk0 = Vita_ThreadLockUs();
+				G_Ticker ();
+				const unsigned long long vdt = Vita_PerfNow() - vt0;
+				if (vdt > 100000)
+				{
+					unsigned long long d[sizeof(vslots) / sizeof(vslots[0])];
+					for (unsigned k = 0; k < sizeof(vslots) / sizeof(vslots[0]); k++) d[k] = (Vita_PerfAcc[vslots[k]] - vacc[k]) / 1000;
+					const unsigned long long known = d[0] + d[1] + d[3] + d[4] + d[5];
+					Vita_BootLog("slow tic: %llu ms (thinkers %llu [script starts %llu, database %llu, gc %llu, first ticks %llu], players %llu [bot AI %llu], status bar %llu, bot aim %llu, effects %llu, model loads %llu, rest of G_Ticker %llu; memory card %llu ms, waiting for file lock %llu ms; game action %d -> %d, %s thread)",
+						vdt / 1000, d[0], d[6], d[7], d[8], d[9], d[1], d[2], d[3], d[4], d[5], d[10], vdt / 1000 > known ? vdt / 1000 - known : 0ull,
+						(Vita_ThreadIoUs() - vio0) / 1000, (Vita_ThreadLockUs() - vlk0) / 1000, vga, (int)gameaction, Vita_OnLogicThread() ? "logic" : "main");
+				}
+				Vita_TraceTic(false);
+			}
 #ifdef __vita__
 			{ extern void Vita_TestNextMap(); Vita_TestNextMap(); }
 #endif

@@ -45,6 +45,11 @@ struct FResourceLump
 	virtual FileReaderBase *OpenStream() { return NULL; }
 	virtual int GetFileOffset() { return -1; }
 	virtual int GetIndexNum() const { return 0; }
+#ifdef __vita__
+	// [Vita] 0050: for a compressed lump, its raw bytes (read with the archive
+	// lock held) so CacheLump can decompress without holding the lock.
+	virtual char *Vita_ReadRaw(long &rawsize) { return NULL; }
+#endif
 	void LumpNameSetup(const char *iname);
 	void CheckEmbedded();
 
