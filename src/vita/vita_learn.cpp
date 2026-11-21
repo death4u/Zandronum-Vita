@@ -21,6 +21,8 @@
 #include <psp2/kernel/processmgr.h>
 
 CVAR(Bool, vita_learnpreload, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// seconds of the loading screen spent on learned sprites/skins (0044: 3)
+CVAR(Int, vita_learnpreloadtime, 10, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 FString Vita_GameName();
 
@@ -146,7 +148,7 @@ void Vita_LearnPreloadTextures(void (*precache)(FTexture *))
 	if (SeenTex.Size()) memset(&SeenTex[0], 0, SeenTex.Size());
 	if (!vita_learnpreload || !stricmp(level.mapname, "TITLEMAP")) return;
 	Load();
-	const unsigned long long t0 = sceKernelGetProcessTimeWide(), end = t0 + 3000000ull;
+	const unsigned long long t0 = sceKernelGetProcessTimeWide(), end = t0 + (unsigned long long)(vita_learnpreloadtime > 0 ? (int)vita_learnpreloadtime : 0) * 1000000ull;
 	int n = 0, left = 0;
 	for (unsigned i = 0; i < Learned.Size(); i++)
 	{

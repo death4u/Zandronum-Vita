@@ -13483,7 +13483,14 @@ static DLevelScript *P_GetScriptGoing (AActor *who, line_t *where, int num, cons
 		return NULL;
 	}
 
+#ifdef __vita__
+	const unsigned long long vt0 = Vita_PerfNow();
+	DLevelScript *vs = new DLevelScript (who, where, num, code, module, args, argcount, flags);
+	{ extern unsigned long long Vita_TickScriptStartUs; Vita_TickScriptStartUs += Vita_PerfNow() - vt0; }
+	return vs;
+#else
 	return new DLevelScript (who, where, num, code, module, args, argcount, flags);
+#endif
 }
 
 DLevelScript::DLevelScript (AActor *who, line_t *where, int num, const ScriptPtr *code, FBehavior *module,

@@ -514,6 +514,7 @@ static unsigned char *Vita_BuildPlain(void *ctx, int cmhires, int patch, unsigne
 }
 
 CVAR(Bool, vita_asynctextures, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, vita_asyncall, false, 0)	// test only: every texture through the background path
 
 // Which textures may arrive late: not level walls/flats (loaded in advance),
 // not HUD/font graphics (uncompressed, loaded in advance), not multi-patch
@@ -521,6 +522,7 @@ CVAR(Bool, vita_asynctextures, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 static bool Vita_AsyncCandidate(FTexture *tex)
 {
 	if (!vita_asynctextures || gamestate != GS_LEVEL || Vita_PrecacheDeadline != 0) return false;
+	if (vita_asyncall && !tex->bMultiPatch && !tex->bWarped && !tex->bHasCanvas && tex->UseType != FTexture::TEX_MiscPatch && tex->UseType != FTexture::TEX_FontChar) return true;	// test: walls/flats too
 	if (tex->bMultiPatch || tex->bHasCanvas || tex->bWarped) return false;
 	if (tex->GetWidth() < 64 || tex->GetHeight() < 64) return false;
 	switch (tex->UseType)

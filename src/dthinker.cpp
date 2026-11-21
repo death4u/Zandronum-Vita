@@ -536,7 +536,9 @@ int DThinker::TickThinkers (FThinkerList *list, FThinkerList *dest)
 				else if (Vita_PerfDetail || Vita_SlowTickWatch)
 				{
 					extern void Vita_TickBreakdownReset();
+					extern void Vita_TickWatchBegin(), Vita_TickWatchEnd();
 					Vita_TickBreakdownReset();
+					Vita_TickWatchBegin();
 					unsigned long long t0 = Vita_PerfNow();
 					const PClass *cls = node->GetClass();
 					// [Vita] what a slow actor was doing (0038: Spartans took 280 ms in one Tick)
@@ -548,14 +550,16 @@ int DThinker::TickThinkers (FThinkerList *list, FThinkerList *dest)
 					const unsigned long long vwait0 = Vita_ArchiveWaitLogicUs;
 					node->Tick();
 					const unsigned long long vdt = Vita_PerfNow() - t0;
+					Vita_TickWatchEnd();
 					if (Vita_PerfDetail) Vita_PerfThinker(cls, cls->TypeName.GetChars(), vdt);
 					if (vdt > 50000)
 					{
 						extern const char *Vita_TickBreakdown();
 						FState *vs1 = (va && !(node->ObjectFlags & OF_EuthanizeMe)) ? va->state : NULL;
 						extern const char *Vita_ActionName(actionf_p f);
-						Vita_BootLog("slow tick: %s %llu ms (%llu ms waiting for file access; %s), state %s%c (%s) -> %s%c (%s), %ld actors spawned, health %d",
-							cls->TypeName.GetChars(), vdt / 1000, (Vita_ArchiveWaitLogicUs - vwait0) / 1000, Vita_TickBreakdown(),
+						extern const char *Vita_TickWatchReport();
+						Vita_BootLog("slow tick: %s %llu ms (%llu ms waiting for file access; %s; %s), state %s%c (%s) -> %s%c (%s), %ld actors spawned, health %d",
+							cls->TypeName.GetChars(), vdt / 1000, (Vita_ArchiveWaitLogicUs - vwait0) / 1000, Vita_TickBreakdown(), Vita_TickWatchReport(),
 							vs0 ? sprites[vs0->sprite].name : "-", vs0 ? 'A' + vs0->Frame : '-', vs0 ? Vita_ActionName(vs0->ActionFunc) : "-",
 							vs1 ? sprites[vs1->sprite].name : "-", vs1 ? 'A' + vs1->Frame : '-', vs1 ? Vita_ActionName(vs1->ActionFunc) : "-",
 							(long)(g_lSpawnCount - vspawn0), va ? va->health : 0);

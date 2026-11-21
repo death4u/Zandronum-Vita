@@ -1,3 +1,16 @@
+diff --git a/Makefile b/Makefile
+index 4f04a87..d421bab 100644
+--- a/Makefile
++++ b/Makefile
+@@ -241,7 +241,7 @@ CFLAGS += -DDISABLE_FFP_MULTITEXTURE
+ endif
+ 
+ ifeq ($(DISABLE_W_CLAMPING),1)
+-CFLAGS += -DISABLE_W_CLAMPING
++CFLAGS += -DDISABLE_W_CLAMPING
+ endif
+ 
+ ifeq ($(DEBUG_THREAD_SAFENESS),1)
 diff --git a/source/gxm.c b/source/gxm.c
 index 622c30a..3762060 100644
 --- a/source/gxm.c
@@ -28,10 +41,10 @@ index 622c30a..3762060 100644
  				legacy_pool_end = (float *)((uint8_t *)legacy_pool + legacy_pool_size);
  #endif
 diff --git a/source/utils/gpu_utils.c b/source/utils/gpu_utils.c
-index 463a3dc..a0ca32e 100644
+index 463a3dc..8ba9d3b 100644
 --- a/source/utils/gpu_utils.c
 +++ b/source/utils/gpu_utils.c
-@@ -695,6 +695,12 @@ void gpu_alloc_compressed_cube_texture(uint32_t w, uint32_t h, SceGxmTextureForm
+@@ -695,6 +695,16 @@ void gpu_alloc_compressed_cube_texture(uint32_t w, uint32_t h, SceGxmTextureForm
  	}
  }
  
@@ -40,11 +53,15 @@ index 463a3dc..a0ca32e 100644
 +// from a temporary copy (which is only freed at the end of the next frame: a
 +// level's worth of texture uploads during loading ran the temporary pool dry).
 +int vgl_zand_cpu_swizzle = 0;
++// [Zandronum Vita] 0045: the caller already swizzled the compressed data (on a
++// background thread): only copy it. Swizzling a 1024x1024 DXT chain on the
++// main thread took ~60 ms.
++int vgl_zand_preswizzled = 0;
 +
  void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, SceGxmTextureFormat format, uint32_t image_size, const void *data, texture *tex, uint8_t src_bpp, GLboolean uncompressed) {
  	// If there's already a texture in passed texture object we first dealloc it
  	if (tex->status == TEX_VALID && !mip_level)
-@@ -720,7 +726,7 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+@@ -720,7 +730,7 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
  
  	// Allocating texture data buffer
  	const int mip_offset = gpu_get_compressed_mip_offset(mip_level, aligned_max_width, aligned_max_height, format);
@@ -53,7 +70,7 @@ index 463a3dc..a0ca32e 100644
  	const int mip_size = tex_size - mip_offset;
  
  	int mip_count, tex_width, tex_height;
-@@ -733,10 +739,14 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+@@ -733,10 +743,14 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
  		if (mip_count >= mip_level)
  			texture_data = tex->data;
  		else {
@@ -72,7 +89,7 @@ index 463a3dc..a0ca32e 100644
  				const int old_data_size = gpu_get_compressed_mipchain_size(mip_count, aligned_max_width, aligned_max_height, format);
  				vgl_memcpy(texture_data, tex->data, old_data_size);
  				gpu_free_texture_data(tex);
-@@ -749,6 +759,14 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+@@ -749,6 +763,14 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
  		mip_count = mip_level;
  		tex_width = w;
  		tex_height = h;
@@ -87,7 +104,17 @@ index 463a3dc..a0ca32e 100644
  		texture_data = gpu_alloc_mapped_for_gpu(tex_size);
  	}
  
-@@ -772,7 +790,7 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+@@ -761,6 +783,9 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+ 				uint8_t alignment = tex_format_to_alignment(format);
+ 				dxt_compress(mip_data, (uint8_t *)data, aligned_width, aligned_height, alignment == 16);
+ 			} else {
++				if (vgl_zand_preswizzled) {
++					vgl_fast_memcpy(mip_data, data, image_size);
++				} else
+ 				// Perform swizzling if necessary.
+ 				switch (format) {
+ 				case SCE_GXM_TEXTURE_FORMAT_PVRT2BPP_1BGR:
+@@ -772,7 +797,7 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
  				case SCE_GXM_TEXTURE_FORMAT_UBC2_ABGR:
  				case SCE_GXM_TEXTURE_FORMAT_UBC3_ABGR:
  				case SCE_GXM_TEXTURE_FORMAT_UBC5_GR:
@@ -96,7 +123,7 @@ index 463a3dc..a0ca32e 100644
  #ifdef TEXTURE_UPLOADS_SPEEDHACK
  						void *mapped_src = data;
  #else
-@@ -805,7 +823,7 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+@@ -805,7 +830,7 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
  					}
  					break;
  				default:

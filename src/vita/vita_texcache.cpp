@@ -247,7 +247,9 @@ static unsigned LevelSize(int w, int h, bool dxt5)
 }
 
 // Uploads the levels of a compressed chain to the bound texture.
-extern "C" int vgl_zand_prealloc_levels, vgl_zand_cpu_swizzle;	// vitaGL (patched): allocate the whole mip chain with level 0
+extern "C" int vgl_zand_prealloc_levels, vgl_zand_cpu_swizzle, vgl_zand_preswizzled;
+extern "C" void SwizzleTexData64Bpp(uint8_t *dst, uint8_t *src, uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t stride, uint32_t tileSize);
+extern "C" void SwizzleTexData128Bpp(uint8_t *dst, uint8_t *src, uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t stride, uint32_t tileSize);	// vitaGL (patched): allocate the whole mip chain with level 0
 
 static void UploadLevels(const unsigned char *data, int w, int h, bool dxt5, int levels)
 {
@@ -265,6 +267,53 @@ static void UploadLevels(const unsigned char *data, int w, int h, bool dxt5, int
 	vgl_zand_prealloc_levels = 0;
 	vgl_zand_cpu_swizzle = 0;
 }
+
+// [Vita] 0045: the GPU layout of a compressed chain, made on the texbuild
+// thread (same calls vitaGL makes in its CPU path), so the main thread only
+// copies it in.
+static unsigned char *SwizzleChain(const unsigned char *data, int w, int h, bool dxt5, int levels, unsigned total)
+{
+	unsigned char *out = (unsigned char *)malloc(total);
+	if (out == NULL) return NULL;
+	const unsigned char *src = data;
+	unsigned char *dst = out;
+	for (int l = 0; l < levels; l++)
+	{
+		const unsigned sz = LevelSize(w, h, dxt5);
+		// in 4x4 blocks, like vitaGL's ALIGNBLOCK(x, 4)
+		const int bw = (w + 3) / 4, bh = (h + 3) / 4;
+		const int tile = ((w < h ? w : h) + 3) / 4;
+		if (dxt5) SwizzleTexData128Bpp(dst, (uint8_t *)src, 0, 0, bw, bh, bw, tile);
+		else SwizzleTexData64Bpp(dst, (uint8_t *)src, 0, 0, bw, bh, bw, tile);
+		src += sz; dst += sz;
+		w = w > 4 ? w / 2 : 4;
+		h = h > 4 ? h / 2 : 4;
+	}
+	return out;
+}
+
+static void UploadLevelsPre(const unsigned char *swz, int w, int h, bool dxt5, int levels)
+{
+	vgl_zand_prealloc_levels = levels;
+	vgl_zand_preswizzled = 1;
+	const GLenum fmt = dxt5 ? GL_COMPRESSED_RGBA_S3TC_DXT5_EXT : GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+	for (int l = 0; l < levels; l++)
+	{
+		const unsigned sz = LevelSize(w, h, dxt5);
+		glCompressedTexImage2D(GL_TEXTURE_2D, l, fmt, w, h, 0, sz, swz);
+		swz += sz;
+		w = w > 4 ? w / 2 : 4;
+		h = h > 4 ? h / 2 : 4;
+	}
+	vgl_zand_prealloc_levels = 0;
+	vgl_zand_preswizzled = 0;
+}
+
+// Ready textures uploaded per frame: at most ~1.5 MB of them (one 1024x1024
+// skin) per frame; the rest keep their placeholder one frame longer.
+static unsigned UploadFrameNo, UploadFrameBytes;
+extern unsigned Vita_FrameNo;
+CVAR(Bool, vita_preswizzle, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 static bool LoadReady(unsigned long long key, FVitaTexCacheMeta &meta, bool mipmaps);
 bool Vita_TexCacheLoad(unsigned long long key, FVitaTexCacheMeta &meta, bool mipmaps)
@@ -529,6 +578,7 @@ struct FVtcReady
 {
 	FVtcHeader Header;
 	unsigned char *Data;	// NULL: failed
+	unsigned char *Swz;		// 0045: the same levels already swizzled for the GPU (or NULL)
 	unsigned Size;
 	bool FromFile;
 };
@@ -596,6 +646,8 @@ static void RunJob(const FVtcJob &jobin)
 		}
 		delete[] rgba;
 	}
+	if (r.Data != NULL && vita_preswizzle && IsPow2(r.Header.Width) && IsPow2(r.Header.Height) && r.Header.Dxt5 != 3 && r.Header.Levels >= 1)
+		r.Swz = SwizzleChain(r.Data, r.Header.Width, r.Header.Height, !!r.Header.Dxt5, r.Header.Levels, r.Size);
 	sceKernelLockMutex(JobMutex, 1, NULL);
 	Ready[job.Key] = r;
 	sceKernelUnlockMutex(JobMutex, 1);
@@ -638,7 +690,15 @@ int Vita_TexCacheAsync(unsigned long long key, FVitaBuildFn build, void *ctx, in
 	sceKernelLockMutex(JobMutex, 1, NULL);
 	int res;
 	FVtcReady *r = Ready.CheckKey(key);
-	if (r != NULL) res = r->Data != NULL ? VTC_ASYNC_READY : VTC_ASYNC_NO;
+	if (r != NULL)
+	{
+		res = r->Data != NULL ? VTC_ASYNC_READY : VTC_ASYNC_NO;
+		if (res == VTC_ASYNC_READY)
+		{
+			if (UploadFrameNo != Vita_FrameNo) { UploadFrameNo = Vita_FrameNo; UploadFrameBytes = 0; }
+			if (UploadFrameBytes > 0 && UploadFrameBytes + r->Size > 1536u * 1024u) res = VTC_ASYNC_WAIT;	// next frame
+		}
+	}
 	else if (Queued.CheckKey(key) != NULL) res = VTC_ASYNC_WAIT;
 	else
 	{
@@ -664,7 +724,11 @@ static bool LoadReady(unsigned long long key, FVitaTexCacheMeta &meta, bool mipm
 	sceKernelUnlockMutex(JobMutex, 1);
 	if (!have) return false;
 	const FVtcHeader &hd = r.Header;
-	UploadLevels(r.Data, hd.Width, hd.Height, !!hd.Dxt5, mipmaps ? hd.Levels : 1);
+	if (r.Swz != NULL) UploadLevelsPre(r.Swz, hd.Width, hd.Height, !!hd.Dxt5, mipmaps ? hd.Levels : 1);
+	else UploadLevels(r.Data, hd.Width, hd.Height, !!hd.Dxt5, mipmaps ? hd.Levels : 1);
+	free(r.Swz);
+	if (UploadFrameNo != Vita_FrameNo) { UploadFrameNo = Vita_FrameNo; UploadFrameBytes = 0; }
+	UploadFrameBytes += r.Size;
 	meta.Width = hd.Width; meta.Height = hd.Height;
 	meta.Masked = hd.Masked; meta.IsTransparent = hd.IsTransparent; meta.GLIsTransparent = hd.GLIsTransparent;
 	CacheHits++;
@@ -692,7 +756,7 @@ void Vita_TexCacheAsyncDrain()
 	sceKernelLockMutex(JobMutex, 1, NULL);
 	TMapIterator<unsigned long long, FVtcReady> it(Ready);
 	TMap<unsigned long long, FVtcReady>::Pair *pair;
-	while (it.NextPair(pair)) free(pair->Value.Data);
+	while (it.NextPair(pair)) { free(pair->Value.Data); free(pair->Value.Swz); }
 	Ready.Clear();
 	Queued.Clear();
 	sceKernelUnlockMutex(JobMutex, 1);

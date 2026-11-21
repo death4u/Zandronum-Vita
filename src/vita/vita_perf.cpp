@@ -115,8 +115,6 @@ struct FPerfSnap
 	char Callers[256];
 };
 static FPerfSnap PerfSnap;
-static volatile int PerfSnapBusy;
-static SceUID PerfSema = -1;
 
 static void Vita_PerfFormat(FPerfSnap &S)
 {
@@ -239,17 +237,6 @@ static void Vita_PerfFormat(FPerfSnap &S)
 	}
 }
 
-static int Vita_PerfThreadFunc(SceSize, void *)
-{
-	for (;;)
-	{
-		sceKernelWaitSema(PerfSema, 1, NULL);
-		Vita_PerfFormat(PerfSnap);
-		PerfSnapBusy = 0;
-	}
-	return 0;
-}
-
 // Heap size without mallinfo() (which walks the heap): newlib's running
 // count of the memory the heap has taken from the system so far.
 extern "C" struct mallinfo __malloc_current_mallinfo;
@@ -260,14 +247,6 @@ static unsigned Vita_HeapReservedMB()
 
 static void Vita_PerfSnapshot(int frames, unsigned long long period, unsigned long long worst)
 {
-	if (PerfSema < 0)
-	{
-		PerfSema = sceKernelCreateSema("vita_perfrep", 0, 0, 1, NULL);
-		SceUID t = sceKernelCreateThread("vita_perfrep", Vita_PerfThreadFunc, 0x10000100 + 40, 0x8000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
-		if (PerfSema < 0 || t < 0) { PerfSema = -1; return; }
-		sceKernelStartThread(t, 0, NULL);
-	}
-	if (PerfSnapBusy) return;	// previous report still being written: skip this one
 	FPerfSnap &S = PerfSnap;
 	S.Detail = Vita_PerfDetail;
 	S.Frames = frames; S.Period = period; S.Worst = worst;
@@ -297,12 +276,16 @@ static void Vita_PerfSnapshot(int frames, unsigned long long period, unsigned lo
 		Vita_PrintDrawCallers(S.Callers, sizeof(S.Callers));
 #endif
 	}
-	PerfSnapBusy = 1;
-	sceKernelSignalSema(PerfSema, 1);
+	// 0045: formatted right here again. 0044 handed this to its own thread,
+	// whose output never appeared on the Vita (fine in Vita3K); the stalls
+	// came from mallinfo(), which is gone.
+	Vita_PerfFormat(S);
 }
 
+unsigned Vita_FrameNo;
 void Vita_PerfFrame()
 {
+	Vita_FrameNo++;
 	Vita_FrameShown();
 	static unsigned long long periodStart = 0, lastFrame = 0, worst = 0;
 	static int frames = 0;
@@ -321,7 +304,7 @@ void Vita_PerfFrame()
 		const unsigned long long vs0 = Vita_PerfNow();
 		Vita_PerfSnapshot(frames, period, worst);
 		const unsigned long long vs = Vita_PerfNow() - vs0;
-		if (vs > 5000) Vita_BootLog("profiler snapshot took %llu ms", vs / 1000);
+		if (vs > 5000) Vita_BootLog("profiler report took %llu ms", vs / 1000);
 	}
 #ifndef NO_GL
 	{ extern unsigned Vita_GLCount[8]; memset(Vita_GLCount, 0, sizeof(Vita_GLCount)); memset(Vita_GLPhaseDraws, 0, sizeof(Vita_GLPhaseDraws)); }
@@ -444,5 +427,71 @@ const char *Vita_TickBreakdown()
 	static char buf[200];
 	snprintf(buf, sizeof(buf), "ACS %llu ms in %d runs (longest %s %llu ms), sound loads %llu ms",
 		Vita_TickAcsUs / 1000, Vita_TickAcsRuns, Vita_TickAcsLongest[0] ? Vita_TickAcsLongest : "-", Vita_TickAcsLongestUs / 1000, Vita_TickSoundUs / 1000);
+	return buf;
+}
+
+// [Vita] 0045: while a slow-tick-timed actor update runs, this thread samples
+// the state of the thread running it every 2 ms: running, ready (wanting the
+// CPU but preempted) or waiting (and on which kernel object). 0044 showed
+// first ticks of 56-190 ms that spent 0 ms in ACS, sounds and file locks.
+volatile SceUID Vita_TickWatchThread = -1;	// set by the ticking thread; -1 = idle
+static volatile unsigned Vita_TickSamples[3];	// running, ready, waiting
+static volatile SceUID Vita_TickWaitId;
+static volatile unsigned Vita_TickWaitType, Vita_TickWaitIdCount;
+static int Vita_TickWatchFunc(SceSize, void *)
+{
+	SceUID lastId = -1; unsigned lastCount = 0;
+	for (;;)
+	{
+		sceKernelDelayThread(2000);
+		const SceUID t = Vita_TickWatchThread;
+		if (t < 0) { lastId = -1; lastCount = 0; continue; }
+		SceKernelThreadInfo info;
+		memset(&info, 0, sizeof(info));
+		info.size = sizeof(info);
+		if (sceKernelGetThreadInfo(t, &info) < 0) continue;
+		if (info.status & SCE_THREAD_RUNNING) Vita_TickSamples[0]++;
+		else if (info.status & SCE_THREAD_READY) Vita_TickSamples[1]++;
+		else
+		{
+			Vita_TickSamples[2]++;
+			if (info.waitId == lastId) lastCount++;
+			else { lastId = info.waitId; lastCount = 1; }
+			if (lastCount > Vita_TickWaitIdCount) { Vita_TickWaitIdCount = lastCount; Vita_TickWaitId = info.waitId; Vita_TickWaitType = info.waitType; }
+		}
+	}
+	return 0;
+}
+unsigned long long Vita_TickLogUs, Vita_TickScriptStartUs;
+void Vita_TickWatchBegin()
+{
+	static bool started = false;
+	if (!started)
+	{
+		started = true;
+		SceUID t = sceKernelCreateThread("vita_tickwatch", Vita_TickWatchFunc, 0x10000100 + 10, 0x2000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+		if (t >= 0) sceKernelStartThread(t, 0, NULL);
+		Vita_BootLog("tick watcher %s", t >= 0 ? "started" : "could not start");
+	}
+	Vita_TickSamples[0] = Vita_TickSamples[1] = Vita_TickSamples[2] = 0;
+	Vita_TickWaitId = -1; Vita_TickWaitType = 0; Vita_TickWaitIdCount = 0;
+	Vita_TickLogUs = Vita_TickScriptStartUs = 0;
+	Vita_TickWatchThread = sceKernelGetThreadId();
+}
+void Vita_TickWatchEnd() { Vita_TickWatchThread = -1; }
+const char *Vita_TickWatchReport()
+{
+	static char buf[220];
+	char what[48] = "-";
+	if (Vita_TickWaitIdCount > 0)
+	{
+		SceKernelMutexInfo mi; memset(&mi, 0, sizeof(mi)); mi.size = sizeof(mi);
+		SceKernelSemaInfo si; memset(&si, 0, sizeof(si)); si.size = sizeof(si);
+		if (sceKernelGetMutexInfo(Vita_TickWaitId, &mi) >= 0) snprintf(what, sizeof(what), "mutex %s", mi.name);
+		else if (sceKernelGetSemaInfo(Vita_TickWaitId, &si) >= 0) snprintf(what, sizeof(what), "semaphore %s", si.name);
+		else snprintf(what, sizeof(what), "type %x id %x", Vita_TickWaitType, (unsigned)Vita_TickWaitId);
+	}
+	snprintf(buf, sizeof(buf), "samples every 2 ms: running %u, preempted %u, waiting %u (mostly on %s); log writing %llu ms, script starts %llu ms",
+		Vita_TickSamples[0], Vita_TickSamples[1], Vita_TickSamples[2], what, Vita_TickLogUs / 1000, Vita_TickScriptStartUs / 1000);
 	return buf;
 }

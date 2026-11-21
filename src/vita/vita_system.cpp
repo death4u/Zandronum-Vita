@@ -63,6 +63,7 @@ struct FVitaLogFile
 };
 static FVitaLogFile VitaLogs[2] = { { VITA_BOOT_LOG, {0}, 0, 0, false }, { VITA_DATA_ROOT "/console.txt", {0}, 0, 0, true } };
 static SceUID VitaLogMutex = -1, VitaLogSema = -1, VitaLogThread = -1;
+static volatile int VitaLogPending;
 
 static void Vita_LogWriteDirect(FVitaLogFile &f, const char *text, unsigned len)
 {
@@ -97,6 +98,11 @@ static int Vita_LogThreadFunc(SceSize, void *)
 	for (;;)
 	{
 		sceKernelWaitSema(VitaLogSema, 1, NULL);
+		// [Vita] 0045: written at most once a second. Before, every line
+		// opened, wrote and closed the file on the memory card, competing
+		// with the game's own reads.
+		sceKernelDelayThread(1000000);
+		VitaLogPending = 0;
 		for (int i = 0; i < 2; i++) Vita_LogFlushFile(i);
 	}
 	return 0;
@@ -126,7 +132,7 @@ static void Vita_LogAppend(int file, const char *text, unsigned len)
 	if (f.Len + len <= sizeof(f.Buf)) { memcpy(f.Buf + f.Len, text, len); f.Len += len; }
 	else f.Dropped++;
 	sceKernelUnlockMutex(VitaLogMutex, 1);
-	sceKernelSignalSema(VitaLogSema, 1);
+	if (!VitaLogPending) { VitaLogPending = 1; sceKernelSignalSema(VitaLogSema, 1); }
 }
 
 // Writes out everything pending, from this thread (fatal errors, exit).
@@ -153,6 +159,11 @@ extern "C" void Vita_BootLog(const char *fmt, ...)
 		len = sizeof(buf) - 2;
 	buf[len++] = '\n';
 	Vita_LogAppend(0, buf, len);
+	{
+		extern volatile SceUID Vita_TickWatchThread;
+		extern unsigned long long Vita_TickLogUs;
+		if (Vita_TickWatchThread >= 0 && Vita_TickWatchThread == sceKernelGetThreadId()) Vita_TickLogUs += sceKernelGetProcessTimeWide() - us;
+	}
 }
 
 // [Vita] System events (PS button, quit requests) are logged to boot.log,
