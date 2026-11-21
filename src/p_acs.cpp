@@ -9232,6 +9232,46 @@ static bool CharArrayParms(int &capacity, int &offset, int &a, FACSStackMemory& 
 	return true;
 }
 
+#ifdef __vita__
+// [Vita] Scripts run by bots that wait one tic in a loop (BotThink and
+// HaloDoom's per-player loops) wait this many tics instead: bots think half
+// as often, which halves the biggest part of the ACS time with 4+ bots.
+CVAR(Int, vita_botacsdelay, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// Scripts (numbers or names) that poll every 2 tics instead of every tic
+// for everyone: HaloDoom's script 40 (pickup prompt) runs for every pickup
+// on the map, 18000 opcodes a frame.
+static TArray<int> Vita_SlowPoll;
+CUSTOM_CVAR(String, vita_slowpollscripts, "40", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	Vita_SlowPoll.Clear();
+	FString list = *self;
+	char *tok = strtok(list.LockBuffer(), " ,");
+	while (tok != NULL)
+	{
+		char *end;
+		long n = strtol(tok, &end, 10);
+		if (*end == 0) Vita_SlowPoll.Push((int)n);
+		else Vita_SlowPoll.Push(-(int)FName(tok));
+		tok = strtok(NULL, " ,");
+	}
+	list.UnlockBuffer();
+}
+static inline bool Vita_SlowPollScript(int script)
+{
+	for (unsigned i = 0; i < Vita_SlowPoll.Size(); i++)
+		if (Vita_SlowPoll[i] == script) return true;
+	return false;
+}
+static inline int Vita_BotPollDelay(AActor *activator, int script)
+{
+	if (activator != NULL && activator->player != NULL && activator->player->bIsBot && vita_botacsdelay > 1)
+		return MIN<int>(vita_botacsdelay, 4);
+	for (unsigned i = 0; i < Vita_SlowPoll.Size(); i++)
+		if (Vita_SlowPoll[i] == script) return 2;
+	return 1;
+}
+#endif
+
 int DLevelScript::RunScript ()
 {
 #ifdef __vita__
@@ -10746,6 +10786,9 @@ vita_slowop:
 
 		case PCD_DELAY:
 			statedata = STACK(1) + (fmt == ACS_Old && gameinfo.gametype == GAME_Hexen);
+#ifdef __vita__
+			if (statedata == 1) statedata = Vita_BotPollDelay(activator, script);
+#endif
 			if (statedata > 0)
 			{
 				state = SCRIPT_Delayed;
@@ -10756,6 +10799,9 @@ vita_slowop:
 		case PCD_DELAYDIRECT:
 			statedata = uallong(pc[0]) + (fmt == ACS_Old && gameinfo.gametype == GAME_Hexen);
 			pc++;
+#ifdef __vita__
+			if (statedata == 1) statedata = Vita_BotPollDelay(activator, script);
+#endif
 			if (statedata > 0)
 			{
 				state = SCRIPT_Delayed;
@@ -10764,6 +10810,9 @@ vita_slowop:
 
 		case PCD_DELAYDIRECTB:
 			statedata = *(BYTE *)pc + (fmt == ACS_Old && gameinfo.gametype == GAME_Hexen);
+#ifdef __vita__
+			if (statedata == 1) statedata = Vita_BotPollDelay(activator, script);
+#endif
 			if (statedata > 0)
 			{
 				state = SCRIPT_Delayed;
@@ -13389,6 +13438,10 @@ static DLevelScript *P_GetScriptGoing (AActor *who, line_t *where, int num, cons
 
 #ifdef __vita__
 	if (Vita_BotSkipsScript(who, num))
+		return NULL;
+	// HaloDoom's weapon pickups start script 40 (pickup prompt) every tic:
+	// non-player activators of the slow-poll scripts start it every 2nd tic.
+	if (who != NULL && who->player == NULL && Vita_SlowPollScript(num) && ((level.maptime + ((int)(size_t)who >> 6)) & 1))
 		return NULL;
 #endif
 

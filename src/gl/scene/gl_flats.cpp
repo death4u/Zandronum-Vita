@@ -294,6 +294,37 @@ static void Vita_AddSubsectorToBatch(GLFlat *flat, subsector_t * sub, const FVit
 	unsigned n = sub->numlines;
 	if (n < 3) return;
 	vertex_t *v0 = sub->firstline[0].v1;
+	if ((sub->lighthead[0] != NULL || sub->lighthead[1] != NULL) && Vita_VertexLightsOn())
+	{
+		// lit: per-vertex light, big triangles split
+		float pts[3][3], uvs[3][2];
+		bool planeok = false;
+		for (unsigned k = 1; k + 1 < n; k++)
+		{
+			vertex_t *vs[3] = { v0, sub->firstline[k].v1, sub->firstline[k+1].v1 };
+			for (int j = 0; j < 3; j++)
+			{
+				vertex_t *vt = vs[j];
+				pts[j][0] = vt->fx; pts[j][1] = flat->plane.plane.ZatPoint(vt->fx, vt->fy) + flat->dz; pts[j][2] = vt->fy;
+				float u = vt->fx/64.f, v = -vt->fy/64.f;
+				uvs[j][0] = x.a * u + x.b * v + x.c; uvs[j][1] = x.d * u + x.e * v + x.f;
+			}
+			if (!planeok)
+			{
+				// a flat's plane: a point and two directions along it
+				float q1[3] = { pts[0][0] + 64.f, pts[0][1], pts[0][2] }, q2[3] = { pts[0][0], pts[0][1], pts[0][2] + 64.f };
+				q1[1] = flat->plane.plane.ZatPoint(q1[0], q1[2]) + flat->dz;
+				q2[1] = flat->plane.plane.ZatPoint(q2[0], q2[2]) + flat->dz;
+				if (!Vita_SetupPolyLights(sub->lighthead[0], sub->lighthead[1], pts[0], q1, q2)) goto unlit;
+				planeok = true;
+			}
+			Vita_EmitLitTriangle(pts[0], pts[1], pts[2], uvs[0], uvs[1], uvs[2]);
+		}
+		Vita_EndPolyLights();
+		flatvertices += n;
+		return;
+	}
+unlit:
 	for (unsigned k = 1; k + 1 < n; k++)
 	{
 		vertex_t *vs[3] = { v0, sub->firstline[k].v1, sub->firstline[k+1].v1 };

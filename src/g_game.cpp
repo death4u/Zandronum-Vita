@@ -1488,10 +1488,18 @@ CVAR(Int, vita_testnextmap, 0, 0)
 CVAR(String, vita_testmaps, "", 0)
 // Summoned in front of the player 3 s into each level (to look at it).
 CVAR(String, vita_testsummon, "", 0)
+// Test helper: flips vita_vertexlights every N seconds (compare screenshots).
+CVAR(Int, vita_testlighttoggle, 0, 0)
 void Vita_TestNextMap()
 {
 	static int tics = 0, levtics = 0;
 	if (gamestate != GS_LEVEL) { tics = levtics = 0; return; }
+	if (vita_testlighttoggle > 0 && (levtics % (vita_testlighttoggle * TICRATE)) == 0 && levtics > 0)
+	{
+		EXTERN_CVAR(Bool, vita_vertexlights)
+		vita_vertexlights = !vita_vertexlights;
+		Printf("vertex lights %d\n", (int)vita_vertexlights);
+	}
 	if (++levtics == 3 * TICRATE && *vita_testsummon != 0)
 	{
 		FString cmd; cmd.Format("summon %s", *vita_testsummon);

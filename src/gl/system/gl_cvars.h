@@ -33,7 +33,8 @@ EXTERN_CVAR(Bool, gl_forcemultipass)
 // per lit surface. That's far too slow for the Vita, so it's opt-in there.
 #ifdef __vita__
 EXTERN_CVAR(Bool, vita_multipasslights)
-#define GL_MULTIPASS_LIGHTS (vita_multipasslights)
+EXTERN_CVAR(Bool, vita_vertexlights)
+#define GL_MULTIPASS_LIGHTS (vita_multipasslights && !vita_vertexlights)
 #else
 #define GL_MULTIPASS_LIGHTS true
 #endif

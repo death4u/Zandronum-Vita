@@ -47,6 +47,10 @@ struct FVitaWallBatch
 	TArray<float> FanXyz, FanUv;
 	float U, V;
 	unsigned Color;			// colour of the surface being added
+	// dynamic lights of the wall being added (vita_vertexlights): its
+	// polygons are split and lit per vertex
+	struct FLightNode *LightHead[2];
+	bool ForceNoFog;		// lit polygon: fog baked into its vertex colours
 };
 extern FVitaWallBatch VitaWalls;
 extern unsigned Vita_CurColor;	// last glColor (linker wrappers in vita_perf.cpp)
@@ -57,6 +61,19 @@ void Vita_BatchSurface(FMaterial *tex, int cm, int flags, bool usecurcolor, floa
 // Starts or continues a run with the surface's key and the fog and blend
 // equation currently in gl_RenderState.
 void Vita_BatchCheck();
+
+// [Vita] Dynamic lights per vertex (vita_vertexlights, 0039): the lights
+// touching a surface are added to its vertex colours in the normal batched
+// pass (the multipass lights drew every lit surface 2 + N times). Big
+// polygons near a light are split so the light keeps a round-ish shape.
+bool Vita_VertexLightsOn();
+// Sets up the lights of one polygon (lists of a side or subsector); p0..p2
+// span its plane (GL coordinates). Returns false if none of them reach it.
+bool Vita_SetupPolyLights(struct FLightNode *head0, struct FLightNode *head1, const float *p0, const float *p1, const float *p2);
+// Back to the surface's own bucket after the lit triangles.
+void Vita_EndPolyLights();
+// Adds a lit triangle to the current bucket (after Vita_SetupPolyLights).
+void Vita_EmitLitTriangle(const float *p0, const float *p1, const float *p2, const float *uv0, const float *uv1, const float *uv2);
 
 static inline void VitaGL_Begin(GLenum mode)
 {
@@ -82,6 +99,18 @@ static inline void VitaGL_End()
 	if (!VitaWalls.Collecting) { glEnd(); return; }
 	// triangle fan -> triangles
 	unsigned n = VitaWalls.FanXyz.Size() / 3;
+	if ((VitaWalls.LightHead[0] != NULL || VitaWalls.LightHead[1] != NULL) && n >= 3)
+	{
+		const float *f = &VitaWalls.FanXyz[0], *t = &VitaWalls.FanUv[0];
+		// plane from the corners farthest apart (fans can have split points)
+		if (Vita_SetupPolyLights(VitaWalls.LightHead[0], VitaWalls.LightHead[1], f, f + 3 * (n / 2), f + 3 * (n - 1)))
+		{
+			for (unsigned k = 1; k + 1 < n; k++)
+				Vita_EmitLitTriangle(f, f + 3 * k, f + 3 * (k + 1), t, t + 2 * k, t + 2 * (k + 1));
+			Vita_EndPolyLights();
+			return;
+		}
+	}
 	for (unsigned k = 1; k + 1 < n; k++)
 	{
 		unsigned idx[3] = { 0, k, k + 1 };

@@ -49,6 +49,8 @@
 #include "doomstat.h"
 #include "c_cvars.h"
 #include "actor.h"
+#include "r_state.h"
+#include "vita/vita_system.h"
 
 
 static cycle_t ThinkCycles;
@@ -532,8 +534,23 @@ int DThinker::TickThinkers (FThinkerList *list, FThinkerList *dest)
 				{
 					unsigned long long t0 = Vita_PerfNow();
 					const PClass *cls = node->GetClass();
+					// [Vita] what a slow actor was doing (0038: Spartans took 280 ms in one Tick)
+					AActor *va = node->IsKindOf(RUNTIME_CLASS(AActor)) ? static_cast<AActor *>(node) : NULL;
+					FState *vs0 = va ? va->state : NULL;
+					extern LONG g_lSpawnCount;
+					const LONG vspawn0 = g_lSpawnCount;
 					node->Tick();
-					Vita_PerfThinker(cls, cls->TypeName.GetChars(), Vita_PerfNow() - t0);
+					const unsigned long long vdt = Vita_PerfNow() - t0;
+					Vita_PerfThinker(cls, cls->TypeName.GetChars(), vdt);
+					if (vdt > 50000)
+					{
+						FState *vs1 = (va && !(node->ObjectFlags & OF_EuthanizeMe)) ? va->state : NULL;
+						Vita_BootLog("slow tick: %s %llu ms, state %s%c (action %p) -> %s%c (action %p), %ld actors spawned, health %d",
+							cls->TypeName.GetChars(), vdt / 1000,
+							vs0 ? sprites[vs0->sprite].name : "-", vs0 ? 'A' + vs0->Frame : '-', vs0 ? (void *)vs0->ActionFunc : NULL,
+							vs1 ? sprites[vs1->sprite].name : "-", vs1 ? 'A' + vs1->Frame : '-', vs1 ? (void *)vs1->ActionFunc : NULL,
+							(long)(g_lSpawnCount - vspawn0), va ? va->health : 0);
+					}
 				}
 				else
 					node->Tick();

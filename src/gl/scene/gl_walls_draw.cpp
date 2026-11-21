@@ -58,6 +58,7 @@
 #include "gl/utility/gl_clock.h"
 #include "gl/utility/gl_templates.h"
 #include "gl/scene/gl_vitawallbatch.h"
+#include "vita/vita_system.h"
 
 EXTERN_CVAR(Bool, gl_seamless)
 
@@ -555,6 +556,7 @@ void Vita_BatchCheck()
 	const int eq = gl_RenderState.VitaGetBlendEquation();
 	FMaterial *tex = VitaWalls.NextTex;
 	const int cm = tex != NULL ? VitaWalls.NextCm : 0, flags = tex != NULL ? VitaWalls.NextFlags : 0;
+	if (VitaWalls.ForceNoFog) on = false;
 	if (!on) { fc = 0; fd = 0; }
 	FVitaBucket *cur = VitaWalls.Cur;
 	if (cur == NULL || cur->Tex != tex || cur->CmColormap != cm || cur->Flags != flags || cur->FogOn != on
@@ -592,6 +594,199 @@ void Vita_BatchCheck()
 }
 
 CVAR(Bool, gl_vita_batchwalls, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+//==========================================================================
+//
+// [Vita] Dynamic lights per vertex
+//
+//==========================================================================
+CVAR(Bool, vita_vertexlights, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, vita_vertexlights_split, 96.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)	// split edges longer than this near a light
+
+bool Vita_VertexLightsOn()
+{
+	return vita_vertexlights && gl_lights && !gl_fixedcolormap && gl_vita_batchwalls;
+}
+
+// The multipass lights drew glstuff/gllight.png (radial profile below) on
+// a disc of radius r - h/2 around the point nearest the light, with the
+// colour scaled by 1 - h/r (h = the light's distance from the plane).
+static const float VitaLightProfile[18] = { 0.996f, 0.984f, 0.965f, 0.945f, 0.925f, 0.906f, 0.882f, 0.835f, 0.745f, 0.627f, 0.502f, 0.388f, 0.298f, 0.208f, 0.118f, 0.047f, 0.f, 0.f };
+struct FVitaPolyLight { float x, y, z, h2, disc2, invdisc, r, g, b; bool sub; };
+static FVitaPolyLight VitaPL[24];
+static int VitaPLCount;
+static float VitaPLFog, VitaPLCamX, VitaPLCamY, VitaPLCamZ;	// GL_EXP density baked into the vertex colours (0 = none)
+
+CVAR(Bool, vita_vertexlights_debug, false, 0)
+static unsigned VitaDbgCalls, VitaDbgLit, VitaDbgNodes, VitaDbgRejDist, VitaDbgRejSide;
+bool Vita_SetupPolyLights(FLightNode *head0, FLightNode *head1, const float *p0, const float *p1, const float *p2)
+{
+	OVERRIDE_LIGHTS_SIZE_IF_NECESSARY
+	VitaPLCount = 0;
+	if (vita_vertexlights_debug && ++VitaDbgCalls % 2000 == 0)
+		Vita_BootLog("vertexlights: %u polys, %u lit, %u light nodes, %u too far, %u wrong side", VitaDbgCalls, VitaDbgLit, VitaDbgNodes, VitaDbgRejDist, VitaDbgRejSide);
+	// plane through p0 p1 p2
+	float ax = p1[0] - p0[0], ay = p1[1] - p0[1], az = p1[2] - p0[2];
+	float bx = p2[0] - p0[0], by = p2[1] - p0[1], bz = p2[2] - p0[2];
+	float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+	float len = sqrtf(nx * nx + ny * ny + nz * nz);
+	if (len < 1e-4f) return false;
+	nx /= len; ny /= len; nz /= len;
+	const float d = -(nx * p0[0] + ny * p0[1] + nz * p0[2]);
+	// the side the camera is on is the lit side
+	const float camside = nx * FIXED2FLOAT(viewx) + ny * FIXED2FLOAT(viewz) + nz * FIXED2FLOAT(viewy) + d;
+	for (int list = 0; list < 2; list++)
+	{
+		for (FLightNode *node = list ? head1 : head0; node != NULL; node = node->nextLight)
+		{
+			ADynamicLight *light = node->lightsource;
+			if (light == NULL || (light->flags2 & MF2_DORMANT)) continue;
+			const float radius = light->GetRadius() * gl_lights_size;
+			if (radius <= 0.f) continue;
+			const float lx = FIXED2FLOAT(light->x), ly = FIXED2FLOAT(light->z), lz = FIXED2FLOAT(light->y);
+			const float side = nx * lx + ny * ly + nz * lz + d;
+			VitaDbgNodes++;
+			if (fabsf(side) > radius) { VitaDbgRejDist++; continue; }
+			if (gl_lights_checkside && side * camside < 0) { VitaDbgRejSide++; continue; }
+			if (light->owned && light->target != NULL && !light->target->IsVisibleToPlayer()) continue;
+			float cs = (gl_lights_additive || (light->flags4 & MF4_ADDITIVE) || list == 1) ? 0.2f : 1.0f;
+			float r = light->GetRed() / 255.0f * cs * gl_lights_intensity;
+			float g = light->GetGreen() / 255.0f * cs * gl_lights_intensity;
+			float b = light->GetBlue() / 255.0f * cs * gl_lights_intensity;
+			const bool sub = light->IsSubtractive();
+			if (sub)
+			{
+				const float l = sqrtf(r * r + g * g + b * b);
+				r = l - r; g = l - g; b = l - b;
+			}
+			if (VitaPLCount == 24) break;
+			const float h = fabsf(side);
+			const float fade = 1.f - h / radius;
+			const float disc = radius - h * 0.5f;
+			FVitaPolyLight &pl = VitaPL[VitaPLCount++];
+			pl.x = lx; pl.y = ly; pl.z = lz; pl.h2 = h * h; pl.disc2 = disc * disc; pl.invdisc = 1.f / disc;
+			pl.r = r * fade; pl.g = g * fade; pl.b = b * fade; pl.sub = sub;
+		}
+	}
+	if (VitaPLCount > 0) VitaDbgLit++;
+	if (VitaPLCount == 0) return false;
+	// The multipass lights weren't fogged (only the sector light was): with
+	// black fog, the fog is applied to the sector light here and the
+	// polygon goes into a bucket without fog.
+	bool fogon; PalEntry fc; float fd;
+	gl_RenderState.VitaGetFog(fogon, fc, fd);
+	VitaPLFog = 0.f;
+	if (fogon && (fc.d & 0xffffff) == 0 && fd > 0.f)
+	{
+		VitaPLFog = fd / 64000.f;
+		VitaPLCamX = FIXED2FLOAT(viewx); VitaPLCamY = FIXED2FLOAT(viewz); VitaPLCamZ = FIXED2FLOAT(viewy);
+		VitaWalls.ForceNoFog = true;
+		Vita_BatchCheck();
+	}
+	return true;
+}
+
+void Vita_EndPolyLights()
+{
+	if (VitaWalls.ForceNoFog)
+	{
+		VitaWalls.ForceNoFog = false;
+		Vita_BatchCheck();
+	}
+}
+
+static inline unsigned Vita_LitColor(const float *p)
+{
+	const unsigned base = VitaWalls.Color;
+	float r = (base & 0xff) * (1.f / 255.f), g = ((base >> 8) & 0xff) * (1.f / 255.f), b = ((base >> 16) & 0xff) * (1.f / 255.f);
+	if (VitaPLFog > 0.f)
+	{
+		const float cx = p[0] - VitaPLCamX, cy = p[1] - VitaPLCamY, cz = p[2] - VitaPLCamZ;
+		const float f = expf(-VitaPLFog * sqrtf(cx * cx + cy * cy + cz * cz));
+		r *= f; g *= f; b *= f;
+	}
+	for (int i = 0; i < VitaPLCount; i++)
+	{
+		const FVitaPolyLight &l = VitaPL[i];
+		const float dx = p[0] - l.x, dy = p[1] - l.y, dz = p[2] - l.z;
+		float s2 = dx * dx + dy * dy + dz * dz - l.h2;	// squared distance along the plane
+		if (s2 >= l.disc2) continue;
+		if (s2 < 0) s2 = 0;
+		const float t = sqrtf(s2) * l.invdisc * 16.f;
+		const int ti = (int)t;
+		const float f = VitaLightProfile[ti] + (VitaLightProfile[ti + 1] - VitaLightProfile[ti]) * (t - ti);
+		if (l.sub) { r -= l.r * f; g -= l.g * f; b -= l.b * f; }
+		else { r += l.r * f; g += l.g * f; b += l.b * f; }
+	}
+	int ir = (int)(r * 255.f + 0.5f), ig = (int)(g * 255.f + 0.5f), ib = (int)(b * 255.f + 0.5f);
+	ir = ir < 0 ? 0 : ir > 255 ? 255 : ir; ig = ig < 0 ? 0 : ig > 255 ? 255 : ig; ib = ib < 0 ? 0 : ib > 255 ? 255 : ib;
+	return (unsigned)ir | ((unsigned)ig << 8) | ((unsigned)ib << 16) | (base & 0xff000000u);
+}
+
+// does the triangle's bounding box come within reach of a light?
+static bool Vita_TriNearLight(const float *p0, const float *p1, const float *p2)
+{
+	float mn[3], mx[3];
+	for (int k = 0; k < 3; k++)
+	{
+		mn[k] = MIN(p0[k], MIN(p1[k], p2[k]));
+		mx[k] = MAX(p0[k], MAX(p1[k], p2[k]));
+	}
+	for (int i = 0; i < VitaPLCount; i++)
+	{
+		const FVitaPolyLight &l = VitaPL[i];
+		const float c[3] = { l.x, l.y, l.z };
+		float d2 = 0;
+		for (int k = 0; k < 3; k++)
+		{
+			const float v = c[k] < mn[k] ? mn[k] - c[k] : c[k] > mx[k] ? c[k] - mx[k] : 0.f;
+			d2 += v * v;
+		}
+		if (d2 < l.disc2 + l.h2) return true;
+	}
+	return false;
+}
+
+static void Vita_LitTri(const float *p0, const float *p1, const float *p2, const float *t0, const float *t1, const float *t2, int depth)
+{
+	const float split = vita_vertexlights_split < 16.f ? 16.f : (float)vita_vertexlights_split;
+	if (depth < 4)
+	{
+		float e0 = 0, e1 = 0, e2 = 0;
+		for (int k = 0; k < 3; k++)
+		{
+			e0 += (p1[k] - p0[k]) * (p1[k] - p0[k]);
+			e1 += (p2[k] - p1[k]) * (p2[k] - p1[k]);
+			e2 += (p0[k] - p2[k]) * (p0[k] - p2[k]);
+		}
+		const float emax = MAX(e0, MAX(e1, e2));
+		if (emax > split * split && Vita_TriNearLight(p0, p1, p2))
+		{
+			// split in four at the edge midpoints
+			float m01[3], m12[3], m20[3], u01[2], u12[2], u20[2];
+			for (int k = 0; k < 3; k++) { m01[k] = (p0[k] + p1[k]) * 0.5f; m12[k] = (p1[k] + p2[k]) * 0.5f; m20[k] = (p2[k] + p0[k]) * 0.5f; }
+			for (int k = 0; k < 2; k++) { u01[k] = (t0[k] + t1[k]) * 0.5f; u12[k] = (t1[k] + t2[k]) * 0.5f; u20[k] = (t2[k] + t0[k]) * 0.5f; }
+			Vita_LitTri(p0, m01, m20, t0, u01, u20, depth + 1);
+			Vita_LitTri(m01, p1, m12, u01, t1, u12, depth + 1);
+			Vita_LitTri(m20, m12, p2, u20, u12, t2, depth + 1);
+			Vita_LitTri(m01, m12, m20, u01, u12, u20, depth + 1);
+			return;
+		}
+	}
+	FVitaBucket *b = VitaWalls.Cur;
+	const float *ps[3] = { p0, p1, p2 }, *ts[3] = { t0, t1, t2 };
+	for (int j = 0; j < 3; j++)
+	{
+		b->Xyz.Push(ps[j][0]); b->Xyz.Push(ps[j][1]); b->Xyz.Push(ps[j][2]);
+		b->Uv.Push(ts[j][0]); b->Uv.Push(ts[j][1]);
+		b->Rgba.Push(Vita_LitColor(ps[j]));
+	}
+}
+
+void Vita_EmitLitTriangle(const float *p0, const float *p1, const float *p2, const float *uv0, const float *uv1, const float *uv2)
+{
+	Vita_LitTri(p0, p1, p2, uv0, uv1, uv2, 0);
+}
 #endif
 
 void GLWall::Draw(int pass)
@@ -617,9 +812,16 @@ void GLWall::Draw(int pass)
 		if (type != RENDERWALL_M2SNF) gl_SetFog(lightlevel, rel, &Colormap, false);
 		else gl_SetFog(255, 0, NULL, false);
 		Vita_BatchSurface(gltexture, Colormap.colormap, flags & 3, false, r, g, b);
+		VitaWalls.LightHead[0] = VitaWalls.LightHead[1] = NULL;
+		if (Vita_VertexLightsOn() && seg->sidedef != NULL)
+		{
+			if (!(seg->sidedef->Flags & WALLF_POLYOBJ)) { VitaWalls.LightHead[0] = seg->sidedef->lighthead[0]; VitaWalls.LightHead[1] = seg->sidedef->lighthead[1]; }
+			else if (sub) { VitaWalls.LightHead[0] = sub->lighthead[0]; VitaWalls.LightHead[1] = sub->lighthead[1]; }
+		}
 		VitaWalls.Collecting = true;
 		RenderWall(3, NULL);
 		VitaWalls.Collecting = false;
+		VitaWalls.LightHead[0] = VitaWalls.LightHead[1] = NULL;
 		return;
 	}
 	// Dynamic light passes (vita_multipasslights): base, light and texture

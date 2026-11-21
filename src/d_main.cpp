@@ -57,6 +57,7 @@
 #include "network.h"
 #ifdef __vita__
 #include "vita/vita_system.h"
+#include <psp2/kernel/processmgr.h>
 #define VITA_CP(x) Vita_Checkpoint(x)
 #else
 #define VITA_CP(x)
@@ -168,6 +169,20 @@
 #endif
 EXTERN_CVAR(Bool, hud_althud)
 void DrawHUD();
+#ifdef __vita__
+// [Vita] Logs parts of the 2D/HUD step that take over 50 ms (0038: one 4 s frame there).
+static unsigned long long Vita2DMark;
+static void Vita_2D(const char *part)
+{
+	const unsigned long long now = sceKernelGetProcessTimeWide();
+	if (part != NULL && Vita2DMark != 0 && now - Vita2DMark > 50000)
+		Vita_BootLog("slow 2D: %s %llu ms", part, (now - Vita2DMark) / 1000);
+	Vita2DMark = now;
+}
+#define VITA_2D(p) Vita_2D(p)
+#else
+#define VITA_2D(p)
+#endif
 
 extern player_t *Player;
 
@@ -1039,13 +1054,16 @@ drawfullconsole:
 				//P_UnPredictPlayer();
 			}
 
+			VITA_2D(NULL);
 			if ((hw2d = screen->Begin2D(viewactive)))
 			{
 				// Redraw everything every frame when using 2D accel
 				ST_SetNeedRefresh();
 				V_SetBorderNeedRefresh();
 			}
+			VITA_2D("Begin2D");
 			Renderer->DrawRemainingPlayerSprites();
+			VITA_2D("player sprites");
 			screen->DrawBlendingRect();
 			if (automapactive)
 			{
@@ -1061,6 +1079,7 @@ drawfullconsole:
 			{
 				V_RefreshViewBorder ();
 			}
+			VITA_2D("blend/automap/border");
 
 			if (hud_althud && viewheight == SCREENHEIGHT && screenblocks > 10)
 			{
@@ -1074,8 +1093,11 @@ drawfullconsole:
 			{
 				EHudState state = DrawFSHUD ? HUD_Fullscreen : HUD_None;
 				StatusBar->DrawBottomStuff (state);
+				VITA_2D("status bar bottom");
 				StatusBar->Draw (state);
+				VITA_2D("status bar");
 				StatusBar->DrawTopStuff (state);
+				VITA_2D("status bar top (HUD messages)");
 			}
 			else
 			{
@@ -1088,16 +1110,20 @@ drawfullconsole:
 			{
 				// [BC] Handle rendering for the possession module.
 				POSSESSION_Render( );
+				VITA_2D("statusbar/possession");
 
 				// [BC] Render the scoreboard [BB] respecting free spectate mode.
 				HUD_Render( CLIENTDEMO_IsInFreeSpectateMode( ) == false ? HUD_GetViewPlayer( ) : consoleplayer );
+				VITA_2D("scoreboard/HUD_Render");
 
 				// Render any medals the player might have been awarded.
 				MEDAL_Render( );
+				VITA_2D("medals");
 			}
 
 			// Render chat prompt.
 			CHAT_Render( );
+			VITA_2D("chat");
 			break;
 
 		case GS_INTERMISSION:
@@ -1177,12 +1203,17 @@ drawfullconsole:
 
 	if (!wipe || NoWipe < 0)
 	{
+		VITA_2D("pause/icon");
 		NetUpdate ();			// send out any new accumulation
+		VITA_2D("NetUpdate");
 		// normal update
 		C_DrawConsole (hw2d);	// draw console
+		VITA_2D("console");
 		M_Drawer ();			// menu is drawn even on top of everything
+		VITA_2D("menu");
 		FStat::PrintStat ();
 		screen->Update ();		// page flip or blit buffer
+		VITA_2D("screen update/swap");
 	}
 	else
 	{

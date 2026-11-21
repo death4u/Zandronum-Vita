@@ -138,7 +138,7 @@ static FRandom pr_uniquetid("UniqueTID");
 
 /*static*/	IDList<AActor> g_ActorNetIDList;
 
-static	LONG	g_lSpawnCount = 0;
+LONG	g_lSpawnCount = 0;	// [Vita] not static: slow-tick log in dthinker.cpp
 static	cycle_t	g_SpawnCycles;
 static	LONG	g_lStaleSpawnCount = 0;
 static	cycle_t	g_StaleSpawnCycles;
