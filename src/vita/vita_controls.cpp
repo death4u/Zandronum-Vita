@@ -327,3 +327,5 @@ void Vita_ControlsFrame()
 		Vita_BootLog("controls: layout saved to %s", LayoutPath.GetChars());
 	}
 }
+
+FString Vita_GameName() { return GameName(); }

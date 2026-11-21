@@ -547,6 +547,9 @@ void S_PrecacheLevel ()
 		{
 			level.info->PrecacheSounds[i].MarkUsed();
 		}
+#ifdef __vita__
+		{ extern void Vita_LearnMarkSounds(); Vita_LearnMarkSounds(); }
+#endif
 
 		for (i = 1; i < S_sfx.Size(); ++i)
 		{
@@ -1371,9 +1374,11 @@ static sfxinfo_t *S_LoadSoundInner(sfxinfo_t *sfx);
 sfxinfo_t *S_LoadSound(sfxinfo_t *sfx)
 {
 	if (GSnd->IsNull() || sfx->data.isValid()) return S_LoadSoundInner(sfx);
+	{ extern void Vita_LearnSound(int); Vita_LearnSound(int(sfx - &S_sfx[0])); }
 	const unsigned long long t0 = sceKernelGetProcessTimeWide();
 	sfxinfo_t *r = S_LoadSoundInner(sfx);
 	const unsigned long long dt = sceKernelGetProcessTimeWide() - t0;
+	{ extern unsigned long long Vita_TickSoundUs; Vita_TickSoundUs += dt; }
 	if (dt > 20000)
 	{
 		extern bool Vita_OnLogicThread();
@@ -1418,6 +1423,20 @@ sfxinfo_t *S_LoadSound(sfxinfo_t *sfx)
 		DPrintf("Loading sound \"%s\" (%td)\n", sfx->name.GetChars(), sfx - &S_sfx[0]);
 
 		int size = Wads.LumpLength(sfx->lumpnum);
+#ifdef __vita__
+		if (size > 0)
+		{
+			// [Vita] read and decoded in the background; the sound plays
+			// once it's ready (a moment late the first time)
+			extern void *Vita_SoundLoadLumpAsync(int lumpnum, bool raw, bool force22050, int loopstart);
+			void *vs = Vita_SoundLoadLumpAsync(sfx->lumpnum, sfx->bLoadRAW, sfx->bForce22050, sfx->LoopStart);
+			if (vs != NULL)
+			{
+				sfx->data.data = vs;
+				break;
+			}
+		}
+#endif
 		if (size > 0)
 		{
 			BYTE *sfxdata;

@@ -60,6 +60,47 @@ IMPLEMENT_POINTY_CLASS (DBaseDecal)
  DECLARE_POINTER(WallNext)
 END_POINTERS
 
+#ifdef __vita__
+// [Vita] Live-decal registry. A wall's decal chain once held a garbage
+// pointer after the same map was loaded again (crash in GLWall::DrawDecal,
+// Brutal Doom, 0042). The renderer and StickToWall check each link here and
+// stop at one that isn't a live decal (logged once per level).
+static TMap<const DBaseDecal *, bool> Vita_LiveDecals;
+static int Vita_BadDecalLogs;
+#include "vita/vita_system.h"
+static void Vita_Register(DBaseDecal *d) { Vita_LiveDecals[d] = true; }
+DBaseDecal::~DBaseDecal() { Vita_LiveDecals.Remove(this); }
+bool DBaseDecal::Vita_Live(const DBaseDecal *d)
+{
+	if (d != NULL && Vita_LiveDecals.CheckKey(d) != NULL) return true;
+	if (Vita_BadDecalLogs < 8)
+	{
+		Vita_BadDecalLogs++;
+		Vita_BootLog("bad decal link %p skipped (not a live decal)", (void *)d);
+	}
+	return false;
+}
+void DBaseDecal::Vita_UnlinkAll()
+{
+	int n = 0;
+	for (int i = 0; i < numsides; i++)
+	{
+		DBaseDecal *d = sides[i].AttachedDecals;
+		sides[i].AttachedDecals = NULL;
+		while (d != NULL && Vita_LiveDecals.CheckKey(d) != NULL)
+		{
+			DBaseDecal *next = d->WallNext;
+			d->WallNext = NULL;
+			d->WallPrev = NULL;
+			d = next;
+			n++;
+		}
+	}
+	Vita_BadDecalLogs = 0;
+	if (n > 0) Vita_BootLog("level change: unlinked %d wall decals", n);
+}
+#endif
+
 IMPLEMENT_CLASS (DImpactDecal)
 
 DBaseDecal::DBaseDecal ()
@@ -67,6 +108,9 @@ DBaseDecal::DBaseDecal ()
   WallNext(0), WallPrev(0), LeftDistance(0), Z(0), ScaleX(FRACUNIT), ScaleY(FRACUNIT), Alpha(FRACUNIT),
   AlphaColor(0), Translation(0), RenderFlags(0)
 {
+#ifdef __vita__
+	Vita_Register(this);
+#endif
 	RenderStyle = STYLE_None;
 	PicNum.SetInvalid();
 }
@@ -76,6 +120,9 @@ DBaseDecal::DBaseDecal (fixed_t z)
   WallNext(0), WallPrev(0), LeftDistance(0), Z(z), ScaleX(FRACUNIT), ScaleY(FRACUNIT), Alpha(FRACUNIT),
   AlphaColor(0), Translation(0), RenderFlags(0)
 {
+#ifdef __vita__
+	Vita_Register(this);
+#endif
 	RenderStyle = STYLE_None;
 	PicNum.SetInvalid();
 }
@@ -85,6 +132,9 @@ DBaseDecal::DBaseDecal (int statnum, fixed_t z)
   WallNext(0), WallPrev(0), LeftDistance(0), Z(z), ScaleX(FRACUNIT), ScaleY(FRACUNIT), Alpha(FRACUNIT),
   AlphaColor(0), Translation(0), RenderFlags(0)
 {
+#ifdef __vita__
+	Vita_Register(this);
+#endif
 	RenderStyle = STYLE_None;
 	PicNum.SetInvalid();
 }
@@ -95,6 +145,9 @@ DBaseDecal::DBaseDecal (const AActor *basis)
   Alpha(basis->alpha), AlphaColor(basis->fillcolor), Translation(basis->Translation), PicNum(basis->picnum),
   RenderFlags(basis->renderflags), RenderStyle(basis->RenderStyle)
 {
+#ifdef __vita__
+	Vita_Register(this);
+#endif
 }
 
 DBaseDecal::DBaseDecal (const DBaseDecal *basis)
@@ -103,6 +156,9 @@ DBaseDecal::DBaseDecal (const DBaseDecal *basis)
   ScaleY(basis->ScaleY), Alpha(basis->Alpha), AlphaColor(basis->AlphaColor), Translation(basis->Translation),
   PicNum(basis->PicNum), RenderFlags(basis->RenderFlags), RenderStyle(basis->RenderStyle)
 {
+#ifdef __vita__
+	Vita_Register(this);
+#endif
 }
 
 void DBaseDecal::Destroy ()
@@ -217,6 +273,9 @@ FTextureID DBaseDecal::StickToWall (side_t *wall, fixed_t x, fixed_t y, F3DFloor
 	while (*prev != NULL)
 	{
 		next = *prev;
+#ifdef __vita__
+		if (!Vita_Live(next)) { *prev = NULL; break; }	// cut a broken chain
+#endif
 		prev = &next->WallNext;
 	}
 

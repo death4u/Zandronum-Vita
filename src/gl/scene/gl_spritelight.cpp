@@ -75,7 +75,9 @@ bool gl_GetSpriteLight(AActor *self, fixed_t x, fixed_t y, fixed_t z, subsector_
 	
 	out[0]=out[1]=out[2]=0;
 #ifdef __vita__
-	{ extern AActor *Vita_LiveActor(AActor *); self = Vita_LiveActor(self); }
+	// (only needed for MF4_DONTLIGHTSELF: done once, and only if a light
+	// in reach has the flag)
+	bool vlive = false;
 #endif
 
 	for(int j=0;j<2;j++)
@@ -87,11 +89,28 @@ bool gl_GetSpriteLight(AActor *self, fixed_t x, fixed_t y, fixed_t z, subsector_
 			light=node->lightsource;
 			//if (!light->owned || light->target == NULL || light->target->IsVisibleToPlayer())
 			{
+#ifdef __vita__
+				if (!vlive && (light->flags4&MF4_DONTLIGHTSELF)) { extern AActor *Vita_LiveActor(AActor *); self = Vita_LiveActor(self); vlive = true; }
+#endif
 				if (!(light->flags2&MF2_DORMANT) &&
 					(!(light->flags4&MF4_DONTLIGHTSELF) || light->target != self))
 				{
+#ifdef __vita__
+					// [Vita] box test first, square root only for lights in reach
+					// (0044: big Brutal Doom fights, 560 sprites with explosion lights)
+					radius = light->GetRadius() * gl_lights_size;
+					const float vdx = FIXED2FLOAT(x - light->x), vdy = FIXED2FLOAT(y - light->y), vdz = FIXED2FLOAT(z - light->z);
+					if (vdx >= radius || vdx <= -radius || vdy >= radius || vdy <= -radius || vdz >= radius || vdz <= -radius
+						|| vdx * vdx + vdy * vdy + vdz * vdz >= radius * radius)
+					{
+						node = node->nextLight;
+						continue;
+					}
+					float dist = sqrtf(vdx * vdx + vdy * vdy + vdz * vdz);
+#else
 					float dist = FVector3(FIXED2FLOAT(x - light->x), FIXED2FLOAT(y - light->y), FIXED2FLOAT(z - light->z)).Length();
 					radius = light->GetRadius() * gl_lights_size;
+#endif
 
 					if (dist < radius)
 					{

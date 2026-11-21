@@ -24,6 +24,13 @@ public:
 	DBaseDecal (int statnum, fixed_t z);
 	DBaseDecal (const AActor *actor);
 	DBaseDecal (const DBaseDecal *basis);
+#ifdef __vita__
+	~DBaseDecal ();
+	// [Vita] true if d is a decal that still exists (registry of live decals)
+	static bool Vita_Live (const DBaseDecal *d);
+	// [Vita] unlink every decal from every wall before the level is freed
+	static void Vita_UnlinkAll ();
+#endif
 
 	void Serialize (FArchive &arc);
 	void Destroy ();

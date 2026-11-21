@@ -787,6 +787,9 @@ void GLDrawList::DrawSorted()
 
 	if (!sorted)
 	{
+#ifdef __vita__
+		VITA_PERF_D(VPERF_TSORT);
+#endif
 		MakeSortList();
 		sorted=DoSort(SortNodes[SortNodeStart]);
 	}

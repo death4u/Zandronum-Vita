@@ -66,6 +66,9 @@
 #ifdef __vita__
 #include <malloc.h>
 #include "vita/vita_parallel.h"
+#ifdef __vita__
+#include "vita/vita_perf.h"
+#endif
 #endif
 #ifdef __vita__
 static AActor *Vita_CopyActor(AActor *a);
@@ -258,6 +261,9 @@ void GLSprite::Draw(int pass)
 	{
 		if (actor)
 		{
+#ifdef __vita__
+			VITA_PERF_D(VPERF_SPRLIGHT);
+#endif
 			lightlevel = gl_SetSpriteLighting(RenderStyle, actor, lightlevel, rel, &Colormap, ThingColor, trans,
 							 fullbright || gl_fixedcolormap >= CM_FIRSTSPECIALCOLORMAP, false);
 		}
@@ -319,7 +325,11 @@ void GLSprite::Draw(int pass)
 		gl_RenderState.SetFog(0, 0);
 	}
 
+#ifdef __vita__
+	if (gltexture) { VITA_PERF_D(VPERF_SPRBIND); gltexture->BindPatch(Colormap.colormap, translation, OverrideShader); }
+#else
 	if (gltexture) gltexture->BindPatch(Colormap.colormap, translation, OverrideShader);
+#endif
 	else if (!modelframe) gl_RenderState.EnableTexture(false);
 
 	if (!modelframe)
@@ -424,6 +434,9 @@ void GLSprite::Draw(int pass)
 	}
 	else
 	{
+#ifdef __vita__
+		VITA_PERF_D(VPERF_SPRMODEL);
+#endif
 		gl_RenderModel(this, Colormap.colormap);
 	}
 

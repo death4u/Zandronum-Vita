@@ -421,6 +421,9 @@ void GLWall::DoDrawDecals()
 	DBaseDecal *decal = seg->sidedef->AttachedDecals;
 	while (decal)
 	{
+#ifdef __vita__
+		if (!DBaseDecal::Vita_Live(decal)) break;
+#endif
 		DrawDecal(decal);
 		decal = decal->WallNext;
 	}

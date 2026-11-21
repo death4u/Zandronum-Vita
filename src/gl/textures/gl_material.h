@@ -63,6 +63,13 @@ private:
 
 	int currentwarp;
 	int currentwarptime;
+#ifdef __vita__
+	// [Vita] Warped (wavy water/lava) textures: the unwarped picture is kept
+	// so each animation step only re-warps it (no decode, no compression).
+	unsigned char *VitaWarpSrc;
+	int VitaWarpW, VitaWarpH, VitaWarpCm, VitaWarpTrans;
+	const FHardwareTexture *Vita_BindWarp(FHardwareTexture *hwtex, int texunit, int cm, int clampmode, int translation, int warp);
+#endif
 
 	bool bHasColorkey;		// only for hires
 	bool bExpand;
@@ -80,6 +87,9 @@ private:
 
 public:
 	FGLTexture(FTexture * tx, bool expandpatches);
+#ifdef __vita__
+	bool Vita_Expand() const { return bExpand; }
+#endif
 	~FGLTexture();
 
 	unsigned char * CreateTexBuffer(int cm, int translation, int & w, int & h, bool expand, FTexture *hirescheck, int warp);

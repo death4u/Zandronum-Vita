@@ -43,6 +43,7 @@
 #include "i_sound.h"
 #include "i_soundinternal.h"
 #include "vitasound.h"
+#include "w_wad.h"
 
 #define STB_VORBIS_NO_STDIO
 #define STB_VORBIS_NO_PUSHDATA_API
@@ -93,6 +94,12 @@ struct VitaSample
 	BYTE *Src;				// compressed data while pending
 	int SrcLen;
 	bool Unloaded;			// UnloadSound called while it was being decoded
+	// [Vita] 0044: the sound's lump is read by the decode thread too (reading
+	// even a 2 KB footstep from a big pk3 took 30-100 ms on the thread that
+	// played it). Lump >= 0 while that is pending.
+	int Lump;
+	bool Raw, Force22050;
+	int RawLoopStart;
 };
 
 static VitaSample *MakeSample(short *data, unsigned frames, int channels, int rate)
@@ -107,6 +114,9 @@ static VitaSample *MakeSample(short *data, unsigned frames, int channels, int ra
 	s->Src = NULL;
 	s->SrcLen = 0;
 	s->Unloaded = false;
+	s->Lump = -1;
+	s->Raw = s->Force22050 = false;
+	s->RawLoopStart = -1;
 	s->Ready.store(1);
 	return s;
 }
@@ -1089,6 +1099,49 @@ static bool DecodeSound(BYTE *sfxdata, int length, short *&pcm_out, unsigned &fr
 //
 //==========================================================================
 
+// [Vita] Reads a sound lump and turns it into 16-bit PCM on the decode thread,
+// with the same format checks as S_LoadSound (VOC, DMX/raw, or anything the
+// decoders understand).
+static SoundHandle Vita_SyncLoadRaw(BYTE *data, int len, int freq, int loopstart);
+static SoundHandle Vita_SyncLoadVoc(BYTE *data, int len);
+static bool Vita_ReadAndDecodeLump(VitaSample *s, short *&pcm, unsigned &frames, int &channels, int &rate, int &loopstart, int &loopend)
+{
+	const int size = Wads.LumpLength(s->Lump);
+	if (size <= 0) return false;
+	BYTE *data = new BYTE[size];
+	{
+		FWadLump wlump = Wads.OpenLumpNum(s->Lump);
+		wlump.Read(data, size);
+	}
+	SoundHandle h = { NULL };
+	bool ok = false;
+	SDWORD len = size >= 8 ? LittleLong(((SDWORD *)data)[1]) : 0;
+	if (size >= 19 && strncmp((const char *)data, "Creative Voice File", 19) == 0)
+		h = Vita_SyncLoadVoc(data, len);
+	else if (s->Raw || (size >= 8 && data[0] == 3 && data[1] == 0 && len <= size - 8))
+	{
+		int freq;
+		BYTE *start = data;
+		if (s->Raw) { len = size; freq = s->Force22050 ? 22050 : 11025; }
+		else { freq = LittleShort(((WORD *)data)[1]); if (freq == 0) freq = 11025; start = data + 8; }
+		h = Vita_SyncLoadRaw(start, len, freq, s->RawLoopStart);
+	}
+	else
+		ok = DecodeSound(data, size, pcm, frames, channels, rate);
+	delete[] data;
+	if (h.data != NULL)
+	{
+		// take the PCM out of the sample the raw/VOC loader made
+		VitaSample *t = (VitaSample *)h.data;
+		pcm = t->Data; frames = t->Frames; channels = t->Channels; rate = t->Rate;
+		loopstart = t->LoopStart; loopend = t->LoopEnd;
+		t->Data = NULL;
+		delete t;
+		ok = true;
+	}
+	return ok;
+}
+
 static SDL_mutex *DecodeLock;
 static SDL_sem *DecodeSem;
 static SDL_Thread *DecodeThread;
@@ -1116,9 +1169,14 @@ static int DecodeThreadFunc(void *)
 		unsigned frames = 0;
 		int channels = 0, rate = 0;
 		bool ok = false;
+		int loopstart = 0, loopend = -1;
 		// The decoders allocate with malloc/new; out of memory must not end
 		// the game from this thread.
-		try { ok = DecodeSound(s->Src, s->SrcLen, pcm, frames, channels, rate); }
+		try
+		{
+			if (s->Lump >= 0 && s->Src == NULL) ok = Vita_ReadAndDecodeLump(s, pcm, frames, channels, rate, loopstart, loopend);
+			else ok = DecodeSound(s->Src, s->SrcLen, pcm, frames, channels, rate);
+		}
 		catch (...) { ok = false; pcm = NULL; }
 
 		SDL_mutexP(DecodeLock);
@@ -1136,12 +1194,14 @@ static int DecodeThreadFunc(void *)
 			s->Frames = frames;
 			s->Channels = channels;
 			s->Rate = rate;
-			s->LoopStart = 0;
-			s->LoopEnd = frames;
+			s->LoopStart = loopstart;
+			s->LoopEnd = loopend < 0 ? frames : loopend;
+			s->Lump = -1;
 			s->Ready.store(1, std::memory_order_release);
 		}
 		else
 		{
+			s->Lump = -1;
 			// Undecodable: a short silent sample, so voices can finish.
 			s->Data = new short[1];
 			s->Data[0] = 0;
@@ -1204,6 +1264,37 @@ SoundHandle VitaSoundRenderer::LoadSound(BYTE *sfxdata, int length)
 	}
 	retval.data = MakeSample(pcm, frames, channels, rate);
 	return retval;
+}
+
+// [Vita] S_LoadSound's background path: the sample starts out pending and
+// the decode thread reads and decodes the lump.
+static bool Vita_StartDecodeThread()
+{
+	if (DecodeThread == NULL)
+	{
+		DecodeLock = SDL_CreateMutex();
+		DecodeSem = SDL_CreateSemaphore(0);
+		DecodeThread = SDL_CreateThread(DecodeThreadFunc, NULL);
+	}
+	return DecodeThread != NULL;
+}
+
+CVAR(Bool, snd_vita_asyncload, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+void *Vita_SoundLoadLumpAsync(int lumpnum, bool raw, bool force22050, int loopstart)
+{
+	if (!snd_vita_asyncload || lumpnum < 0 || !Vita_StartDecodeThread()) return NULL;
+	VitaSample *s = MakeSample(NULL, 0, 1, 11025);
+	s->Ready.store(0);
+	s->Lump = lumpnum;
+	s->Raw = raw;
+	s->Force22050 = force22050;
+	s->RawLoopStart = loopstart;
+	SDL_mutexP(DecodeLock);
+	DecodeQueue.Push(s);
+	SDL_mutexV(DecodeLock);
+	SDL_SemPost(DecodeSem);
+	return s;
 }
 
 void VitaSoundRenderer::UnloadSound(SoundHandle sfx)
@@ -1707,3 +1798,12 @@ SoundRenderer *Vita_CreateSoundRenderer()
 }
 
 #endif
+
+static SoundHandle Vita_SyncLoadRaw(BYTE *data, int len, int freq, int loopstart)
+{
+	return GSnd->LoadSoundRaw(data, len, freq, 1, 8, loopstart);
+}
+static SoundHandle Vita_SyncLoadVoc(BYTE *data, int len)
+{
+	return GSnd->LoadSoundVoc(data, len);
+}

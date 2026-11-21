@@ -60,6 +60,10 @@
 #include "gl/textures/gl_bitmap.h"
 #ifdef __vita__
 #include "vita/vita_texcache.h"
+#ifdef __vita__
+#include "vita/vita_perf.h"
+#include "vita/vita_system.h"
+#endif
 #endif
 #include "gl/textures/gl_material.h"
 #include "gl/shaders/gl_shader.h"
@@ -90,6 +94,10 @@ FGLTexture::FGLTexture(FTexture * tx, bool expandpatches)
 	HiresLump=-1;
 	hirestexture = NULL;
 	currentwarp = 0;
+#ifdef __vita__
+	VitaWarpSrc = NULL;
+	VitaWarpW = VitaWarpH = VitaWarpCm = VitaWarpTrans = 0;
+#endif
 	bHasColorkey = false;
 	bIsTransparent = -1;
 	bExpand = expandpatches;
@@ -167,6 +175,9 @@ unsigned char *FGLTexture::LoadHiresTexture(FTexture *tex, int *width, int *heig
 
 void FGLTexture::Clean(bool all)
 {
+#ifdef __vita__
+	if (all && VitaWarpSrc != NULL) { delete[] VitaWarpSrc; VitaWarpSrc = NULL; }
+#endif
 	for(int i=0;i<5;i++)
 	{
 		if (gltexture[i]) 
@@ -384,6 +395,68 @@ bool FGLTexture::CreatePatch()
 }
 
 
+#ifdef __vita__
+//===========================================================================
+//
+// [Vita] Warped textures. The stock code deleted the texture and rebuilt it
+// from the image file every frame (PNG decode + warp + DXT compression:
+// ~70 ms for HaloDoom's 256x192 water on Rebellion). Here the unwarped
+// picture is decoded once, re-warped at most 35 times a second (the game's
+// tic rate, as in the software renderer) and uploaded uncompressed into the
+// same texture. Same warp maths, so it looks the same.
+//
+//===========================================================================
+CVAR(Bool, vita_fastwarp, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+const FHardwareTexture *FGLTexture::Vita_BindWarp(FHardwareTexture *hwtex, int texunit, int cm, int clampmode, int translation, int warp)
+{
+	if (!vita_fastwarp) return NULL;
+	const unsigned long long t0 = Vita_PerfNow();
+	if (VitaWarpSrc == NULL || VitaWarpCm != cm || VitaWarpTrans != translation)
+	{
+		if (VitaWarpSrc != NULL) { delete[] VitaWarpSrc; VitaWarpSrc = NULL; }
+		int w = 0, h = 0;
+		unsigned char *src = NULL;
+		try { src = CreateTexBuffer(cm, translation, w, h, false, NULL, 0); }
+		catch (std::bad_alloc &) { return NULL; }
+		if (src == NULL) return NULL;
+		if (w != tex->GetWidth() || h != tex->GetHeight() || w > 256 || h > 256)
+		{
+			delete[] src;	// resized or too big for the warp code: stock path
+			return NULL;
+		}
+		VitaWarpSrc = src; VitaWarpW = w; VitaWarpH = h; VitaWarpCm = cm; VitaWarpTrans = translation;
+		currentwarptime = gl_frameMS - 1000;	// force the first upload
+	}
+	const bool have = hwtex->Bind(texunit, cm, translation);
+	if (have && currentwarp == warp && (unsigned)(gl_frameMS - currentwarptime) < 28u)
+		return hwtex;	// this animation step is already uploaded
+	const int w = VitaWarpW, h = VitaWarpH;
+	unsigned char *buf = new unsigned char[w * (h + 1) * 4];
+	memcpy(buf, VitaWarpSrc, w * h * 4);
+	memset(buf + w * h * 4, 0, w * 4);
+	buf = WarpBuffer(buf, w, h, warp);
+	Vita_TexUncompressed = true;	// re-uploaded constantly: never compressed or cached
+	Vita_TexCachePending.LoadKey = 0;
+	Vita_TexCachePending.Key = 0;
+	const bool ok = hwtex->CreateTexture(buf, w, h, true, texunit, cm, translation);
+	Vita_TexUncompressed = false;
+	delete[] buf;
+	if (!ok) return NULL;
+	if (!have)
+	{
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (clampmode & GLT_CLAMPX)? GL_CLAMP_TO_EDGE : GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (clampmode & GLT_CLAMPY)? GL_CLAMP_TO_EDGE : GL_REPEAT);
+	}
+	currentwarp = warp;
+	currentwarptime = gl_frameMS;
+	const unsigned long long dt = Vita_PerfNow() - t0;
+	Vita_PerfAcc[VPERF_WARP] += dt; Vita_PerfCalls[VPERF_WARP]++;
+	if (dt > 15000) Vita_BootLog("slow warp texture %s %dx%d: %llu ms", tex->Name, w, h, dt / 1000);
+	return hwtex;
+}
+#endif
+
 //===========================================================================
 // 
 //	Binds a texture to the renderer
@@ -417,6 +490,69 @@ static unsigned char *Vita_BuildTranslated(void *ctx, int cmhires, int translati
 	return gt->CreateTexBuffer(cm, translation, w, h, false, hires ? gt->tex : NULL, 0);
 }
 extern unsigned long long Vita_PrecacheDeadline;
+
+// [Vita] Untranslated textures that weren't loaded in advance (model skins,
+// sprites, graphics of things spawned mid-game) are read from the cache or
+// decoded and compressed on the texbuild thread too. Before 0044 only bot
+// colour skins went there; a 1024x1024 model skin took 0.8 s on the main
+// thread. Ctx3 = 1 for sprites (patch layout), 0 for textures.
+static unsigned char *Vita_BuildPlain(void *ctx, int cmhires, int patch, unsigned long long key, int &w, int &h)
+{
+	FGLTexture *gt = (FGLTexture *)ctx;
+	const int cm = cmhires & 0xffff;
+	const bool hires = (cmhires >> 16) != 0;
+	unsigned char *buf = gt->CreateTexBuffer(cm, 0, w, h, patch ? gt->Vita_Expand() : false, hires ? gt->tex : NULL, 0);
+	if (buf == NULL) return NULL;
+	gt->tex->ProcessData(buf, w, h, patch != 0);
+	if (Vita_JobMeta != NULL)
+	{
+		Vita_JobMeta->Masked = gt->tex->bMasked;
+		Vita_JobMeta->IsTransparent = gt->tex->gl_info.mIsTransparent;
+		Vita_JobMeta->GLIsTransparent = gt->bIsTransparent;
+	}
+	return buf;
+}
+
+CVAR(Bool, vita_asynctextures, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+// Which textures may arrive late: not level walls/flats (loaded in advance),
+// not HUD/font graphics (uncompressed, loaded in advance), not multi-patch
+// textures (built from shared patches), at least 64x64 (small ones are cheap).
+static bool Vita_AsyncCandidate(FTexture *tex)
+{
+	if (!vita_asynctextures || gamestate != GS_LEVEL || Vita_PrecacheDeadline != 0) return false;
+	if (tex->bMultiPatch || tex->bHasCanvas || tex->bWarped) return false;
+	if (tex->GetWidth() < 64 || tex->GetHeight() < 64) return false;
+	switch (tex->UseType)
+	{
+	case FTexture::TEX_Wall: case FTexture::TEX_Flat: case FTexture::TEX_MiscPatch: case FTexture::TEX_FontChar:
+		return false;
+	default:
+		return true;
+	}
+}
+
+// Drawn while a texture is still being built: transparent for sprites, a
+// neutral grey for model skins and other textures.
+static void Vita_BindPlaceholder(int texunit, bool transparent)
+{
+	static unsigned ids[2];
+	unsigned &id = ids[transparent ? 1 : 0];
+	if (id == 0)
+	{
+		unsigned px[8 * 8];
+		for (int i = 0; i < 64; i++) px[i] = transparent ? 0 : 0xff808080;
+		glGenTextures(1, &id);
+		glBindTexture(GL_TEXTURE_2D, id);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	}
+	if (texunit != 0) glActiveTexture(GL_TEXTURE0 + texunit);
+	glBindTexture(GL_TEXTURE_2D, id);
+	if (texunit != 0) glActiveTexture(GL_TEXTURE0);
+	FHardwareTexture::lastbound[texunit] = id;
+}
 #endif
 
 const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int translation, FTexture *hirescheck, int warp)
@@ -446,6 +582,13 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 
 	if (hwtex)
 	{
+#ifdef __vita__
+		if (warp != 0 && !tex->bHasCanvas)
+		{
+			const FHardwareTexture *r = Vita_BindWarp(hwtex, texunit, cm, clampmode, translation, warp);
+			if (r != NULL) return r;
+		}
+#endif
 		if ((warp != 0 || currentwarp != warp) && currentwarptime != gl_frameMS)
 		{
 			// must recreate the texture
@@ -470,6 +613,7 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 			unsigned char * buffer = NULL;
 			
 #ifdef __vita__
+			if (Vita_PrecacheDeadline == 0) { extern void Vita_LearnTexture(FTexture *); Vita_LearnTexture(tex); }
 			const unsigned long long vt0 = Vita_PerfNow();
 			const PalEntry *vpal = translation == 0 ? NULL : GLTranslationPalette::GetPalette(translation);
 			const unsigned long long vkey = warp == 0 && (translation == 0 || vpal != NULL) ? Vita_TexCacheKey(tex, cm, 0, hirescheck != NULL, vpal, 256 * sizeof(PalEntry)) : 0;
@@ -486,6 +630,19 @@ const FHardwareTexture *FGLTexture::Bind(int texunit, int cm, int clampmode, int
 				{
 					// not ready yet: draw it without the colours meanwhile
 					return Bind(texunit, cm, clampmode, 0, hirescheck, warp);
+				}
+			}
+			if (vkey != 0 && translation == 0 && (hirescheck == NULL || hirescheck == tex) && Vita_AsyncCandidate(tex))
+			{
+				FVitaTexCacheMeta meta;
+				meta.Width = meta.Height = 0;
+				meta.Masked = tex->bMasked;
+				meta.IsTransparent = tex->gl_info.mIsTransparent;
+				meta.GLIsTransparent = bIsTransparent;
+				if (Vita_TexCacheAsync(vkey, Vita_BuildPlain, this, cm | ((hirescheck != NULL) << 16), 0, meta) == VTC_ASYNC_WAIT)
+				{
+					Vita_BindPlaceholder(texunit, false);
+					return hwtex;
 				}
 			}
 			if (vkey != 0)
@@ -585,9 +742,23 @@ const FHardwareTexture * FGLTexture::BindPatch(int texunit, int cm, int translat
 
 			// Create this texture
 #ifdef __vita__
+			if (Vita_PrecacheDeadline == 0) { extern void Vita_LearnTexture(FTexture *); Vita_LearnTexture(tex); }
 			const unsigned long long vt0 = Vita_PerfNow();
 			const PalEntry *vpal = translation == 0 ? NULL : GLTranslationPalette::GetPalette(translation);
 			const unsigned long long vkey = warp == 0 && (translation == 0 || vpal != NULL) ? Vita_TexCacheKey(tex, cm, bExpand ? 2 : 1, false, vpal, 256 * sizeof(PalEntry)) : 0;
+			if (vkey != 0 && translation == 0 && Vita_AsyncCandidate(tex))
+			{
+				FVitaTexCacheMeta meta;
+				meta.Width = meta.Height = 0;
+				meta.Masked = tex->bMasked;
+				meta.IsTransparent = tex->gl_info.mIsTransparent;
+				meta.GLIsTransparent = bIsTransparent;
+				if (Vita_TexCacheAsync(vkey, Vita_BuildPlain, this, cm, 1, meta) == VTC_ASYNC_WAIT)
+				{
+					Vita_BindPlaceholder(texunit, true);
+					return glpatch;
+				}
+			}
 			if (vkey != 0)
 			{
 				Vita_TexCachePending.LoadKey = vkey;

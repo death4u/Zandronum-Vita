@@ -28,6 +28,8 @@ unsigned long long Vita_TexCacheKey(FTexture *tex, int cm, int kind, bool hires,
 // Set by Vita_TexCacheKey: the texture is uploaded uncompressed (HUD
 // pictures, font characters, textures up to 64x64); LoadImage clears it.
 extern bool Vita_TexUncompressed;
+extern FVitaTexCacheMeta *Vita_JobMeta;
+
 bool Vita_TexSmall(FTexture *tex);
 bool Vita_TexCacheLoad(unsigned long long key, FVitaTexCacheMeta &meta, bool mipmaps);
 bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool mipmaps);

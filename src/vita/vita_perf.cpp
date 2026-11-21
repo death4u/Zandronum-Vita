@@ -41,10 +41,16 @@ static FPerfClass PerfClasses[512];
 static int NumPerfClasses;
 unsigned Vita_PerfOps;
 
+// (hashed: a linear search over up to 512 classes per thinker tick made
+// the detailed windows themselves slow)
+static short PerfClassHash[1024];
 void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us)
 {
-	for (int i = 0; i < NumPerfClasses; i++)
+	unsigned h = ((uintptr_t)cls >> 3) & 1023;
+	for (int k = 0; k < 1024; k++, h = (h + 1) & 1023)
 	{
+		const int i = PerfClassHash[h] - 1;
+		if (i < 0 || i >= NumPerfClasses) break;
 		if (PerfClasses[i].Cls == cls) { PerfClasses[i].Us += us; PerfClasses[i].Calls++; PerfClasses[i].Ops += Vita_PerfOps; return; }
 	}
 	if (NumPerfClasses < 512)
@@ -55,6 +61,7 @@ void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us)
 		PerfClasses[NumPerfClasses].Calls = 1;
 		PerfClasses[NumPerfClasses].Ops = Vita_PerfOps;
 		NumPerfClasses++;
+		PerfClassHash[h] = (short)NumPerfClasses;
 	}
 }
 
@@ -82,6 +89,218 @@ void Vita_PerfBeforeSwap()
 #endif
 }
 
+
+// [Vita] The report is written by its own thread from a copy of the
+// counters: formatting it (and mallinfo(), which walks the whole heap) on the
+// main thread stalled one frame every 3 s (50-60 ms, Brutal Doom) and after
+// every detailed window (150-370 ms, HaloDoom).
+struct FPerfSnap
+{
+	bool Detail;
+	int Frames;
+	unsigned long long Period, Worst;
+	unsigned long long Acc[VPERF_COUNT];
+	int Calls[VPERF_COUNT];
+	FPerfClass Classes[512];
+	int NumClasses;
+	unsigned PcodeCounts[1024];
+	unsigned long long PcodeUs[1024];
+	unsigned long long AcsUs[1024];
+	unsigned AcsCalls[1024];
+	unsigned GLCount[8];
+	unsigned GLPhase[5];
+	int RLines, RFlats, RSprites;
+	unsigned long long GCTime, LogicStartDelay, LogicRunTime;
+	unsigned HeapMB, BigKB, ObjMB, VglRam, VglVram, PoolPeak, PoolSize;
+	char Callers[256];
+};
+static FPerfSnap PerfSnap;
+static volatile int PerfSnapBusy;
+static SceUID PerfSema = -1;
+
+static void Vita_PerfFormat(FPerfSnap &S)
+{
+	{
+		const double f = S.Frames > 0 ? 1.0 / S.Frames : 0;
+		
+		char line[2048];
+		snprintf(line, sizeof(line),
+			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f (players %.1f [bot AI %.1f, weapons %.1f, move %.1f, use %.1f], thinkers %.1f, hud %.1f, bot aim %.1f, particles %.1f), 3D %.1f (bsp %.1f, opaque %.1f [sky %.1f, batch draws %.1f], waiting for logic %.1f, decals %.1f, portals+sky %.1f, translucent %.1f, models %.1f [expand %.1f draw %.1f bind %.1f]), 2D+swap %.1f (swap %.1f)"
+			" | in %.0f s: %d texture uploads %.0f ms (decode %.0f ms), %d warp updates %.0f ms, %d model loads %.0f ms | logic thread: start delay %.1f, run %.1f | heap reserved %u MB + %u MB outside (objects %u MB, gc %.1f ms/frame)"
+#ifndef NO_GL
+			", vitaGL free RAM %u MB CDRAM %u MB, immediate-mode pool peak %u of %u KB"
+#endif
+			"\n",
+			S.Frames * 1e6 / S.Period, S.Worst / 1000.0,
+			S.Acc[VPERF_TIC] * f / 1000.0, S.Acc[VPERF_PLAYERS] * f / 1000.0, S.Acc[VPERF_BOTTICK] * f / 1000.0, S.Acc[VPERF_PSPRITES] * f / 1000.0, S.Acc[VPERF_PMOVE] * f / 1000.0, S.Acc[VPERF_PUSE] * f / 1000.0, S.Acc[VPERF_THINKERS] * f / 1000.0,
+			S.Acc[VPERF_SBAR] * f / 1000.0, S.Acc[VPERF_BOTAIM] * f / 1000.0, S.Acc[VPERF_EFFECTS] * f / 1000.0,
+			S.Acc[VPERF_SCENE] * f / 1000.0, S.Acc[VPERF_BSP] * f / 1000.0,
+			S.Acc[VPERF_OPAQUE] * f / 1000.0, S.Acc[VPERF_SKYBOX] * f / 1000.0, S.Acc[VPERF_BATCHDRAW] * f / 1000.0, S.Acc[VPERF_JOIN] * f / 1000.0,
+			S.Acc[VPERF_DECALS] * f / 1000.0, S.Acc[VPERF_PORTALS] * f / 1000.0, S.Acc[VPERF_TRANSL] * f / 1000.0,
+			S.Acc[VPERF_MODELS] * f / 1000.0, S.Acc[VPERF_MEXPAND] * f / 1000.0, S.Acc[VPERF_MDRAW] * f / 1000.0, S.Acc[VPERF_MBIND] * f / 1000.0,
+			S.Acc[VPERF_UPDATE] * f / 1000.0,
+			S.Acc[VPERF_SWAP] * f / 1000.0,
+			S.Period / 1e6, S.Calls[VPERF_UPLOAD], S.Acc[VPERF_UPLOAD] / 1000.0, S.Acc[VPERF_TEXDECODE] / 1000.0, S.Calls[VPERF_WARP], S.Acc[VPERF_WARP] / 1000.0,
+			S.Calls[VPERF_MODELLOAD], S.Acc[VPERF_MODELLOAD] / 1000.0,
+			S.LogicStartDelay * f / 1000.0, S.LogicRunTime * f / 1000.0,
+			S.HeapMB, S.BigKB >> 10, S.ObjMB, S.GCTime * f / 1000.0
+#ifndef NO_GL
+			, S.VglRam, S.VglVram, (S.PoolPeak >> 10), S.PoolSize
+#endif
+			);
+		Vita_ConsoleWrite(line);
+	}
+	if (S.Detail)
+	{
+		const double f = S.Frames > 0 ? 1.0 / S.Frames : 0;
+		char line[2048];
+
+		// Where the logic time goes: thinkers in total, GC, database, and the
+		// most expensive thinker classes (ms per frame, ticks per frame).
+		size_t len = snprintf(line, sizeof(line), "[perf]   thinkers %.1f (gc %.1f), database %.1f (%d calls), ACS starts %.1f (x%d), cvar lookups %.1f (x%d) | top:",
+			S.Acc[VPERF_THINKERS] * f / 1000.0, S.Acc[VPERF_GC] * f / 1000.0,
+			S.Acc[VPERF_DB] * f / 1000.0, S.Calls[VPERF_DB],
+			S.Acc[VPERF_ACSNEW] * f / 1000.0, (int)(S.Calls[VPERF_ACSNEW] * f + 0.5),
+			S.Acc[VPERF_FINDCVAR] * f / 1000.0, (int)(S.Calls[VPERF_FINDCVAR] * f + 0.5));
+		for (int n = 0; n < 10; n++)
+		{
+			int best = -1;
+			for (int i = 0; i < S.NumClasses; i++)
+				if (S.Classes[i].Us > 0 && (best < 0 || S.Classes[i].Us > S.Classes[best].Us)) best = i;
+			if (best < 0 || len >= sizeof(line) - 64) break;
+			if (S.Classes[best].Ops > 0)
+				len += snprintf(line + len, sizeof(line) - len, " %s %.1f (x%d, %.0f op)", S.Classes[best].Name,
+					S.Classes[best].Us * f / 1000.0, (int)(S.Classes[best].Calls * f + 0.5), S.Classes[best].Ops * f);
+			else
+				len += snprintf(line + len, sizeof(line) - len, " %s %.1f (x%d)", S.Classes[best].Name,
+					S.Classes[best].Us * f / 1000.0, (int)(S.Classes[best].Calls * f + 0.5));
+			S.Classes[best].Ops = 0;
+			S.Classes[best].Us = 0;
+		}
+		snprintf(line + len, sizeof(line) - len, "\n");
+		Vita_ConsoleWrite(line);
+
+#ifndef NO_GL
+		{
+			snprintf(line, sizeof(line), "[perf]   render per frame: walls %.0f, flats %.0f, sprites %.0f | GL draw calls %.0f (vertices %.0f), glBegin %.0f, texture binds %.0f, colour changes %.0f, fog changes %.0f | draws+glBegin: opaque %.0f, translucent %.0f, models %.0f, weapon/blend %.0f, 2D %.0f\n",
+				S.RLines * f, S.RFlats * f, S.RSprites * f,
+				S.GLCount[0] * f, S.GLCount[5] * f, S.GLCount[1] * f, S.GLCount[2] * f, S.GLCount[3] * f, S.GLCount[4] * f,
+				S.GLPhase[1] * f, S.GLPhase[2] * f, S.GLPhase[4] * f, S.GLPhase[3] * f, S.GLPhase[0] * f);
+			Vita_ConsoleWrite(line);
+			snprintf(line, sizeof(line), "[perf]   draw lists per frame (ms): walls %.1f (x%.0f), flats %.1f (x%.0f), sprites %.1f (x%.0f), of these light passes %.1f (x%.0f)\n",
+				S.Acc[VPERF_DWALLS] * f / 1000.0, S.Calls[VPERF_DWALLS] * f,
+				S.Acc[VPERF_DFLATS] * f / 1000.0, S.Calls[VPERF_DFLATS] * f,
+				S.Acc[VPERF_DSPRITES] * f / 1000.0, S.Calls[VPERF_DSPRITES] * f,
+				S.Acc[VPERF_DLIGHTS] * f / 1000.0, S.Calls[VPERF_DLIGHTS] * f);
+			Vita_ConsoleWrite(line);
+						snprintf(line, sizeof(line), "[perf]   sprites per frame (ms): dynamic lights %.1f, texture binds/first loads %.1f, models %.1f | translucent sort/split %.1f\n",
+				S.Acc[VPERF_SPRLIGHT] * f / 1000.0, S.Acc[VPERF_SPRBIND] * f / 1000.0, S.Acc[VPERF_SPRMODEL] * f / 1000.0, S.Acc[VPERF_TSORT] * f / 1000.0);
+			Vita_ConsoleWrite(line);
+			const char *cb = S.Callers;
+			snprintf(line, sizeof(line), "[perf]   opaque glDrawArrays callers (3 s):%s | RenderScene %.1f/frame, DrawSubsectors %.0f/frame\n", cb, S.GLCount[6] * f, S.GLCount[7] * f);
+			Vita_ConsoleWrite(line);
+		}
+#endif
+		// ACS: most executed opcodes and the most expensive ACSF functions.
+		unsigned total = 0;
+		for (int i = 0; i < 1024; i++) total += S.PcodeCounts[i];
+		len = snprintf(line, sizeof(line), "[perf]   ACS opcodes/frame %.0f | top:", total * f);
+		for (int n = 0; n < 12; n++)
+		{
+			int best = -1;
+			for (int i = 0; i < 1024; i++)
+				if (S.PcodeCounts[i] > 0 && (best < 0 || S.PcodeCounts[i] > S.PcodeCounts[best])) best = i;
+			if (best < 0 || len >= sizeof(line) - 32) break;
+			len += snprintf(line + len, sizeof(line) - len, " %d:%.0f", best, S.PcodeCounts[best] * f);
+			S.PcodeCounts[best] = 0;
+		}
+		len += snprintf(line + len, sizeof(line) - len, " | op ms:");
+		for (int n = 0; n < 8; n++)
+		{
+			int best = -1;
+			for (int i = 0; i < 1024; i++)
+				if (S.PcodeUs[i] > 0 && (best < 0 || S.PcodeUs[i] > S.PcodeUs[best])) best = i;
+			if (best < 0 || len >= sizeof(line) - 40) break;
+			len += snprintf(line + len, sizeof(line) - len, " %d:%.2f", best, S.PcodeUs[best] * f / 1000.0);
+			S.PcodeUs[best] = 0;
+		}
+		len += snprintf(line + len, sizeof(line) - len, " | ACSF ms:");
+		for (int n = 0; n < 8; n++)
+		{
+			int best = -1;
+			for (int i = 0; i < 1024; i++)
+				if (S.AcsUs[i] > 0 && (best < 0 || S.AcsUs[i] > S.AcsUs[best])) best = i;
+			if (best < 0 || len >= sizeof(line) - 40) break;
+			len += snprintf(line + len, sizeof(line) - len, " f%d %.2f (x%.0f)", best, S.AcsUs[best] * f / 1000.0, S.AcsCalls[best] * f);
+			S.AcsUs[best] = 0;
+		}
+		snprintf(line + len, sizeof(line) - len, "\n");
+		Vita_ConsoleWrite(line);
+	}
+}
+
+static int Vita_PerfThreadFunc(SceSize, void *)
+{
+	for (;;)
+	{
+		sceKernelWaitSema(PerfSema, 1, NULL);
+		Vita_PerfFormat(PerfSnap);
+		PerfSnapBusy = 0;
+	}
+	return 0;
+}
+
+// Heap size without mallinfo() (which walks the heap): newlib's running
+// count of the memory the heap has taken from the system so far.
+extern "C" struct mallinfo __malloc_current_mallinfo;
+static unsigned Vita_HeapReservedMB()
+{
+	return (unsigned)(__malloc_current_mallinfo.arena >> 20);
+}
+
+static void Vita_PerfSnapshot(int frames, unsigned long long period, unsigned long long worst)
+{
+	if (PerfSema < 0)
+	{
+		PerfSema = sceKernelCreateSema("vita_perfrep", 0, 0, 1, NULL);
+		SceUID t = sceKernelCreateThread("vita_perfrep", Vita_PerfThreadFunc, 0x10000100 + 40, 0x8000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+		if (PerfSema < 0 || t < 0) { PerfSema = -1; return; }
+		sceKernelStartThread(t, 0, NULL);
+	}
+	if (PerfSnapBusy) return;	// previous report still being written: skip this one
+	FPerfSnap &S = PerfSnap;
+	S.Detail = Vita_PerfDetail;
+	S.Frames = frames; S.Period = period; S.Worst = worst;
+	memcpy(S.Acc, Vita_PerfAcc, sizeof(S.Acc));
+	memcpy(S.Calls, Vita_PerfCalls, sizeof(S.Calls));
+	S.GCTime = Vita_GCTime; S.LogicStartDelay = Vita_LogicStartDelay; S.LogicRunTime = Vita_LogicRunTime;
+	S.HeapMB = Vita_HeapReservedMB(); S.BigKB = Vita_BigBlocksKB(); S.ObjMB = (unsigned)(GC::AllocBytes >> 20);
+#ifndef NO_GL
+	S.VglRam = (unsigned)(vglMemFree(VGL_MEM_RAM) >> 20); S.VglVram = (unsigned)(vglMemFree(VGL_MEM_VRAM) >> 20);
+	S.PoolPeak = LegacyPoolPeak; S.PoolSize = (unsigned)(legacy_pool_size >> 10);
+#endif
+	if (S.Detail)
+	{
+		memcpy(S.Classes, PerfClasses, sizeof(FPerfClass) * NumPerfClasses);
+		S.NumClasses = NumPerfClasses;
+		memcpy(S.PcodeCounts, Vita_PcodeCounts, sizeof(S.PcodeCounts));
+		memcpy(S.PcodeUs, Vita_PcodeUs, sizeof(S.PcodeUs));
+		memcpy(S.AcsUs, AcsFuncUs, sizeof(S.AcsUs));
+		memcpy(S.AcsCalls, AcsFuncCalls, sizeof(S.AcsCalls));
+#ifndef NO_GL
+		extern unsigned Vita_GLCount[8];
+		memcpy(S.GLCount, Vita_GLCount, sizeof(S.GLCount));
+		memcpy(S.GLPhase, Vita_GLPhaseDraws, sizeof(S.GLPhase));
+		extern int rendered_lines, rendered_flats, rendered_sprites;
+		S.RLines = rendered_lines; S.RFlats = rendered_flats; S.RSprites = rendered_sprites;
+		extern void Vita_PrintDrawCallers(char *, size_t);
+		Vita_PrintDrawCallers(S.Callers, sizeof(S.Callers));
+#endif
+	}
+	PerfSnapBusy = 1;
+	sceKernelSignalSema(PerfSema, 1);
+}
+
 void Vita_PerfFrame()
 {
 	Vita_FrameShown();
@@ -99,121 +318,10 @@ void Vita_PerfFrame()
 
 	if (vita_perflog)
 	{
-		const double f = frames > 0 ? 1.0 / frames : 0;
-		struct mallinfo mi = mallinfo();
-		char line[2048];
-		snprintf(line, sizeof(line),
-			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f (players %.1f [bot AI %.1f, weapons %.1f, move %.1f, use %.1f], thinkers %.1f, hud %.1f, bot aim %.1f, particles %.1f), 3D %.1f (bsp %.1f, opaque %.1f [sky %.1f, batch draws %.1f], waiting for logic %.1f, decals %.1f, portals+sky %.1f, translucent %.1f, models %.1f [expand %.1f draw %.1f bind %.1f]), 2D+swap %.1f (swap %.1f)"
-			" | in %.0f s: %d texture uploads %.0f ms (decode %.0f ms), %d model loads %.0f ms | logic thread: start delay %.1f, run %.1f | heap %u MB + %u MB outside (objects %u MB, gc %.1f ms/frame)"
-#ifndef NO_GL
-			", vitaGL free RAM %u MB CDRAM %u MB, immediate-mode pool peak %u of %u KB"
-#endif
-			"\n",
-			frames * 1e6 / period, worst / 1000.0,
-			Vita_PerfAcc[VPERF_TIC] * f / 1000.0, Vita_PerfAcc[VPERF_PLAYERS] * f / 1000.0, Vita_PerfAcc[VPERF_BOTTICK] * f / 1000.0, Vita_PerfAcc[VPERF_PSPRITES] * f / 1000.0, Vita_PerfAcc[VPERF_PMOVE] * f / 1000.0, Vita_PerfAcc[VPERF_PUSE] * f / 1000.0, Vita_PerfAcc[VPERF_THINKERS] * f / 1000.0,
-			Vita_PerfAcc[VPERF_SBAR] * f / 1000.0, Vita_PerfAcc[VPERF_BOTAIM] * f / 1000.0, Vita_PerfAcc[VPERF_EFFECTS] * f / 1000.0,
-			Vita_PerfAcc[VPERF_SCENE] * f / 1000.0, Vita_PerfAcc[VPERF_BSP] * f / 1000.0,
-			Vita_PerfAcc[VPERF_OPAQUE] * f / 1000.0, Vita_PerfAcc[VPERF_SKYBOX] * f / 1000.0, Vita_PerfAcc[VPERF_BATCHDRAW] * f / 1000.0, Vita_PerfAcc[VPERF_JOIN] * f / 1000.0,
-			Vita_PerfAcc[VPERF_DECALS] * f / 1000.0, Vita_PerfAcc[VPERF_PORTALS] * f / 1000.0, Vita_PerfAcc[VPERF_TRANSL] * f / 1000.0,
-			Vita_PerfAcc[VPERF_MODELS] * f / 1000.0, Vita_PerfAcc[VPERF_MEXPAND] * f / 1000.0, Vita_PerfAcc[VPERF_MDRAW] * f / 1000.0, Vita_PerfAcc[VPERF_MBIND] * f / 1000.0,
-			Vita_PerfAcc[VPERF_UPDATE] * f / 1000.0,
-			Vita_PerfAcc[VPERF_SWAP] * f / 1000.0,
-			period / 1e6, Vita_PerfCalls[VPERF_UPLOAD], Vita_PerfAcc[VPERF_UPLOAD] / 1000.0, Vita_PerfAcc[VPERF_TEXDECODE] / 1000.0,
-			Vita_PerfCalls[VPERF_MODELLOAD], Vita_PerfAcc[VPERF_MODELLOAD] / 1000.0,
-			Vita_LogicStartDelay * f / 1000.0, Vita_LogicRunTime * f / 1000.0,
-			(unsigned)(mi.uordblks >> 20), Vita_BigBlocksKB() >> 10, (unsigned)(GC::AllocBytes >> 20), Vita_GCTime * f / 1000.0
-#ifndef NO_GL
-			, (unsigned)(vglMemFree(VGL_MEM_RAM) >> 20), (unsigned)(vglMemFree(VGL_MEM_VRAM) >> 20), LegacyPoolPeak >> 10, (unsigned)(legacy_pool_size >> 10)
-#endif
-			);
-		Vita_ConsoleWrite(line);
-	}
-	if (vita_perflog && Vita_PerfDetail)
-	{
-		const double f = frames > 0 ? 1.0 / frames : 0;
-		char line[2048];
-
-		// Where the logic time goes: thinkers in total, GC, database, and the
-		// most expensive thinker classes (ms per frame, ticks per frame).
-		size_t len = snprintf(line, sizeof(line), "[perf]   thinkers %.1f (gc %.1f), database %.1f (%d calls), ACS starts %.1f (x%d), cvar lookups %.1f (x%d) | top:",
-			Vita_PerfAcc[VPERF_THINKERS] * f / 1000.0, Vita_PerfAcc[VPERF_GC] * f / 1000.0,
-			Vita_PerfAcc[VPERF_DB] * f / 1000.0, Vita_PerfCalls[VPERF_DB],
-			Vita_PerfAcc[VPERF_ACSNEW] * f / 1000.0, (int)(Vita_PerfCalls[VPERF_ACSNEW] * f + 0.5),
-			Vita_PerfAcc[VPERF_FINDCVAR] * f / 1000.0, (int)(Vita_PerfCalls[VPERF_FINDCVAR] * f + 0.5));
-		for (int n = 0; n < 10; n++)
-		{
-			int best = -1;
-			for (int i = 0; i < NumPerfClasses; i++)
-				if (PerfClasses[i].Us > 0 && (best < 0 || PerfClasses[i].Us > PerfClasses[best].Us)) best = i;
-			if (best < 0 || len >= sizeof(line) - 64) break;
-			if (PerfClasses[best].Ops > 0)
-				len += snprintf(line + len, sizeof(line) - len, " %s %.1f (x%d, %.0f op)", PerfClasses[best].Name,
-					PerfClasses[best].Us * f / 1000.0, (int)(PerfClasses[best].Calls * f + 0.5), PerfClasses[best].Ops * f);
-			else
-				len += snprintf(line + len, sizeof(line) - len, " %s %.1f (x%d)", PerfClasses[best].Name,
-					PerfClasses[best].Us * f / 1000.0, (int)(PerfClasses[best].Calls * f + 0.5));
-			PerfClasses[best].Ops = 0;
-			PerfClasses[best].Us = 0;
-		}
-		snprintf(line + len, sizeof(line) - len, "\n");
-		Vita_ConsoleWrite(line);
-
-#ifndef NO_GL
-		{
-			extern unsigned Vita_GLCount[8];
-			extern int rendered_lines, rendered_flats, rendered_sprites;
-			snprintf(line, sizeof(line), "[perf]   render per frame: walls %.0f, flats %.0f, sprites %.0f | GL draw calls %.0f (vertices %.0f), glBegin %.0f, texture binds %.0f, colour changes %.0f, fog changes %.0f | draws+glBegin: opaque %.0f, translucent %.0f, models %.0f, weapon/blend %.0f, 2D %.0f\n",
-				rendered_lines * f, rendered_flats * f, rendered_sprites * f,
-				Vita_GLCount[0] * f, Vita_GLCount[5] * f, Vita_GLCount[1] * f, Vita_GLCount[2] * f, Vita_GLCount[3] * f, Vita_GLCount[4] * f,
-				Vita_GLPhaseDraws[1] * f, Vita_GLPhaseDraws[2] * f, Vita_GLPhaseDraws[4] * f, Vita_GLPhaseDraws[3] * f, Vita_GLPhaseDraws[0] * f);
-			Vita_ConsoleWrite(line);
-			snprintf(line, sizeof(line), "[perf]   draw lists per frame (ms): walls %.1f (x%.0f), flats %.1f (x%.0f), sprites %.1f (x%.0f), of these light passes %.1f (x%.0f)\n",
-				Vita_PerfAcc[VPERF_DWALLS] * f / 1000.0, Vita_PerfCalls[VPERF_DWALLS] * f,
-				Vita_PerfAcc[VPERF_DFLATS] * f / 1000.0, Vita_PerfCalls[VPERF_DFLATS] * f,
-				Vita_PerfAcc[VPERF_DSPRITES] * f / 1000.0, Vita_PerfCalls[VPERF_DSPRITES] * f,
-				Vita_PerfAcc[VPERF_DLIGHTS] * f / 1000.0, Vita_PerfCalls[VPERF_DLIGHTS] * f);
-			Vita_ConsoleWrite(line);
-			extern void Vita_PrintDrawCallers(char *, size_t);
-			char cb[256]; Vita_PrintDrawCallers(cb, sizeof(cb));
-			snprintf(line, sizeof(line), "[perf]   opaque glDrawArrays callers (3 s):%s | RenderScene %.1f/frame, DrawSubsectors %.0f/frame\n", cb, Vita_GLCount[6] * f, Vita_GLCount[7] * f);
-			Vita_ConsoleWrite(line);
-		}
-#endif
-		// ACS: most executed opcodes and the most expensive ACSF functions.
-		unsigned total = 0;
-		for (int i = 0; i < 1024; i++) total += Vita_PcodeCounts[i];
-		len = snprintf(line, sizeof(line), "[perf]   ACS opcodes/frame %.0f | top:", total * f);
-		for (int n = 0; n < 12; n++)
-		{
-			int best = -1;
-			for (int i = 0; i < 1024; i++)
-				if (Vita_PcodeCounts[i] > 0 && (best < 0 || Vita_PcodeCounts[i] > Vita_PcodeCounts[best])) best = i;
-			if (best < 0 || len >= sizeof(line) - 32) break;
-			len += snprintf(line + len, sizeof(line) - len, " %d:%.0f", best, Vita_PcodeCounts[best] * f);
-			Vita_PcodeCounts[best] = 0;
-		}
-		len += snprintf(line + len, sizeof(line) - len, " | op ms:");
-		for (int n = 0; n < 8; n++)
-		{
-			int best = -1;
-			for (int i = 0; i < 1024; i++)
-				if (Vita_PcodeUs[i] > 0 && (best < 0 || Vita_PcodeUs[i] > Vita_PcodeUs[best])) best = i;
-			if (best < 0 || len >= sizeof(line) - 40) break;
-			len += snprintf(line + len, sizeof(line) - len, " %d:%.2f", best, Vita_PcodeUs[best] * f / 1000.0);
-			Vita_PcodeUs[best] = 0;
-		}
-		len += snprintf(line + len, sizeof(line) - len, " | ACSF ms:");
-		for (int n = 0; n < 8; n++)
-		{
-			int best = -1;
-			for (int i = 0; i < 1024; i++)
-				if (AcsFuncUs[i] > 0 && (best < 0 || AcsFuncUs[i] > AcsFuncUs[best])) best = i;
-			if (best < 0 || len >= sizeof(line) - 40) break;
-			len += snprintf(line + len, sizeof(line) - len, " f%d %.2f (x%.0f)", best, AcsFuncUs[best] * f / 1000.0, AcsFuncCalls[best] * f);
-			AcsFuncUs[best] = 0;
-		}
-		snprintf(line + len, sizeof(line) - len, "\n");
-		Vita_ConsoleWrite(line);
+		const unsigned long long vs0 = Vita_PerfNow();
+		Vita_PerfSnapshot(frames, period, worst);
+		const unsigned long long vs = Vita_PerfNow() - vs0;
+		if (vs > 5000) Vita_BootLog("profiler snapshot took %llu ms", vs / 1000);
 	}
 #ifndef NO_GL
 	{ extern unsigned Vita_GLCount[8]; memset(Vita_GLCount, 0, sizeof(Vita_GLCount)); memset(Vita_GLPhaseDraws, 0, sizeof(Vita_GLPhaseDraws)); }
@@ -221,6 +329,7 @@ void Vita_PerfFrame()
 	{ extern int rendered_lines, rendered_flats, rendered_sprites; rendered_lines = rendered_flats = rendered_sprites = 0; }
 	for (int i = 0; i < 1024; i++) { Vita_PcodeUs[i] = 0; Vita_PcodeCounts[i] = 0; AcsFuncUs[i] = 0; AcsFuncCalls[i] = 0; }
 	NumPerfClasses = 0;
+	memset(PerfClassHash, 0, sizeof(PerfClassHash));
 	for (int i = 0; i < VPERF_COUNT; i++) { Vita_PerfAcc[i] = 0; Vita_PerfCalls[i] = 0; }
 	Vita_GCTime = 0; Vita_LogicStartDelay = 0; Vita_LogicRunTime = 0;
 	frames = 0;
@@ -311,4 +420,29 @@ void Vita_ACSWatchStart()
 	started = true;
 	SceUID t = sceKernelCreateThread("vita_acswatch", Vita_ACSWatchFunc, 0x10000100 + 50, 0x2000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
 	if (t >= 0) sceKernelStartThread(t, 0, NULL);
+}
+
+// [Vita] What a slow actor tick spent its time on (0044: HaloDoom's weapon
+// pickups took 75-125 ms each at match start; no single ACS instruction was
+// slow). Logic thread only; reset before each timed tick.
+unsigned long long Vita_TickAcsUs, Vita_TickAcsLongestUs, Vita_TickSoundUs;
+int Vita_TickAcsRuns;
+static char Vita_TickAcsLongest[64];
+void Vita_NoteTickScript(const char *name, unsigned long long us)
+{
+	Vita_TickAcsUs += us;
+	Vita_TickAcsRuns++;
+	if (us > Vita_TickAcsLongestUs)
+	{
+		Vita_TickAcsLongestUs = us;
+		snprintf(Vita_TickAcsLongest, sizeof(Vita_TickAcsLongest), "%s", name ? name : "?");
+	}
+}
+void Vita_TickBreakdownReset() { Vita_TickAcsUs = Vita_TickAcsLongestUs = Vita_TickSoundUs = 0; Vita_TickAcsRuns = 0; Vita_TickAcsLongest[0] = 0; }
+const char *Vita_TickBreakdown()
+{
+	static char buf[200];
+	snprintf(buf, sizeof(buf), "ACS %llu ms in %d runs (longest %s %llu ms), sound loads %llu ms",
+		Vita_TickAcsUs / 1000, Vita_TickAcsRuns, Vita_TickAcsLongest[0] ? Vita_TickAcsLongest : "-", Vita_TickAcsLongestUs / 1000, Vita_TickSoundUs / 1000);
+	return buf;
 }

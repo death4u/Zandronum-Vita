@@ -45,6 +45,12 @@ enum
 	VPERF_DFLATS,		// detail only: flats (all passes, collecting)
 	VPERF_DSPRITES,		// detail only: sprites drawn from draw lists
 	VPERF_DLIGHTS,		// detail only: dynamic light passes (walls + flats)
+	VPERF_WARP,
+	VPERF_SPRLIGHT,	// sprite drawing: dynamic light lookup (detail)
+	VPERF_SPRBIND,	// sprite drawing: texture bind incl. first loads (detail)
+	VPERF_SPRMODEL,	// sprite drawing: models (detail)
+	VPERF_TSORT,	// translucent list sort/split against walls (detail)
+	VPERF_PICKUP,	// first ticks of actors (pickup stagger, always)		// warped (wavy) texture updates
 	VPERF_DUMMY,		// unused (scopes that time nothing)
 	VPERF_COUNT
 };

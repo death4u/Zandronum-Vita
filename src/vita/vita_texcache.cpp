@@ -561,8 +561,14 @@ static bool ReadCacheFile(unsigned long long key, FVtcReady &r)
 	return ok;
 }
 
-static void RunJob(const FVtcJob &job)
+// [Vita] Set while a job's build function runs (texbuild thread only): the
+// build function may fill in the texture's flags it found while decoding.
+FVitaTexCacheMeta *Vita_JobMeta;
+
+static void RunJob(const FVtcJob &jobin)
 {
+	FVtcJob job = jobin;
+	Vita_JobMeta = &job.Meta;
 	FVtcReady r;
 	memset(&r, 0, sizeof(r));
 	bool ok = InIndex(job.Key) && ReadCacheFile(job.Key, r);

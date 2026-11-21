@@ -3746,6 +3746,9 @@ void P_FreeLevelData ()
 		extern void Vita_UnlinkAllLights();
 		Vita_UnlinkAllLights();
 	}
+	// [Vita] Same for wall decals: a decal still pointing into the freed
+	// sides array wrote into the next level's walls (decal crash, 0042).
+	if (sides != NULL) DBaseDecal::Vita_UnlinkAll();
 #endif
 	DThinker::DestroyAllThinkers ();
 	level.total_monsters = level.total_items = level.total_secrets =
@@ -4004,6 +4007,7 @@ void P_SetupLevel (char *lumpname, int position)
 #ifdef __vita__
 	// [Vita] Start the new level with as much memory as possible in one piece:
 	// GL textures, models and the bot path buffers of the old level go.
+	{ extern void Vita_LearnSave(); Vita_LearnSave(); }
 	{ extern void Vita_FlushLevelMemory(); Vita_FlushLevelMemory(); }
 	extern void Vita_LoadScreenBegin(const char *), Vita_LoadProgress(const char *, int, int, bool), Vita_TexCacheInit();
 	if (stricmp(lumpname, "TITLEMAP")) Vita_LoadScreenBegin(lumpname);

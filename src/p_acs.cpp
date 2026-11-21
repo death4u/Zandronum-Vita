@@ -9274,6 +9274,7 @@ static inline int Vita_BotPollDelay(AActor *activator, int script)
 
 // [Vita] Watchdog for single slow ACS instructions (vita_perf.cpp): the
 // slow-path opcode being run and a counter bumped for each.
+void Vita_NoteTickScript(const char *name, unsigned long long us);
 extern volatile int Vita_ACSPcd, Vita_ACSScript, Vita_ACSActive;
 extern volatile unsigned Vita_ACSSeq;
 void Vita_ACSWatchStart();
@@ -9293,6 +9294,7 @@ int DLevelScript::RunScript ()
 		const unsigned long long vt0 = Vita_PerfNow();
 		const int vr = RunScriptInner();
 		const unsigned long long vdt = Vita_PerfNow() - vt0;
+		Vita_NoteTickScript(ScriptPresentation(script).GetChars(), vdt);
 		if (vdt > 40000)
 			Vita_BootLog("slow script: %s %llu ms, activator %s", ScriptPresentation(script).GetChars(), vdt / 1000,
 				activator != NULL ? activator->GetClass()->TypeName.GetChars() : "-");
@@ -9314,6 +9316,7 @@ int DLevelScript::RunScript ()
 	unsigned long long t0 = Vita_PerfNow();
 	unsigned ops0 = Vita_PcodeTotal;
 	int result = RunScriptInner();
+	Vita_NoteTickScript(*name, Vita_PerfNow() - t0);
 	Vita_PerfOps = Vita_PcodeTotal - ops0;
 	if (Vita_PerfNow() - t0 > 40000)
 		Vita_BootLog("slow script: %s %llu ms, %u opcodes, activator %s", *name, (Vita_PerfNow() - t0) / 1000, Vita_PerfOps,
