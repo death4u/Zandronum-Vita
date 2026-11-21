@@ -300,14 +300,23 @@ void Vita_ControlsInit()
 	if (game.IsEmpty()) game = "default";
 	LayoutPath.Format(CONTROLS_DIR "/%s.ini", game.GetChars());
 	LayoutActive = true;
+	const bool halodoom = Wads.CheckNumForFullName("acs/halodoomgamemodes.o") >= 0;
 	if (LoadLayout())
 	{
 		Vita_BootLog("controls: layout of \"%s\" loaded from %s", game.GetChars(), LayoutPath.GetChars());
+		// 0053: holding Square is use in every game; layouts saved before
+		// get it only if nothing is bound to holding Square (the rest stays)
+		if (!halodoom && Bindings.GetBinding(KEY_FIRSTJOYBUTTON + VITA_PAD_BUTTONS + 3).IsEmpty())
+		{
+			Bindings.DoBind("Hold_Square", "+use");
+			SaveLayout();
+			Vita_BootLog("controls: hold Square bound to use");
+		}
 		LayoutCrc = BindingsCrc();
 		return;
 	}
-	const bool halodoom = Wads.CheckNumForFullName("acs/halodoomgamemodes.o") >= 0;
 	if (halodoom) HaloDoomDefaults();
+	else Bindings.DoBind("Hold_Square", "+use");	// 0053: holding Square is use in every game
 	SaveLayout();
 	Vita_BootLog("controls: new layout for \"%s\" (%s defaults) saved to %s", game.GetChars(),
 		halodoom ? "HaloDoom" : "general", LayoutPath.GetChars());

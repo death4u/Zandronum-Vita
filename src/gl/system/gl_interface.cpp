@@ -195,6 +195,12 @@ void gl_LoadExtensions()
 		vita_vertexlights = false;	// 0039's per-vertex lights cost more than they saved (hardware, Lockup)
 		vita_glconfig = 5;
 	}
+	if (vita_glconfig < 6)
+	{
+		EXTERN_CVAR(Bool, vita_showfps)
+		vita_showfps = false;	// 0053: the FPS counter is off by default for the release
+		vita_glconfig = 6;
+	}
 #else
 
 	const char *version = (const char*)glGetString(GL_VERSION);

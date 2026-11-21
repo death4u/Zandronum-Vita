@@ -861,7 +861,7 @@ DFrameBuffer::DFrameBuffer (int width, int height)
 
 #ifdef __vita__
 // [Vita] Frame rate in the bottom left corner (frames in the last second).
-CVAR(Bool, vita_showfps, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, vita_showfps, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 #endif
 
 void DFrameBuffer::DrawRateStuff ()
