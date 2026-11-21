@@ -130,6 +130,7 @@ CVAR(Bool, gl_nolayer, false, 0)
 //
 //==========================================================================
 CVAR(Bool, gl_vita_batchsprites, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, gl_vita_spritesmasked, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 static TArray<float> VSXyz, VSUv;
 static TArray<unsigned> VSRgba;
 static unsigned VitaBoundTex;
@@ -462,7 +463,17 @@ inline void GLSprite::PutSprite(bool translucent)
 {
 	int list;
 	// [BB] Allow models to be drawn in the GLDL_TRANSLUCENT pass.
+#ifdef __vita__
+	// [Vita] gl_vita_spritesmasked: sprites that aren't translucent are
+	// drawn alpha-tested with the walls (sorted by texture, so the same
+	// pictures - casings, gibs, decorations - batch together) instead of
+	// one by one in the sorted translucent pass. Soft-edged pictures get
+	// hard edges.
+	EXTERN_CVAR(Bool, gl_vita_spritesmasked)
+	if (translucent || (!modelframe && !gl_vita_spritesmasked))
+#else
 	if (translucent || !modelframe)
+#endif
 	{
 		list = GLDL_TRANSLUCENT;
 	}
@@ -979,6 +990,13 @@ void GLSprite::Process(AActor* thing,sector_t * sector)
 
 
 	}
+#ifdef __vita__
+	// [Vita] gl_vita_spritesmasked: normal sprites with soft-edged pictures
+	// stay alpha-tested (hard edges) so they can be drawn with the walls.
+	EXTERN_CVAR(Bool, gl_vita_spritesmasked)
+	if (gl_vita_spritesmasked && hw_styleflags == STYLEHW_Solid && !modelframe && !(RenderStyle.Flags & STYLEF_RedIsAlpha)) {}
+	else
+#endif
 	if ((gltexture && gltexture->GetTransparent()) || (RenderStyle.Flags & STYLEF_RedIsAlpha))
 	{
 		if (hw_styleflags == STYLEHW_Solid)

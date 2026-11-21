@@ -57,6 +57,7 @@
 #include "gl/utility/gl_templates.h"
 #include "gl/shaders/gl_shader.h"
 #include "gl/scene/gl_vitawallbatch.h"
+#include "vita/vita_perf.h"
 
 FDrawInfo * gl_drawinfo;
 
@@ -710,6 +711,10 @@ void GLDrawList::DoDraw(int pass, int i)
 		{
 			GLFlat * f=&flats[drawitems[i].index];
 			RenderFlat.Clock();
+#ifdef __vita__
+			VITA_PERF_D(VPERF_DFLATS);
+			FVitaPerfScopeD vlp((pass == GLPASS_LIGHT || pass == GLPASS_LIGHT_ADDITIVE) ? VPERF_DLIGHTS : VPERF_DUMMY);
+#endif
 			f->Draw(pass);
 			RenderFlat.Unclock();
 		}
@@ -719,6 +724,10 @@ void GLDrawList::DoDraw(int pass, int i)
 		{
 			GLWall * w=&walls[drawitems[i].index];
 			RenderWall.Clock();
+#ifdef __vita__
+			VITA_PERF_D(VPERF_DWALLS);
+			FVitaPerfScopeD vlp((pass == GLPASS_LIGHT || pass == GLPASS_LIGHT_ADDITIVE) ? VPERF_DLIGHTS : VPERF_DUMMY);
+#endif
 			w->Draw(pass);
 			RenderWall.Unclock();
 		}
@@ -728,6 +737,9 @@ void GLDrawList::DoDraw(int pass, int i)
 		{
 			GLSprite * s=&sprites[drawitems[i].index];
 			RenderSprite.Clock();
+#ifdef __vita__
+			VITA_PERF_D(VPERF_DSPRITES);
+#endif
 			s->Draw(pass);
 			RenderSprite.Unclock();
 		}

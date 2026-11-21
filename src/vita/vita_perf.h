@@ -41,6 +41,11 @@ enum
 	VPERF_MDRAW,		// part of MODELS: draw calls
 	VPERF_MBIND,		// part of MODELS: skin binds
 	VPERF_BATCHDRAW,	// drawing the collected wall/flat batches (vitaGL draw calls)
+	VPERF_DWALLS,		// detail only: walls (all passes, collecting)
+	VPERF_DFLATS,		// detail only: flats (all passes, collecting)
+	VPERF_DSPRITES,		// detail only: sprites drawn from draw lists
+	VPERF_DLIGHTS,		// detail only: dynamic light passes (walls + flats)
+	VPERF_DUMMY,		// unused (scopes that time nothing)
 	VPERF_COUNT
 };
 
@@ -61,6 +66,16 @@ struct FVitaPerfScope
 };
 
 #define VITA_PERF(slot) FVitaPerfScope vita_perf_scope_##slot(slot)
+extern bool Vita_PerfDetail;
+struct FVitaPerfScopeD
+{
+	int Slot;
+	unsigned long long Start;
+	FVitaPerfScopeD(int slot) : Slot(slot), Start(Vita_PerfDetail ? Vita_PerfNow() : 0) {}
+	~FVitaPerfScopeD() { if (Start) { Vita_PerfAcc[Slot] += Vita_PerfNow() - Start; Vita_PerfCalls[Slot]++; } }
+};
+// timed only in the detail windows (thousands of calls a frame)
+#define VITA_PERF_D(slot) FVitaPerfScopeD vita_perf_scoped_##slot(slot)
 
 // Time spent in one thinker's Tick(), grouped by class (top ones are logged).
 void Vita_PerfThinker(const void *cls, const char *name, unsigned long long us);

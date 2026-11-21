@@ -47,6 +47,95 @@ static void Vita_MkDir(const char *path)
 		sceIoMkdir(path, 0777);
 }
 
+// [Vita] Log files are written by a thread on the third core: opening,
+// writing and closing a file on the memory card for every line took the
+// main thread 100-200 ms whenever the profiler wrote its detail lines (a
+// stall every 15 s in 0040). Lines wait in a buffer per file; the thread
+// writes them out within a few ms. Before the thread runs (start-up) and
+// on fatal errors they are written directly.
+struct FVitaLogFile
+{
+	const char *Path;
+	char Buf[96 * 1024];
+	unsigned Len;
+	unsigned Dropped;
+	bool Truncate;		// first write empties the file
+};
+static FVitaLogFile VitaLogs[2] = { { VITA_BOOT_LOG, {0}, 0, 0, false }, { VITA_DATA_ROOT "/console.txt", {0}, 0, 0, true } };
+static SceUID VitaLogMutex = -1, VitaLogSema = -1, VitaLogThread = -1;
+
+static void Vita_LogWriteDirect(FVitaLogFile &f, const char *text, unsigned len)
+{
+	// Opened per write: Vita3K only commits a file's data when it is closed.
+	SceUID fd = sceIoOpen(f.Path, SCE_O_WRONLY | SCE_O_CREAT | (f.Truncate ? SCE_O_TRUNC : SCE_O_APPEND), 0666);
+	f.Truncate = false;
+	if (fd >= 0)
+	{
+		sceIoWrite(fd, text, len);
+		sceIoClose(fd);
+	}
+}
+
+static char VitaLogOut[96 * 1024];
+static void Vita_LogFlushFile(int i)
+{
+	FVitaLogFile &f = VitaLogs[i];
+	sceKernelLockMutex(VitaLogMutex, 1, NULL);
+	unsigned len = f.Len;
+	if (len > 0) memcpy(VitaLogOut, f.Buf, len);
+	unsigned dropped = f.Dropped;
+	f.Len = 0;
+	f.Dropped = 0;
+	sceKernelUnlockMutex(VitaLogMutex, 1);
+	if (dropped > 0)
+		len += snprintf(VitaLogOut + len, sizeof(VitaLogOut) - len, "(log: %u lines dropped, buffer full)\n", dropped);
+	if (len > 0) Vita_LogWriteDirect(f, VitaLogOut, len);
+}
+
+static int Vita_LogThreadFunc(SceSize, void *)
+{
+	for (;;)
+	{
+		sceKernelWaitSema(VitaLogSema, 1, NULL);
+		for (int i = 0; i < 2; i++) Vita_LogFlushFile(i);
+	}
+	return 0;
+}
+
+static void Vita_LogStartThread()
+{
+	VitaLogMutex = sceKernelCreateMutex("vita_log", 0, 0, NULL);
+	VitaLogSema = sceKernelCreateSema("vita_log", 0, 0, 0x7fffffff, NULL);
+	SceUID t = sceKernelCreateThread("vita_log", Vita_LogThreadFunc, 0x10000100 + 40, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+	if (VitaLogMutex >= 0 && VitaLogSema >= 0 && t >= 0)
+	{
+		VitaLogThread = t;
+		sceKernelStartThread(t, 0, NULL);
+	}
+}
+
+static void Vita_LogAppend(int file, const char *text, unsigned len)
+{
+	FVitaLogFile &f = VitaLogs[file];
+	if (VitaLogThread < 0)
+	{
+		Vita_LogWriteDirect(f, text, len);
+		return;
+	}
+	sceKernelLockMutex(VitaLogMutex, 1, NULL);
+	if (f.Len + len <= sizeof(f.Buf)) { memcpy(f.Buf + f.Len, text, len); f.Len += len; }
+	else f.Dropped++;
+	sceKernelUnlockMutex(VitaLogMutex, 1);
+	sceKernelSignalSema(VitaLogSema, 1);
+}
+
+// Writes out everything pending, from this thread (fatal errors, exit).
+extern "C" void Vita_LogFlushNow(void)
+{
+	if (VitaLogThread < 0) return;
+	for (int i = 0; i < 2; i++) Vita_LogFlushFile(i);
+}
+
 extern "C" void Vita_BootLog(const char *fmt, ...)
 {
 	char buf[1024];
@@ -63,13 +152,7 @@ extern "C" void Vita_BootLog(const char *fmt, ...)
 	if (len > (int)sizeof(buf) - 2)
 		len = sizeof(buf) - 2;
 	buf[len++] = '\n';
-
-	SceUID fd = sceIoOpen(VITA_BOOT_LOG, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0666);
-	if (fd >= 0)
-	{
-		sceIoWrite(fd, buf, len);
-		sceIoClose(fd);
-	}
+	Vita_LogAppend(0, buf, len);
 }
 
 // [Vita] System events (PS button, quit requests) are logged to boot.log,
@@ -115,6 +198,7 @@ static void Vita_StartEventWatch()
 static void Vita_LogExit(void)
 {
 	Vita_BootLog("exit() called");
+	Vita_LogFlushNow();
 }
 
 static void *Vita_SqliteMalloc(int size) { return malloc(size); }
@@ -148,6 +232,7 @@ extern "C" void Vita_EarlyInit(void)
 	}
 	atexit(Vita_LogExit);
 	Vita_StartEventWatch();
+	Vita_LogStartThread();
 
 	scePowerSetArmClockFrequency(444);
 	scePowerSetBusClockFrequency(222);
@@ -200,6 +285,7 @@ extern "C" void Vita_FatalError(const char *text)
 {
 	static bool shown = false;
 	Vita_BootLog("FATAL ERROR: %s", text);
+	Vita_LogFlushNow();
 	fprintf(stderr, "FATAL ERROR: %s\n", text);
 	fflush(stderr);
 	fflush(stdout);
@@ -245,17 +331,8 @@ void (*Vita_GLDialogFrame)(void) = NULL;
 
 extern "C" void Vita_ConsoleWrite(const char *text)
 {
-	// Opened per write: Vita3K only commits a file's data when it is closed.
-	static bool truncated = false;
 	if (text == NULL || *text == 0) return;
-	SceUID fd = sceIoOpen(VITA_DATA_ROOT "/console.txt",
-		SCE_O_WRONLY | SCE_O_CREAT | (truncated ? SCE_O_APPEND : SCE_O_TRUNC), 0777);
-	truncated = true;
-	if (fd >= 0)
-	{
-		sceIoWrite(fd, text, strlen(text));
-		sceIoClose(fd);
-	}
+	Vita_LogAppend(1, text, strlen(text));
 }
 
 extern "C" int Vita_HaveShaderCompiler(void)

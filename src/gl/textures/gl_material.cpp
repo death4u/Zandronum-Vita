@@ -1275,3 +1275,41 @@ CCMD(textureinfo)
 	Printf(PRINT_LOG, "%d system textures, %d hardware textures, %d pixels\n", cntt, cnth, pix);
 }
 
+
+#ifdef __vita__
+#include "v_font.h"
+#include "textures/textures.h"
+#include "vita/vita_system.h"
+#include <psp2/kernel/processmgr.h>
+static TMap<FTexture *, bool> Vita_HudDone;
+struct FVitaHudPre { unsigned long long deadline; int done, total; bool timeout; };
+static void Vita_PreHudOne(FTexture *tex, void *data)
+{
+	FVitaHudPre *p = (FVitaHudPre *)data;
+	p->total++;
+	if (Vita_HudDone.CheckKey(tex) != NULL) return;
+	if (sceKernelGetProcessTimeWide() > p->deadline) { p->timeout = true; return; }
+	if (tex->GetWidth() * tex->GetHeight() > 512 * 512 || tex->UseType == FTexture::TEX_Null) return;
+	FMaterial *mat = FMaterial::ValidateTexture(tex);
+	if (mat == NULL) return;
+	mat->BindPatch(CM_DEFAULT, 0);
+	Vita_HudDone[tex] = true;
+	p->done++;
+	extern void Vita_LoadProgress(const char *, int, int, bool);
+	if ((p->done & 15) == 0) Vita_LoadProgress("HUD", p->done, p->done + 1, false);
+}
+
+void Vita_PrecacheHud(FTextureManager *tm)
+{
+	FVitaHudPre p = { sceKernelGetProcessTimeWide() + 8000000ull, 0, 0, false };
+	const unsigned long long t0 = sceKernelGetProcessTimeWide();
+	for (int i = 0; i < tm->NumTextures(); i++)
+	{
+		FTexture *tex = tm->ByIndex(i);
+		if (tex != NULL && tex->UseType == FTexture::TEX_MiscPatch) Vita_PreHudOne(tex, &p);
+	}
+	FFont::Vita_ForEachChar(Vita_PreHudOne, &p);
+	Vita_BootLog("precached %d HUD graphics and font characters in %llu ms (%d known%s)", p.done,
+		(sceKernelGetProcessTimeWide() - t0) / 1000, p.total, p.timeout ? ", rest left for later: time limit" : "");
+}
+#endif

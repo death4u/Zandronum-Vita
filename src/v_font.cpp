@@ -2775,3 +2775,18 @@ void V_RetranslateFonts()
 		font = font->Next;
 	}
 }
+
+#ifdef __vita__
+void FFont::Vita_ForEachChar(void (*fn)(FTexture *pic, void *data), void *data)
+{
+	for (FFont *f = FirstFont; f != NULL; f = f->Next)
+	{
+		if (f->Chars == NULL) continue;
+		for (int c = f->FirstChar; c <= f->LastChar; c++)
+		{
+			FTexture *pic = f->Chars[c - f->FirstChar].Pic;
+			if (pic != NULL) fn(pic, data);
+		}
+	}
+}
+#endif

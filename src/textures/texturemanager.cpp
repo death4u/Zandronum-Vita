@@ -1279,6 +1279,14 @@ void FTextureManager::PrecacheLevel (void)
 	}
 #ifdef __vita__
 	Vita_BootLog("precache: %d sprites left to load when first drawn", vita_spritesskipped);
+	// [Vita] HUD graphics and font characters, once per session (they stay
+	// loaded across levels): drawing them for the first time stalled the
+	// status bar and HUD messages for 0.1-0.6 s in HaloDoom and Brutal Doom.
+	if (stricmp(level.mapname, "TITLEMAP"))
+	{
+		extern void Vita_PrecacheHud(FTextureManager *);
+		Vita_PrecacheHud(this);
+	}
 	{
 		unsigned hits, writes;
 		Vita_TexCacheStats(hits, writes);

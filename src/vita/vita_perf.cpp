@@ -167,6 +167,12 @@ void Vita_PerfFrame()
 				Vita_GLCount[0] * f, Vita_GLCount[5] * f, Vita_GLCount[1] * f, Vita_GLCount[2] * f, Vita_GLCount[3] * f, Vita_GLCount[4] * f,
 				Vita_GLPhaseDraws[1] * f, Vita_GLPhaseDraws[2] * f, Vita_GLPhaseDraws[4] * f, Vita_GLPhaseDraws[3] * f, Vita_GLPhaseDraws[0] * f);
 			Vita_ConsoleWrite(line);
+			snprintf(line, sizeof(line), "[perf]   draw lists per frame (ms): walls %.1f (x%.0f), flats %.1f (x%.0f), sprites %.1f (x%.0f), of these light passes %.1f (x%.0f)\n",
+				Vita_PerfAcc[VPERF_DWALLS] * f / 1000.0, Vita_PerfCalls[VPERF_DWALLS] * f,
+				Vita_PerfAcc[VPERF_DFLATS] * f / 1000.0, Vita_PerfCalls[VPERF_DFLATS] * f,
+				Vita_PerfAcc[VPERF_DSPRITES] * f / 1000.0, Vita_PerfCalls[VPERF_DSPRITES] * f,
+				Vita_PerfAcc[VPERF_DLIGHTS] * f / 1000.0, Vita_PerfCalls[VPERF_DLIGHTS] * f);
+			Vita_ConsoleWrite(line);
 			extern void Vita_PrintDrawCallers(char *, size_t);
 			char cb[256]; Vita_PrintDrawCallers(cb, sizeof(cb));
 			snprintf(line, sizeof(line), "[perf]   opaque glDrawArrays callers (3 s):%s | RenderScene %.1f/frame, DrawSubsectors %.0f/frame\n", cb, Vita_GLCount[6] * f, Vita_GLCount[7] * f);

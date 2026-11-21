@@ -8,9 +8,11 @@
 extern "C" {
 #endif
 
-// Appends one line to ux0:data/zandronum/boot.log (opened and closed each
-// time, so it survives a crash or a hard exit).
+// Appends one line to ux0:data/zandronum/boot.log. Written by a background
+// thread within a few ms (directly during start-up); Vita_LogFlushNow
+// writes out everything pending from the calling thread.
 void Vita_BootLog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void Vita_LogFlushNow(void);
 
 // Clocks, data folders, stdout/stderr redirection, system modules, network.
 void Vita_EarlyInit(void);

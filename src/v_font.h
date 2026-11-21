@@ -80,6 +80,10 @@ public:
 	virtual ~FFont ();
 
 	virtual FTexture *GetChar (int code, int *const width) const;
+#ifdef __vita__
+	// [Vita] Calls fn for every character picture of every loaded font.
+	static void Vita_ForEachChar(void (*fn)(FTexture *pic, void *data), void *data);
+#endif
 	virtual int GetCharWidth (int code) const;
 	FRemapTable *GetColorTranslation (EColorRange range) const;
 	int GetLump() const { return Lump; }

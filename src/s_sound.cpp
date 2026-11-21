@@ -32,6 +32,10 @@
 #include "i_music.h"
 #include "i_cd.h"
 #include "s_sound.h"
+#ifdef __vita__
+#include <psp2/kernel/processmgr.h>
+#include "vita/vita_system.h"
+#endif
 #include "s_sndseq.h"
 #include "s_playlist.h"
 #include "c_dispatch.h"
@@ -1360,7 +1364,29 @@ void S_Sound (const sector_t *sec, int channel, FSoundID sfxid, float volume, fl
 //
 //==========================================================================
 
+#ifdef __vita__
+// [Vita] Sounds that take long to load are logged (0040: first plays of
+// footstep/splash/bot sounds looked like 60-300 ms stalls).
+static sfxinfo_t *S_LoadSoundInner(sfxinfo_t *sfx);
 sfxinfo_t *S_LoadSound(sfxinfo_t *sfx)
+{
+	if (GSnd->IsNull() || sfx->data.isValid()) return S_LoadSoundInner(sfx);
+	const unsigned long long t0 = sceKernelGetProcessTimeWide();
+	sfxinfo_t *r = S_LoadSoundInner(sfx);
+	const unsigned long long dt = sceKernelGetProcessTimeWide() - t0;
+	if (dt > 20000)
+	{
+		extern bool Vita_OnLogicThread();
+		Vita_BootLog("slow sound load: %s (%s) %llu ms, lump %d bytes, %s thread", sfx->name.GetChars(),
+			sfx->lumpnum >= 0 ? Wads.GetLumpFullName(sfx->lumpnum) : "-", dt / 1000,
+			sfx->lumpnum >= 0 ? Wads.LumpLength(sfx->lumpnum) : 0, Vita_OnLogicThread() ? "logic" : "main");
+	}
+	return r;
+}
+static sfxinfo_t *S_LoadSoundInner(sfxinfo_t *sfx)
+#else
+sfxinfo_t *S_LoadSound(sfxinfo_t *sfx)
+#endif
 {
 	if (GSnd->IsNull()) return sfx;
 

@@ -325,18 +325,33 @@ static void Vita_AddSubsectorToBatch(GLFlat *flat, subsector_t * sub, const FVit
 		return;
 	}
 unlit:
-	for (unsigned k = 1; k + 1 < n; k++)
 	{
-		vertex_t *vs[3] = { v0, sub->firstline[k].v1, sub->firstline[k+1].v1 };
-		for (int j = 0; j < 3; j++)
+		const unsigned tris = n - 2;
+		FVitaBucket *b = VitaWalls.Cur;
+		float *xyz = &b->Xyz[b->Xyz.Reserve(tris * 9)];
+		float *uv = &b->Uv[b->Uv.Reserve(tris * 6)];
+		unsigned *rgba = &b->Rgba[b->Rgba.Reserve(tris * 3)];
+		const unsigned color = VitaWalls.Color;
+		const float z0 = flat->plane.plane.ZatPoint(v0->fx, v0->fy) + flat->dz;
+		const float u0 = v0->fx/64.f, w0 = -v0->fy/64.f;
+		const float uu0 = x.a * u0 + x.b * w0 + x.c, vv0 = x.d * u0 + x.e * w0 + x.f;
+		vertex_t *prev = sub->firstline[1].v1;
+		float zp = flat->plane.plane.ZatPoint(prev->fx, prev->fy) + flat->dz;
+		float up_ = x.a * (prev->fx/64.f) + x.b * (-prev->fy/64.f) + x.c, vp_ = x.d * (prev->fx/64.f) + x.e * (-prev->fy/64.f) + x.f;
+		for (unsigned k = 1; k + 1 < n; k++)
 		{
-			vertex_t *vt = vs[j];
-			float zc = flat->plane.plane.ZatPoint(vt->fx, vt->fy) + flat->dz;
-			FVitaBucket *b = VitaWalls.Cur;
-			b->Xyz.Push(vt->fx); b->Xyz.Push(zc); b->Xyz.Push(vt->fy);
-			float u = vt->fx/64.f, v = -vt->fy/64.f;
-			b->Uv.Push(x.a * u + x.b * v + x.c); b->Uv.Push(x.d * u + x.e * v + x.f);
-			b->Rgba.Push(VitaWalls.Color);
+			vertex_t *cur = sub->firstline[k+1].v1;
+			const float zc = flat->plane.plane.ZatPoint(cur->fx, cur->fy) + flat->dz;
+			const float uc = x.a * (cur->fx/64.f) + x.b * (-cur->fy/64.f) + x.c, vc = x.d * (cur->fx/64.f) + x.e * (-cur->fy/64.f) + x.f;
+			xyz[0] = v0->fx; xyz[1] = z0; xyz[2] = v0->fy;
+			xyz[3] = prev->fx; xyz[4] = zp; xyz[5] = prev->fy;
+			xyz[6] = cur->fx; xyz[7] = zc; xyz[8] = cur->fy;
+			xyz += 9;
+			uv[0] = uu0; uv[1] = vv0; uv[2] = up_; uv[3] = vp_; uv[4] = uc; uv[5] = vc;
+			uv += 6;
+			rgba[0] = rgba[1] = rgba[2] = color;
+			rgba += 3;
+			prev = cur; zp = zc; up_ = uc; vp_ = vc;
 		}
 	}
 	flatvertices += n;

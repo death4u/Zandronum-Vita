@@ -126,18 +126,24 @@ static inline void VitaGL_End()
 		Vita_EmitLightPassFan();
 		return;
 	}
+	if (n < 3) return;
+	// reserve once, then write (TArray::Push per float was a noticeable cost)
+	FVitaBucket *b = VitaWalls.Cur;
+	const unsigned tris = n - 2;
+	float *xyz = &b->Xyz[b->Xyz.Reserve(tris * 9)];
+	float *uv = &b->Uv[b->Uv.Reserve(tris * 6)];
+	unsigned *rgba = &b->Rgba[b->Rgba.Reserve(tris * 3)];
+	const float *fx = &VitaWalls.FanXyz[0], *fu = &VitaWalls.FanUv[0];
+	const unsigned color = VitaWalls.Color;
 	for (unsigned k = 1; k + 1 < n; k++)
 	{
-		unsigned idx[3] = { 0, k, k + 1 };
+		const unsigned idx[3] = { 0, k, k + 1 };
 		for (int j = 0; j < 3; j++)
 		{
-			FVitaBucket *b = VitaWalls.Cur;
-			b->Xyz.Push(VitaWalls.FanXyz[idx[j] * 3]);
-			b->Xyz.Push(VitaWalls.FanXyz[idx[j] * 3 + 1]);
-			b->Xyz.Push(VitaWalls.FanXyz[idx[j] * 3 + 2]);
-			b->Uv.Push(VitaWalls.FanUv[idx[j] * 2]);
-			b->Uv.Push(VitaWalls.FanUv[idx[j] * 2 + 1]);
-			b->Rgba.Push(VitaWalls.Color);
+			const float *p = fx + idx[j] * 3, *t = fu + idx[j] * 2;
+			xyz[0] = p[0]; xyz[1] = p[1]; xyz[2] = p[2]; xyz += 3;
+			uv[0] = t[0]; uv[1] = t[1]; uv += 2;
+			*rgba++ = color;
 		}
 	}
 }

@@ -474,6 +474,47 @@ template<class F> static void ForEachDecorate(const std::string &path, F fn)
 	fclose(f);
 }
 
+// Does the zip/pk3 contain a file with this name (lower case, full path)?
+static bool ZipHasFile(const std::string &path, const char *want)
+{
+	FILE *f = fopen(path.c_str(), "rb");
+	if (f == NULL) return false;
+	bool found = false;
+	unsigned char hdr[4];
+	if (fread(hdr, 1, 4, f) == 4 && !memcmp(hdr, "PK\3\4", 4))
+	{
+		fseek(f, 0, SEEK_END);
+		long fsize = ftell(f);
+		long tail = fsize < 65558 ? fsize : 65558;
+		std::vector<unsigned char> t(tail);
+		fseek(f, fsize - tail, SEEK_SET);
+		long eocd = -1;
+		if (fread(t.data(), 1, tail, f) == (size_t)tail)
+			for (long i = tail - 22; i >= 0; i--)
+				if (Rd32(&t[i]) == 0x06054b50) { eocd = i; break; }
+		if (eocd >= 0)
+		{
+			unsigned entries = Rd16(&t[eocd + 10]), cdsize = Rd32(&t[eocd + 12]), cdoff = Rd32(&t[eocd + 16]);
+			std::vector<unsigned char> cd(cdsize);
+			if (fseek(f, cdoff, SEEK_SET) == 0 && fread(cd.data(), 1, cdsize, f) == cdsize)
+			{
+				size_t o = 0;
+				for (unsigned i = 0; i < entries && o + 46 <= cdsize && !found; i++)
+				{
+					const unsigned char *e = &cd[o];
+					if (Rd32(e) != 0x02014b50) break;
+					unsigned nlen = Rd16(e + 28), xlen = Rd16(e + 30), clen = Rd16(e + 32);
+					if (o + 46 + nlen > cdsize) break;
+					found = Lower(std::string((const char *)e + 46, nlen)) == want;
+					o += 46 + nlen + xlen + clen;
+				}
+			}
+		}
+	}
+	fclose(f);
+	return found;
+}
+
 // Actor names in DECORATE text. parentsonly = false: the names defined by
 // "actor <name> ..." headers. parentsonly = true: the classes a mod builds
 // on (": <parent>", "replaces <x>"), plus every "quoted" word if wantquoted.
@@ -599,12 +640,15 @@ static void BuildArgs(int *argc, char ***argv, const std::string &iwad, const st
 			(ext == "deh" || ext == "bex" ? dehs : files).push_back(mods[i]);
 		}
 	}
-	// Vita-specific fixes for mods (baseline copies of textures that are too
-	// big to decode on the Vita, see jpegtexture.cpp); harmless otherwise.
-	if (!files.empty())
+	// Vita-specific fixes for HaloDoom (baseline copies of textures that are
+	// too big to decode on the Vita, see jpegtexture.cpp): only with HaloDoom.
 	{
-		FILE *t = fopen("app0:/vita-halodoom.pk3", "rb");
+		bool halo = false;
+		for (size_t i = 0; i < files.size() && !halo; i++)
+			halo = ZipHasFile(files[i], "acs/halodoomgamemodes.o");
+		FILE *t = halo ? fopen("app0:/vita-halodoom.pk3", "rb") : NULL;
 		if (t != NULL) { fclose(t); files.push_back("app0:/vita-halodoom.pk3"); }
+		Vita_BootLog("launcher: HaloDoom %s", halo ? "found: loading vita-halodoom.pk3" : "not loaded");
 	}
 	if (!files.empty())
 	{
