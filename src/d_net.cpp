@@ -1940,7 +1940,8 @@ void TryRunTics (void)
 #ifdef __vita__
 			// Level changes and the like (gameaction) load data and touch
 			// the renderer: leave them to the main thread's next frame.
-			if (Vita_OnLogicThread() && (gameaction != ga_nothing || gamestate != GS_LEVEL))
+			extern bool Vita_NeedMainTic;
+			if (Vita_OnLogicThread() && (gameaction != ga_nothing || gamestate != GS_LEVEL || Vita_NeedMainTic))
 				break;
 #endif
 			{

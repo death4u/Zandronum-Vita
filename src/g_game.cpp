@@ -1566,9 +1566,50 @@ void Vita_TestNextMap()
 	G_ChangeLevel(next, 0, CHANGELEVEL_NOINTERMISSION);
 }
 
+#ifdef __vita__
+extern bool Vita_OnLogicThread();
+bool Vita_NeedMainTic;	// the logic thread left a tic to the main thread (see below)
+// test: the console player dies N tics into the level and "presses use" 2 s later
+CVAR(Int, vita_testreborn, 0, 0)
+CVAR(Bool, vita_testnofix, false, 0)	// test: old behaviour (reload on the logic thread)
+static void Vita_TestReborn()
+{
+	if (vita_testreborn <= 0 || gamestate != GS_LEVEL || !playeringame[consoleplayer]) return;
+	player_t *p = &players[consoleplayer];
+	if (level.maptime == vita_testreborn && p->mo != NULL && p->health > 0)
+	{
+		Vita_BootLog("test: killing the player");
+		P_DamageMobj(p->mo, NULL, NULL, 1000000, NAME_Suicide);
+	}
+	if (level.maptime == vita_testreborn + 70 && p->playerstate == PST_DEAD)
+	{
+		Vita_BootLog("test: respawn requested (%s thread)", Vita_OnLogicThread() ? "logic" : "main");
+		p->playerstate = PST_REBORN;
+	}
+}
+#endif
 void G_Ticker ()
 {
 #ifdef __vita__
+	Vita_TestReborn();
+	{
+		if (!Vita_OnLogicThread()) Vita_NeedMainTic = false;
+		else
+		{
+			// 0051: single player, dead, use pressed: G_DoReborn reloads the
+			// level right away (G_InitNew). That must not run on the logic
+			// thread while the main thread draws the old level (0049/0050
+			// crashes after getting killed): this tic is left to the main
+			// thread's next frame.
+			if (!vita_testnofix && NETWORK_GetState() == NETSTATE_SINGLE && !(level.flags2 & LEVEL2_ALLOWRESPAWN))
+				for (int vi = 0; vi < MAXPLAYERS; vi++)
+					if (playeringame[vi] && (players[vi].playerstate == PST_REBORN || players[vi].playerstate == PST_REBORNNOINVENTORY))
+					{
+						Vita_NeedMainTic = true;
+						return;
+					}
+		}
+	}
 	Vita_AutoBots();
 #endif
 	int i;
@@ -1608,6 +1649,17 @@ void G_Ticker ()
 		AddCommandString (toggle_fullscreen);
 	}
 
+#ifdef __vita__
+	// 0051: a reborn just above can set gameaction (single player: dying
+	// and pressing use reloads the level). Level loads, save loads and new
+	// games must never run on the logic thread while the main thread is
+	// drawing the old level (0049/0050 crashes after getting killed): leave
+	// the rest of this tic to the main thread's next frame.
+	{
+		extern bool Vita_OnLogicThread();
+		if (gameaction != ga_nothing && Vita_OnLogicThread()) return;
+	}
+#endif
 	// do things to change the game state
 	oldgamestate = gamestate;
 	while (gameaction != ga_nothing)

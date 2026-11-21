@@ -141,11 +141,12 @@ void Vita_SetFrameAllowsOverlap(bool allow)
 	FrameAllowsOverlap = allow;
 }
 
+extern bool Vita_NeedMainTic;
 bool Vita_ParallelAllowed()
 {
 	return FrameAllowsOverlap && vita_parallel && !Vita_Overlap && !Vita_LogicDone
 		&& (NETWORK_GetState() == NETSTATE_SINGLE || NETWORK_GetState() == NETSTATE_SINGLE_MULTIPLAYER)
-		&& gamestate == GS_LEVEL && gameaction == ga_nothing && !demoplayback;
+		&& gamestate == GS_LEVEL && gameaction == ga_nothing && !demoplayback && !Vita_NeedMainTic;
 }
 
 //==========================================================================
