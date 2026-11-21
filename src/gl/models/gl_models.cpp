@@ -350,7 +350,7 @@ static int ModelThreadFunc(void *)
 {
 	// 0047: off the game's cores (an SDL thread starts at the game's priority
 	// on any core; parsing a big MD3 took 0.1-2.7 s)
-	{ extern void Vita_ThreadToCore2(int), Vita_RegisterThread(const char *); Vita_ThreadToCore2(32); Vita_RegisterThread("model loader"); }
+	{ extern void Vita_ThreadToCore2(int), Vita_RegisterThread(const char *); Vita_ThreadToCore2(36); Vita_RegisterThread("model loader"); }
 	for (;;)
 	{
 		SDL_SemWait(ModelQueueSem);

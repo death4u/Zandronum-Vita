@@ -33,7 +33,13 @@ struct FVitaBucket
 	bool LightTex;			// light pass: Uv = surface texture (unit 0), Uv2 = light texture (unit 1)
 	TArray<float> Xyz, Uv, Uv2;	// triangles
 	TArray<unsigned> Rgba;	// one colour per vertex
+	TArray<float> Nrm;		// shader lights (0048): normal per vertex
+	TArray<class ADynamicLight *> Lights;	// shader lights: lights touching the bucket's surfaces
 };
+bool Vita_ShaderLightsOn();
+void Vita_ShaderAddLights(FVitaBucket *b, struct FLightNode *h0, struct FLightNode *h1);
+void Vita_ShaderNormal(const float *p, unsigned n, float *out);
+bool Vita_ShaderDrawBucket(FVitaBucket *b, unsigned piece);
 
 struct FVitaWallBatch
 {
@@ -114,7 +120,8 @@ static inline void VitaGL_End()
 	if (!VitaWalls.Collecting) { glEnd(); return; }
 	// triangle fan -> triangles
 	unsigned n = VitaWalls.FanXyz.Size() / 3;
-	if ((VitaWalls.LightHead[0] != NULL || VitaWalls.LightHead[1] != NULL) && n >= 3)
+	const bool vsl = Vita_ShaderLightsOn();
+	if (!vsl && (VitaWalls.LightHead[0] != NULL || VitaWalls.LightHead[1] != NULL) && n >= 3)
 	{
 		const float *f = &VitaWalls.FanXyz[0], *t = &VitaWalls.FanUv[0];
 		// plane from the corners farthest apart (fans can have split points)
@@ -153,6 +160,14 @@ static inline void VitaGL_End()
 			uv[0] = t[0]; uv[1] = t[1]; uv += 2;
 			*rgba++ = color;
 		}
+	}
+	if (vsl)
+	{
+		float nm[3];
+		Vita_ShaderNormal(fx, n, nm);
+		float *np = &b->Nrm[b->Nrm.Reserve(tris * 9)];
+		for (unsigned i = 0; i < tris * 3; i++, np += 3) { np[0] = nm[0]; np[1] = nm[1]; np[2] = nm[2]; }
+		if (VitaWalls.LightHead[0] != NULL || VitaWalls.LightHead[1] != NULL) Vita_ShaderAddLights(b, VitaWalls.LightHead[0], VitaWalls.LightHead[1]);
 	}
 	Vita_SurfNote(b, vfirst, tris * 3, false);
 }

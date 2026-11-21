@@ -9291,13 +9291,16 @@ int DLevelScript::RunScript ()
 	if (!Vita_PerfDetail)
 	{
 		// one run over 40 ms is logged (0039: 190-260 ms ACS spikes in fights)
-		const unsigned long long vt0 = Vita_PerfNow();
+		extern unsigned long long Vita_ThreadIoUs();
+		const unsigned long long vt0 = Vita_PerfNow(), vio0 = Vita_ThreadIoUs();
+		const unsigned vops0 = Vita_PcodeTotal;
 		const int vr = RunScriptInner();
 		const unsigned long long vdt = Vita_PerfNow() - vt0;
 		Vita_NoteTickScript(ScriptPresentation(script).GetChars(), vdt);
 		if (vdt > 40000)
-			Vita_BootLog("slow script: %s %llu ms, activator %s", ScriptPresentation(script).GetChars(), vdt / 1000,
-				activator != NULL ? activator->GetClass()->TypeName.GetChars() : "-");
+			Vita_BootLog("slow script: %s %llu ms (memory card %llu ms), activator %s", ScriptPresentation(script).GetChars(), vdt / 1000,
+				(Vita_ThreadIoUs() - vio0) / 1000, activator != NULL ? activator->GetClass()->TypeName.GetChars() : "-");
+		(void)vops0;
 		return vr;
 	}
 	static TMap<int, const char *> names;

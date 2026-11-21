@@ -504,6 +504,7 @@ static void Vita_DrawBucket(FVitaBucket *b)
 	// vitaGL draws arrays through a 16-bit index list of 0xC000 entries:
 	// bigger draws read past it (garbage, crashes), so draw in pieces.
 	const unsigned piece = 0xC000 / 3 * 3 - 3;
+	if (!two && Vita_ShaderDrawBucket(b, piece)) return;
 	for (unsigned start = 0; start < total; start += piece)
 	{
 		const unsigned n = total - start < piece ? total - start : piece;
@@ -652,6 +653,8 @@ void Vita_FlushWalls()
 			VitaBuckets[i]->Uv2.Clear();
 			VitaBuckets[i]->Uv.Clear();
 			VitaBuckets[i]->Rgba.Clear();
+			VitaBuckets[i]->Nrm.Clear();
+			VitaBuckets[i]->Lights.Clear();
 		}
 	}
 	VitaBucketsUsed = 0;
@@ -978,7 +981,7 @@ void GLWall::Draw(int pass)
 		Vita_BatchSurface(gltexture, Colormap.colormap, flags & 3, false, r, g, b);
 		}
 		VitaWalls.LightHead[0] = VitaWalls.LightHead[1] = NULL;
-		if (Vita_VertexLightsOn() && seg->sidedef != NULL)
+		if ((Vita_VertexLightsOn() || Vita_ShaderLightsOn()) && seg->sidedef != NULL)
 		{
 			if (!(seg->sidedef->Flags & WALLF_POLYOBJ)) { VitaWalls.LightHead[0] = seg->sidedef->lighthead[0]; VitaWalls.LightHead[1] = seg->sidedef->lighthead[1]; }
 			else if (sub) { VitaWalls.LightHead[0] = sub->lighthead[0]; VitaWalls.LightHead[1] = sub->lighthead[1]; }
@@ -986,7 +989,7 @@ void GLWall::Draw(int pass)
 		VitaWalls.Collecting = true;
 		{
 			VITA_PERF_D(VPERF_WEMIT);
-			const bool vcache = VitaWalls.LightHead[0] == NULL && VitaWalls.LightHead[1] == NULL;
+			const bool vcache = VitaWalls.LightHead[0] == NULL && VitaWalls.LightHead[1] == NULL && !Vita_ShaderLightsOn();
 			if (!vcache || !Vita_SurfTry(seg, this == NULL ? NULL : (const void *)(uintptr_t)type, 0x100 | (unsigned)(ztop[0] * 4.f) << 9,
 				Vita_BatchStateSig(Vita_WallGeomSig(this))))
 			{

@@ -117,6 +117,7 @@ struct FPerfSnap
 	char Callers[256];
 	unsigned WallHits, WallMisses, SurfHits, SurfMisses;
 	unsigned long long IoMain, IoLogic;
+	unsigned ShaderDraws, ShaderLights;
 };
 static FPerfSnap PerfSnap;
 static unsigned long long Vita_PerfGpuQueryUs;
@@ -131,7 +132,7 @@ static void Vita_PerfFormat(FPerfSnap &S)
 			"[perf] %.1f fps, worst frame %.0f ms | per frame (ms): logic %.1f (players %.1f [bot AI %.1f, weapons %.1f, move %.1f, use %.1f], thinkers %.1f, hud %.1f, bot aim %.1f, particles %.1f), 3D %.1f (bsp %.1f, opaque %.1f [sky %.1f, batch draws %.1f], waiting for logic %.1f, decals %.1f, portals+sky %.1f, translucent %.1f, models %.1f [expand %.1f draw %.1f bind %.1f]), 2D+swap %.1f (swap %.1f)"
 			" | in %.0f s: %d texture uploads %.0f ms (decode %.0f ms), %d warp updates %.0f ms, %d model loads %.0f ms | logic thread: start delay %.1f, run %.1f | heap reserved %u MB + %u MB outside (objects %u MB, gc %.1f ms/frame)"
 #ifndef NO_GL
-			", vitaGL free RAM %u MB CDRAM %u MB, immediate-mode pool peak %u of %u KB | kept between frames: walls %u%%, wall vertices %u%% | memory card waits per frame: main %.1f ms, logic %.1f ms"
+			", vitaGL free RAM %u MB CDRAM %u MB, immediate-mode pool peak %u of %u KB | kept between frames: walls %u%%, wall vertices %u%% | memory card waits per frame: main %.1f ms, logic %.1f ms | lit batches per frame %.1f (%.1f lights each)"
 #endif
 			"\n",
 			S.Frames * 1e6 / S.Period, S.Worst / 1000.0,
@@ -148,7 +149,7 @@ static void Vita_PerfFormat(FPerfSnap &S)
 			S.LogicStartDelay * f / 1000.0, S.LogicRunTime * f / 1000.0,
 			S.HeapMB, S.BigKB >> 10, S.ObjMB, S.GCTime * f / 1000.0
 #ifndef NO_GL
-			, S.VglRam, S.VglVram, (S.PoolPeak >> 10), S.PoolSize, S.WallHits + S.WallMisses ? S.WallHits * 100 / (S.WallHits + S.WallMisses) : 0, S.SurfHits + S.SurfMisses ? S.SurfHits * 100 / (S.SurfHits + S.SurfMisses) : 0, S.IoMain * f / 1000.0, S.IoLogic * f / 1000.0
+			, S.VglRam, S.VglVram, (S.PoolPeak >> 10), S.PoolSize, S.WallHits + S.WallMisses ? S.WallHits * 100 / (S.WallHits + S.WallMisses) : 0, S.SurfHits + S.SurfMisses ? S.SurfHits * 100 / (S.SurfHits + S.SurfMisses) : 0, S.IoMain * f / 1000.0, S.IoLogic * f / 1000.0, S.ShaderDraws * f, S.ShaderDraws ? (double)S.ShaderLights / S.ShaderDraws : 0.0
 #endif
 			);
 		Vita_ConsoleWrite(line);
@@ -284,7 +285,9 @@ static void Vita_PerfSnapshot(int frames, unsigned long long period, unsigned lo
 		S.WallHits = Vita_WallCacheHits; S.WallMisses = Vita_WallCacheMisses; S.SurfHits = Vita_SurfHits; S.SurfMisses = Vita_SurfMisses;
 		Vita_WallCacheHits = Vita_WallCacheMisses = Vita_SurfHits = Vita_SurfMisses = 0;
 		extern unsigned long long Vita_IoUsMain, Vita_IoUsLogic;
-		S.IoMain = Vita_IoUsMain; S.IoLogic = Vita_IoUsLogic; Vita_IoUsMain = Vita_IoUsLogic = 0;
+		S.IoMain = Vita_IoUsMain; S.IoLogic = Vita_IoUsLogic;
+		extern unsigned Vita_ShaderDraws, Vita_ShaderLightSum;
+		S.ShaderDraws = Vita_ShaderDraws; S.ShaderLights = Vita_ShaderLightSum;
 	}
 	memcpy(S.Acc, Vita_PerfAcc, sizeof(S.Acc));
 	memcpy(S.Calls, Vita_PerfCalls, sizeof(S.Calls));
@@ -360,6 +363,16 @@ void Vita_PerfFrame()
 	memset(PerfClassHash, 0, sizeof(PerfClassHash));
 	for (int i = 0; i < VPERF_COUNT; i++) { Vita_PerfAcc[i] = 0; Vita_PerfCalls[i] = 0; }
 	Vita_GCTime = 0; Vita_LogicStartDelay = 0; Vita_LogicRunTime = 0;
+	{
+		// 0048: reset every window like the other counters (0047 reset them only
+		// when a report was taken, so skipped windows piled up)
+		extern unsigned long long Vita_IoUsMain, Vita_IoUsLogic;
+		extern unsigned Vita_WallCacheHits, Vita_WallCacheMisses, Vita_SurfHits, Vita_SurfMisses;
+		Vita_IoUsMain = Vita_IoUsLogic = 0;
+		extern unsigned Vita_ShaderDraws, Vita_ShaderLightSum;
+		Vita_ShaderDraws = Vita_ShaderLightSum = 0;
+		Vita_WallCacheHits = Vita_WallCacheMisses = Vita_SurfHits = Vita_SurfMisses = 0;
+	}
 	frames = 0;
 	worst = 0;
 	{

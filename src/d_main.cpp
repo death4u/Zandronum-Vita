@@ -171,13 +171,15 @@ EXTERN_CVAR(Bool, hud_althud)
 void DrawHUD();
 #ifdef __vita__
 // [Vita] Logs parts of the 2D/HUD step that take over 50 ms (0038: one 4 s frame there).
-static unsigned long long Vita2DMark;
+static unsigned long long Vita2DMark, Vita2DIo;
 static void Vita_2D(const char *part)
 {
-	const unsigned long long now = sceKernelGetProcessTimeWide();
+	extern unsigned long long Vita_ThreadIoUs();
+	const unsigned long long now = sceKernelGetProcessTimeWide(), io = Vita_ThreadIoUs();
 	if (part != NULL && Vita2DMark != 0 && now - Vita2DMark > 50000)
-		Vita_BootLog("slow 2D: %s %llu ms", part, (now - Vita2DMark) / 1000);
+		Vita_BootLog("slow 2D: %s %llu ms (memory card %llu ms)", part, (now - Vita2DMark) / 1000, (io - Vita2DIo) / 1000);
 	Vita2DMark = now;
+	Vita2DIo = io;
 }
 #define VITA_2D(p) Vita_2D(p)
 #else

@@ -27,7 +27,8 @@
 #include "gl/textures/gl_material.h"
 #include "gl/utility/gl_geometric.h"
 
-CVAR(Bool, vita_wallcache, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// 0048: off (user: glitches). Renamed so saved configs don't keep it on.
+CVAR(Bool, vita_keepwalls, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 EXTERN_CVAR(Bool, gl_seamless)
 EXTERN_CVAR(Bool, gl_mirrors)
 
@@ -83,7 +84,7 @@ static bool SectorCacheable(const sector_t *s)
 bool Vita_WallCacheTry(seg_t *seg, sector_t *front, sector_t *back, subsector_t *sub, unsigned &sigout)
 {
 	sigout = 0;
-	if (!vita_wallcache || seg->sidedef == NULL || seg->linedef == NULL) return false;
+	if (!vita_keepwalls || seg->sidedef == NULL || seg->linedef == NULL) return false;
 	if (seg->sidedef->Flags & WALLF_POLYOBJ) return false;
 	if (seg->linedef->special == Line_Horizon || seg->linedef->special == Line_Mirror) return false;
 	if (!SectorCacheable(front) || !SectorCacheable(back)) return false;

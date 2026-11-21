@@ -14,7 +14,8 @@
 #include "gl/renderer/gl_colormap.h"
 #include "gl/scene/gl_vitawallbatch.h"
 
-CVAR(Bool, vita_surfcache, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// 0048: off (user: glitches). Renamed so saved configs don't keep it on.
+CVAR(Bool, vita_keepwallverts, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 struct FVitaSurfEntry
 {
@@ -68,7 +69,7 @@ static FVitaSurfEntry *Find(const void *a, const void *b, unsigned kind, unsigne
 bool Vita_SurfTry(const void *a, const void *b, unsigned kind, unsigned sig)
 {
 	Recording = false;
-	if (!vita_surfcache) return false;
+	if (!vita_keepwallverts) return false;
 	if (Entries.Size() > 40000 || Arena.Size() > 2u * 1024 * 1024) Vita_SurfCacheClear();	// at most 8 MB of vertices
 	if (Arena.Max() == 0) Arena.Grow(2u * 1024 * 1024 + 65536);	// one block, no doubling reallocations
 	unsigned slot;

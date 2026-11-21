@@ -1164,7 +1164,7 @@ static VitaSample *DecodeCurrent;
 
 static int DecodeThreadFunc(void *)
 {
-	Vita_MoveToCore2(35);
+	Vita_MoveToCore2(34);
 	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("sound decoder"); }
 	for (;;)
 	{

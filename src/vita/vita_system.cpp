@@ -137,7 +137,8 @@ static int Vita_LogThreadFunc(SceSize, void *)
 static void Vita_LogStartThread()
 {
 	VitaLogSema = sceKernelCreateSema("vita_log", 0, 0, 0x7fffffff, NULL);
-	SceUID t = sceKernelCreateThread("vita_log", Vita_LogThreadFunc, 0x10000100 + 40, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+	SceUID t = sceKernelCreateThread("vita_log", Vita_LogThreadFunc, 0x10000100 + 5,	// 0048: first on its core (it sleeps nearly all the time); at +40 it got no CPU for seconds
+		 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
 	if (VitaLogSema >= 0 && t >= 0)
 	{
 		VitaLogThread = t;
@@ -774,3 +775,12 @@ void Vita_SetMainThread() {}	// (Vita_MainThreadId is set at start-up)
 extern "C" SceSSize __wrap_sceIoRead(SceUID fd, void *buf, SceSize nbyte) { FVitaIoTimer t; return __real_sceIoRead(fd, buf, nbyte); }
 extern "C" SceUID __wrap_sceIoOpen(const char *file, int flags, SceMode mode) { FVitaIoTimer t; return __real_sceIoOpen(file, flags, mode); }
 extern "C" SceOff __wrap_sceIoLseek(SceUID fd, SceOff offset, int whence) { FVitaIoTimer t; return __real_sceIoLseek(fd, offset, whence); }
+
+// Memory-card time of the calling thread so far (main or logic thread; 0 for others).
+unsigned long long Vita_ThreadIoUs()
+{
+	const SceUID me = sceKernelGetThreadId();
+	if (me == Vita_MainThreadId) return Vita_IoUsMain;
+	if (Vita_OnLogicThread()) return Vita_IoUsLogic;
+	return 0;
+}

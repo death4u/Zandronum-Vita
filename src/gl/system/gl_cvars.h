@@ -34,7 +34,8 @@ EXTERN_CVAR(Bool, gl_forcemultipass)
 #ifdef __vita__
 EXTERN_CVAR(Bool, vita_multipasslights)
 EXTERN_CVAR(Bool, vita_vertexlights)
-#define GL_MULTIPASS_LIGHTS (vita_multipasslights && !vita_vertexlights)
+bool Vita_ShaderLightsOn();
+#define GL_MULTIPASS_LIGHTS (vita_multipasslights && !vita_vertexlights && !Vita_ShaderLightsOn())
 #else
 #define GL_MULTIPASS_LIGHTS true
 #endif

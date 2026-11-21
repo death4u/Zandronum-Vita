@@ -251,6 +251,7 @@ public:
 	void VitaGetFog(bool &on, PalEntry &c, float &d) const { on = mFogEnabled; c = mFogColor; d = mFogDensity; }
 	void VitaSetFog(bool on, PalEntry c, float d) { mFogEnabled = on; mFogColor = c; mFogDensity = d; }
 	int VitaGetBlendEquation() const { return mBlendEquation; }
+	void VitaGetAlpha(bool &test, float &thr) const { test = mAlphaTest; thr = mAlphaThreshold; }
 	void VitaSetBlendEquation(int eq) { mBlendEquation = eq; }
 
 	void BlendFunc(int src, int dst)

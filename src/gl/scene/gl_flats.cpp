@@ -300,7 +300,8 @@ static void Vita_AddSubsectorToBatch(GLFlat *flat, subsector_t * sub, const FVit
 	unsigned n = sub->numlines;
 	if (n < 3) return;
 	vertex_t *v0 = sub->firstline[0].v1;
-	if ((sub->lighthead[0] != NULL || sub->lighthead[1] != NULL) && Vita_VertexLightsOn())
+	const bool vsl = Vita_ShaderLightsOn();
+	if (!vsl && (sub->lighthead[0] != NULL || sub->lighthead[1] != NULL) && Vita_VertexLightsOn())
 	{
 		// lit: per-vertex light, big triangles split
 		float pts[3][3], uvs[3][2];
@@ -358,6 +359,18 @@ unlit:
 			rgba[0] = rgba[1] = rgba[2] = color;
 			rgba += 3;
 			prev = cur; zp = zc; up_ = uc; vp_ = vc;
+		}
+		if (vsl)
+		{
+			// the plane's normal (GL coordinates), facing the camera
+			float tri[9] = { b->Xyz[b->Xyz.Size() - 9], b->Xyz[b->Xyz.Size() - 8], b->Xyz[b->Xyz.Size() - 7],
+				b->Xyz[b->Xyz.Size() - 6], b->Xyz[b->Xyz.Size() - 5], b->Xyz[b->Xyz.Size() - 4],
+				b->Xyz[b->Xyz.Size() - 3], b->Xyz[b->Xyz.Size() - 2], b->Xyz[b->Xyz.Size() - 1] };
+			float nm[3];
+			Vita_ShaderNormal(tri, 3, nm);
+			float *np = &b->Nrm[b->Nrm.Reserve(tris * 9)];
+			for (unsigned i = 0; i < tris * 3; i++, np += 3) { np[0] = nm[0]; np[1] = nm[1]; np[2] = nm[2]; }
+			if (sub->lighthead[0] != NULL || sub->lighthead[1] != NULL) Vita_ShaderAddLights(b, sub->lighthead[0], sub->lighthead[1]);
 		}
 	}
 	flatvertices += n;

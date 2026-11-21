@@ -685,7 +685,7 @@ int Vita_TexCacheAsync(unsigned long long key, FVitaBuildFn build, void *ctx, in
 		JobMutex = sceKernelCreateMutex("vita_texbuild", 0, 0, NULL);
 		JobSema = sceKernelCreateSema("vita_texbuild", 0, 0, 0x7fffffff, NULL);
 		JobIdleSema = sceKernelCreateSema("vita_texidle", 0, 0, 0x7fffffff, NULL);
-		JobThread = sceKernelCreateThread("vita_texbuild", JobEntry, 0x10000100 + 30, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+		JobThread = sceKernelCreateThread("vita_texbuild", JobEntry, 0x10000100 + 24, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
 		if (JobMutex < 0 || JobSema < 0 || JobThread < 0 || JobIdleSema < 0) { JobThread = -1; return VTC_ASYNC_NO; }
 		sceKernelStartThread(JobThread, 0, NULL);
 	}
