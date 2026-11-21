@@ -107,6 +107,7 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 	// 1x1 transparent model placeholder sprites came out as white squares):
 	// small textures stay uncompressed.
 	else if (buffer != NULL && (w < 8 || h < 8)) texformat = GL_RGBA8;
+	else if (buffer != NULL && Vita_TexUncompressed) texformat = GL_RGBA8;
 #endif
 	if (glTexID==0) glGenTextures(1,&glTexID);
 	glBindTexture(GL_TEXTURE_2D, glTexID);
@@ -250,6 +251,7 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 		}
 	}
 	Vita_TexCachePending.Key = 0;
+	if (!vita_nodata) Vita_TexUncompressed = false;
 #else
 	{
 		VITA_PERF(VPERF_UPLOAD);

@@ -432,6 +432,12 @@ CVAR( Bool, sv_randomcoopstarts, false, CVAR_SERVERINFO | CVAR_GAMEPLAYSETTING )
 
 CCMD (weapnext)
 {
+#ifdef __vita__
+	EXTERN_CVAR(Bool, vita_weapdebug)
+	if (vita_weapdebug) Vita_BootLog("weapnext called: spectating %d, state %d, possession %d, consoleplayer %d, mo %s health %d, ready %s", (int)players[consoleplayer].bSpectating, (int)players[consoleplayer].playerstate, (int)!!(players[consoleplayer].cheats2 & CF2_POSSESSIONARTIFACT),
+		consoleplayer, players[consoleplayer].mo ? players[consoleplayer].mo->GetClass()->TypeName.GetChars() : "-", players[consoleplayer].mo ? players[consoleplayer].mo->health : -1,
+		players[consoleplayer].ReadyWeapon ? players[consoleplayer].ReadyWeapon->GetClass()->TypeName.GetChars() : "-");
+#endif
 	// [BB] No weapnext while playing a demo.
 	if ( CLIENTDEMO_IsPlaying( ) == true )
 	{
@@ -448,6 +454,32 @@ CCMD (weapnext)
 		return;
 
 	SendItemUse = players[consoleplayer].weapons.PickNextWeapon (&players[consoleplayer]);
+#ifdef __vita__
+	if (vita_weapdebug)
+	{
+		// [Vita] what weapnext saw (weapon switching in HaloDoom)
+		player_t *vp = &players[consoleplayer];
+		FString inv;
+		for (AInventory *it = vp->mo ? vp->mo->Inventory : NULL; it != NULL; it = it->Inventory)
+			if (it->IsKindOf(RUNTIME_CLASS(AWeapon)))
+				inv.AppendFormat(" %s(ammo %s)", it->GetClass()->TypeName.GetChars(),
+					static_cast<AWeapon *>(it)->CheckAmmo(AWeapon::EitherFire, false) ? "ok" : "none");
+		FString slots;
+		for (int sl = 0; sl < NUM_WEAPON_SLOTS; sl++)
+			if (vp->weapons.Slots[sl].Size() > 0)
+			{
+				slots.AppendFormat(" [%d:", sl);
+				for (int k = 0; k < vp->weapons.Slots[sl].Size(); k++)
+					slots.AppendFormat(" %s", vp->weapons.Slots[sl].GetWeapon(k) ? vp->weapons.Slots[sl].GetWeapon(k)->TypeName.GetChars() : "?");
+				slots += "]";
+			}
+		Vita_BootLog("weapnext slots:%s", slots.GetChars());
+		Vita_BootLog("weapnext: ready %s, pending %s -> %s | weapons:%s",
+			vp->ReadyWeapon ? vp->ReadyWeapon->GetClass()->TypeName.GetChars() : "-",
+			(vp->PendingWeapon != NULL && vp->PendingWeapon != WP_NOCHANGE) ? vp->PendingWeapon->GetClass()->TypeName.GetChars() : "-",
+			SendItemUse ? SendItemUse->GetClass()->TypeName.GetChars() : "-", inv.GetChars());
+	}
+#endif
  	// [BC] Option to display the name of the weapon being cycled to.
  	if ((displaynametags & 2) && StatusBar && SmallFont && SendItemUse)
  	{
@@ -1488,6 +1520,7 @@ CVAR(Int, vita_testnextmap, 0, 0)
 CVAR(String, vita_testmaps, "", 0)
 // Summoned in front of the player 3 s into each level (to look at it).
 CVAR(String, vita_testsummon, "", 0)
+CVAR(String, vita_testcmd, "", 0)
 // Test helper: flips vita_vertexlights every N seconds (compare screenshots).
 CVAR(Int, vita_testlighttoggle, 0, 0)
 void Vita_TestNextMap()
@@ -1499,6 +1532,12 @@ void Vita_TestNextMap()
 		EXTERN_CVAR(Bool, vita_lighttexpass)
 		vita_lighttexpass = !vita_lighttexpass;
 		Printf("light tex pass %d\n", (int)vita_lighttexpass);
+	}
+	{
+		// test helper: console command run 5 s into each level
+		static FString vita_tc;
+		EXTERN_CVAR(String, vita_testcmd)
+		if (levtics + 1 == 5 * TICRATE && *vita_testcmd != 0) AddCommandString((char *)*vita_testcmd);
 	}
 	if (++levtics == 3 * TICRATE && *vita_testsummon != 0)
 	{

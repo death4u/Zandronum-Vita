@@ -1355,7 +1355,10 @@ AWeapon *FWeaponSlots::PickNextWeapon(player_t *player)
 				return weap;
 			}
 		}
-		while ((slot != startslot || index != startindex) && slotschecked < NUM_WEAPON_SLOTS);
+		// [Vita] <= : with every weapon in one slot (HaloDoom), "<" stopped one
+		// slot short of wrapping back to the start slot, so a weapon earlier
+		// in that slot (the Magnum before the Assault Rifle) was never found.
+		while ((slot != startslot || index != startindex) && slotschecked <= NUM_WEAPON_SLOTS);
 	}
 	return player->ReadyWeapon;
 }
@@ -1415,7 +1418,10 @@ AWeapon *FWeaponSlots::PickPrevWeapon (player_t *player)
 				return weap;
 			}
 		}
-		while ((slot != startslot || index != startindex) && slotschecked < NUM_WEAPON_SLOTS);
+		// [Vita] <= : with every weapon in one slot (HaloDoom), "<" stopped one
+		// slot short of wrapping back to the start slot, so a weapon earlier
+		// in that slot (the Magnum before the Assault Rifle) was never found.
+		while ((slot != startslot || index != startindex) && slotschecked <= NUM_WEAPON_SLOTS);
 	}
 	return player->ReadyWeapon;
 }

@@ -103,12 +103,26 @@ static unsigned long long Fnv(unsigned long long h, const void *p, size_t n)
 	return h;
 }
 
+void Vita_IoBusy(unsigned ms);
+bool Vita_TexUncompressed;
+bool Vita_TexSmall(FTexture *tex)
+{
+	const int w = tex->GetWidth(), h = tex->GetHeight();
+	if ((tex->UseType == FTexture::TEX_MiscPatch || tex->UseType == FTexture::TEX_FontChar) && w * h <= 256 * 256) return true;
+	return w <= 64 && h <= 64;
+}
+
 unsigned long long Vita_TexCacheKey(FTexture *tex, int cm, int kind, bool hires, const void *trans, unsigned transsize)
 {
+	Vita_TexUncompressed = false;
 	if (!vita_texcache || tex == NULL || tex->bHasCanvas || tex->bWarped) return 0;
 	// Font characters have no name of their own and share their font's lump:
 	// glyphs of one size all got the same key (0035: text was garbled).
-	if (tex->UseType == FTexture::TEX_FontChar || (tex->Name[0] == 0 && tex->SourceLump < 0)) return 0;
+	if (tex->UseType == FTexture::TEX_FontChar || (tex->Name[0] == 0 && tex->SourceLump < 0)) { Vita_TexUncompressed = true; return 0; }
+	// HUD graphics and small textures: uploaded uncompressed and not cached
+	// (0041: compressing and saving 1500 HUD pictures kept the memory card
+	// busy for seconds after a level start, and every read waited for it).
+	if (Vita_TexSmall(tex)) { Vita_TexUncompressed = true; return 0; }
 	unsigned long long h = 14695981039346656037ull;
 	if (trans != NULL)
 	{
@@ -258,6 +272,7 @@ bool Vita_TexCacheLoad(unsigned long long key, FVitaTexCacheMeta &meta, bool mip
 	if (key == 0) return false;
 	if (LoadReady(key, meta, mipmaps)) return true;
 	if (!InIndex(key)) return false;
+	Vita_IoBusy(100);
 	char path[96];
 	CachePath(path, sizeof(path), key);
 	VFile *f = vfopen(path, "rb");
@@ -372,17 +387,31 @@ static void WriteFile(const FVtcWrite &w)
 	else { CacheWrites++; AddToIndex(w.Key); }
 }
 
+// [Vita] The game's own file reads go first: the writer waits while they
+// happen (and for a few seconds after a level starts) and leaves gaps
+// between files. 0041: cache writes after a level start made 4 KB sound
+// loads take 0.6 s and froze the game for seconds.
+volatile unsigned long long Vita_IoQuietUntil;
+void Vita_IoBusy(unsigned ms)
+{
+	const unsigned long long t = sceKernelGetProcessTimeWide() + ms * 1000ull;
+	if (t > Vita_IoQuietUntil) Vita_IoQuietUntil = t;
+}
+
 static int WriterEntry(SceSize, void *)
 {
 	for (;;)
 	{
 		sceKernelWaitSema(WriteSema, 1, NULL);
+		// (at most 6 s: streamed music reads all the time)
+		for (int waited = 0; waited < 300 && sceKernelGetProcessTimeWide() < Vita_IoQuietUntil; waited++) sceKernelDelayThread(20000);
 		sceKernelLockMutex(WriteMutex, 1, NULL);
 		if (WriteQueue.Size() == 0) { sceKernelUnlockMutex(WriteMutex, 1); continue; }
 		FVtcWrite w = WriteQueue[0];
 		WriteQueue.Delete(0);
 		sceKernelUnlockMutex(WriteMutex, 1);
 		WriteFile(w);
+		sceKernelDelayThread(15000);	// room for the game's reads
 		sceKernelLockMutex(WriteMutex, 1, NULL);
 		WriteQueueBytes -= w.Size;
 		sceKernelUnlockMutex(WriteMutex, 1);

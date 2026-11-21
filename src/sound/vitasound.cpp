@@ -1167,7 +1167,10 @@ SoundHandle VitaSoundRenderer::LoadSound(BYTE *sfxdata, int length)
 
 	bool compressed = length >= 4 && (memcmp(sfxdata, "OggS", 4) == 0 || memcmp(sfxdata, "fLaC", 4) == 0 ||
 		memcmp(sfxdata, "ID3", 3) == 0 || (sfxdata[0] == 0xFF && (sfxdata[1] & 0xE0) == 0xE0));
-	if (compressed && length >= 16384 && snd_vita_asyncdecode)
+	// [Vita] every compressed sound (0041: 8-15 KB MP3s took 100-200 ms each
+	// to decode on the thread that played them; before, only >= 16 KB were
+	// decoded in the background)
+	if (compressed && snd_vita_asyncdecode)
 	{
 		if (DecodeThread == NULL)
 		{

@@ -4681,6 +4681,7 @@ void P_SetupLevel (char *lumpname, int position)
 	times[17].Unclock();
 #ifdef __vita__
 	{ extern void Vita_LoadScreenEnd(); Vita_LoadScreenEnd(); }
+	{ extern void Vita_IoBusy(unsigned ms); Vita_IoBusy(5000); }	// no cache writes in the first seconds of a level
 #endif
 
 	// Reset announcer "frags/points left" variables.

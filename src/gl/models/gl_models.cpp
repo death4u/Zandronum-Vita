@@ -532,8 +532,10 @@ void Vita_FlushLevelMemory()
 			if ((unsigned)int(c->SoundID) < playing.Size()) playing[int(c->SoundID)] = true;
 			if ((unsigned)int(c->OrgID) < playing.Size()) playing[int(c->OrgID)] = true;
 		}
+		// short sounds (footsteps, pickups, impacts: lumps up to 32 KB) stay
+		// loaded: loading them again froze the start of every level
 		for (unsigned i = 1; i < S_sfx.Size(); i++)
-			if (S_sfx[i].data.isValid() && !playing[i]) { S_UnloadSound(&S_sfx[i]); sounds++; }
+			if (S_sfx[i].data.isValid() && !playing[i] && (S_sfx[i].lumpnum < 0 || Wads.LumpLength(S_sfx[i].lumpnum) > 32768)) { S_UnloadSound(&S_sfx[i]); sounds++; }
 	}
 	extern void VitaFreeNodePools();
 	VitaFreeNodePools();

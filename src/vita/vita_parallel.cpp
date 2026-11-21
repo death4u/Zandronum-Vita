@@ -50,6 +50,7 @@ unsigned long long Vita_ArchiveWaitLogicUs;
 void Vita_ArchiveLock()
 {
 	if (!LocksMade) MakeLocks();
+	{ extern void Vita_IoBusy(unsigned ms); Vita_IoBusy(100); }	// the cache writer waits
 	if (sceKernelTryLockLwMutex(&ArchiveMutex, 1) >= 0) return;
 	const unsigned long long t0 = sceKernelGetProcessTimeWide();
 	sceKernelLockLwMutex(&ArchiveMutex, 1, NULL);

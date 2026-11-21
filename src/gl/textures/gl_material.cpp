@@ -1301,14 +1301,16 @@ static void Vita_PreHudOne(FTexture *tex, void *data)
 
 void Vita_PrecacheHud(FTextureManager *tm)
 {
-	FVitaHudPre p = { sceKernelGetProcessTimeWide() + 8000000ull, 0, 0, false };
+	// fonts first, then HUD pictures up to 256x256 (uploaded uncompressed,
+	// no cache files), 2 s at most per level start
+	FVitaHudPre p = { sceKernelGetProcessTimeWide() + 2000000ull, 0, 0, false };
 	const unsigned long long t0 = sceKernelGetProcessTimeWide();
+	FFont::Vita_ForEachChar(Vita_PreHudOne, &p);
 	for (int i = 0; i < tm->NumTextures(); i++)
 	{
 		FTexture *tex = tm->ByIndex(i);
-		if (tex != NULL && tex->UseType == FTexture::TEX_MiscPatch) Vita_PreHudOne(tex, &p);
+		if (tex != NULL && tex->UseType == FTexture::TEX_MiscPatch && tex->GetWidth() * tex->GetHeight() <= 256 * 256) Vita_PreHudOne(tex, &p);
 	}
-	FFont::Vita_ForEachChar(Vita_PreHudOne, &p);
 	Vita_BootLog("precached %d HUD graphics and font characters in %llu ms (%d known%s)", p.done,
 		(sceKernelGetProcessTimeWide() - t0) / 1000, p.total, p.timeout ? ", rest left for later: time limit" : "");
 }

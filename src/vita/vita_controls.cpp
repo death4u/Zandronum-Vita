@@ -29,6 +29,7 @@
 #include "vita/vita_system.h"
 
 CVAR(Int, vita_holdtime, 300, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, vita_weapdebug, false, 0)
 
 #define VITA_PAD_BUTTONS 12
 #define CONTROLS_DIR "ux0:data/zandronum/controls"
@@ -87,6 +88,7 @@ static bool HoldBound(int button)
 bool Vita_PadButton(int button, bool down)
 {
 	if (button < 0 || button >= VITA_PAD_BUTTONS) return false;
+	{ EXTERN_CVAR(Bool, vita_weapdebug) if (vita_weapdebug) Vita_BootLog("pad button %d %s", button, down ? "down" : "up"); }
 	FPadButton &b = Pad[button];
 	const int tap = KEY_FIRSTJOYBUTTON + button, hold = tap + VITA_PAD_BUTTONS;
 	if (down)

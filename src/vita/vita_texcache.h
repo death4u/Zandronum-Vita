@@ -25,6 +25,10 @@ extern FVitaTexCachePending Vita_TexCachePending;
 // trans: the colours of a translation (bot/player colours), NULL for none;
 // translated textures are keyed by these, so they match in every session.
 unsigned long long Vita_TexCacheKey(FTexture *tex, int cm, int kind, bool hires, const void *trans = NULL, unsigned transsize = 0);
+// Set by Vita_TexCacheKey: the texture is uploaded uncompressed (HUD
+// pictures, font characters, textures up to 64x64); LoadImage clears it.
+extern bool Vita_TexUncompressed;
+bool Vita_TexSmall(FTexture *tex);
 bool Vita_TexCacheLoad(unsigned long long key, FVitaTexCacheMeta &meta, bool mipmaps);
 bool Vita_TexCacheCompressUpload(const unsigned char *rgba, int w, int h, bool mipmaps);
 void Vita_TexCacheSaveRaw(const unsigned char *rgba, int w, int h);
