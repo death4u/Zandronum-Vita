@@ -44,10 +44,16 @@ static void MakeLocks()
 	LocksMade = true;
 }
 
+// [Vita] Time the logic thread spends waiting for the archive lock (shown in
+// the slow-tick log: 0039 had weapon pickups taking 75-125 ms per tick).
+unsigned long long Vita_ArchiveWaitLogicUs;
 void Vita_ArchiveLock()
 {
 	if (!LocksMade) MakeLocks();
+	if (sceKernelTryLockLwMutex(&ArchiveMutex, 1) >= 0) return;
+	const unsigned long long t0 = sceKernelGetProcessTimeWide();
 	sceKernelLockLwMutex(&ArchiveMutex, 1, NULL);
+	if (Vita_OnLogicThread()) Vita_ArchiveWaitLogicUs += sceKernelGetProcessTimeWide() - t0;
 }
 
 void Vita_ArchiveUnlock()

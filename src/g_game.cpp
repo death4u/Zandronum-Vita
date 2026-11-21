@@ -1496,9 +1496,9 @@ void Vita_TestNextMap()
 	if (gamestate != GS_LEVEL) { tics = levtics = 0; return; }
 	if (vita_testlighttoggle > 0 && (levtics % (vita_testlighttoggle * TICRATE)) == 0 && levtics > 0)
 	{
-		EXTERN_CVAR(Bool, vita_vertexlights)
-		vita_vertexlights = !vita_vertexlights;
-		Printf("vertex lights %d\n", (int)vita_vertexlights);
+		EXTERN_CVAR(Bool, vita_lighttexpass)
+		vita_lighttexpass = !vita_lighttexpass;
+		Printf("light tex pass %d\n", (int)vita_lighttexpass);
 	}
 	if (++levtics == 3 * TICRATE && *vita_testsummon != 0)
 	{

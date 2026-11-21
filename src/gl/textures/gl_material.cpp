@@ -1203,10 +1203,25 @@ FMaterial * FMaterial::ValidateTexture(FTextureID no, bool translate)
 //
 //==========================================================================
 
+#ifdef __vita__
+// [Vita] HUD graphics and font characters stay loaded across level changes:
+// building them again (each text colour separately) made the first HUD
+// messages of every level take up to 0.6 s.
+static bool Vita_KeepOnFlush(FTexture *tex)
+{
+	if (tex == NULL) return false;
+	if (tex->UseType != FTexture::TEX_FontChar && tex->UseType != FTexture::TEX_MiscPatch) return false;
+	return tex->GetWidth() * tex->GetHeight() <= 256 * 256;
+}
+#endif
+
 void FMaterial::FlushAll()
 {
 	for(int i=mMaterials.Size()-1;i>=0;i--)
 	{
+#ifdef __vita__
+		if (Vita_KeepOnFlush(mMaterials[i]->tex)) continue;
+#endif
 		mMaterials[i]->Clean(true);
 	}
 	// This is for shader layers. All shader layers must be managed by the texture manager
@@ -1214,6 +1229,9 @@ void FMaterial::FlushAll()
 	for(int i=TexMan.NumTextures()-1;i>=0;i--)
 	{
 		FGLTexture *gltex = TexMan.ByIndex(i)->gl_info.SystemTexture;
+#ifdef __vita__
+		if (Vita_KeepOnFlush(TexMan.ByIndex(i))) continue;
+#endif
 		if (gltex != NULL) gltex->Clean(true);
 	}
 }

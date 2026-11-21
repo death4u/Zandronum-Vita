@@ -58,7 +58,9 @@
 #include "gl/utility/gl_clock.h"
 #include "gl/utility/gl_templates.h"
 #include "gl/scene/gl_vitawallbatch.h"
+#include "gl/textures/gl_hwtexture.h"
 #include "vita/vita_system.h"
+#include "vita/vita_perf.h"
 
 EXTERN_CVAR(Bool, gl_seamless)
 
@@ -487,6 +489,18 @@ static void Vita_DrawBucket(FVitaBucket *b)
 		b->Tex->Bind(b->CmColormap, b->Flags, 0);
 	}
 	gl_RenderState.Apply();
+	const bool two = b->LightTex && b->Uv2.Size() == b->Uv.Size();
+	if (two)
+	{
+		glActiveTexture(GL_TEXTURE1);
+		glEnable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, Vita_LightTexId);
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		glClientActiveTexture(GL_TEXTURE1);
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		glClientActiveTexture(GL_TEXTURE0);
+		glActiveTexture(GL_TEXTURE0);
+	}
 	// vitaGL draws arrays through a 16-bit index list of 0xC000 entries:
 	// bigger draws read past it (garbage, crashes), so draw in pieces.
 	const unsigned piece = 0xC000 / 3 * 3 - 3;
@@ -495,8 +509,71 @@ static void Vita_DrawBucket(FVitaBucket *b)
 		const unsigned n = total - start < piece ? total - start : piece;
 		glVertexPointer(3, GL_FLOAT, 0, &b->Xyz[start * 3]);
 		glTexCoordPointer(2, GL_FLOAT, 0, &b->Uv[start * 2]);
+		if (two)
+		{
+			glClientActiveTexture(GL_TEXTURE1);
+			glTexCoordPointer(2, GL_FLOAT, 0, &b->Uv2[start * 2]);
+			glClientActiveTexture(GL_TEXTURE0);
+		}
 		glColorPointer(4, GL_UNSIGNED_BYTE, 0, &b->Rgba[start]);
 		glDrawArrays(GL_TRIANGLES, 0, n);
+	}
+	if (two)
+	{
+		glClientActiveTexture(GL_TEXTURE1);
+		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+		glClientActiveTexture(GL_TEXTURE0);
+		glActiveTexture(GL_TEXTURE1);
+		glDisable(GL_TEXTURE_2D);
+		glActiveTexture(GL_TEXTURE0);
+	}
+}
+
+unsigned Vita_LightTexId;
+CVAR(Bool, vita_lighttexpass, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+// Light pass fan (see VitaWalls.LightPassMode): light UVs from the fan,
+// surface UVs from the position.
+void Vita_EmitLightPassFan()
+{
+	FVitaWallBatch &w = VitaWalls;
+	const unsigned n = w.FanXyz.Size() / 3;
+	float su[16], sv[16];
+	if (n > 16 || n < 3) return;
+	for (unsigned i = 0; i < n; i++)
+	{
+		const float x = w.FanXyz[i * 3], z = w.FanXyz[i * 3 + 1], y = w.FanXyz[i * 3 + 2];
+		if (w.LightPassMode == 1)
+		{
+			float s = ((x - w.WallX1) * w.WallDX + (y - w.WallY1) * w.WallDY) * w.WallInvLen2;
+			s = s < 0 ? 0 : s > 1 ? 1 : s;
+			const float zt = w.WallZTop[0] + (w.WallZTop[1] - w.WallZTop[0]) * s;
+			const float zb = w.WallZBot[0] + (w.WallZBot[1] - w.WallZBot[0]) * s;
+			float t = zt != zb ? (zt - z) / (zt - zb) : 0.f;
+			const float ut = w.WallUTop[0] + (w.WallUTop[1] - w.WallUTop[0]) * s, vt = w.WallVTop[0] + (w.WallVTop[1] - w.WallVTop[0]) * s;
+			const float ub = w.WallUBot[0] + (w.WallUBot[1] - w.WallUBot[0]) * s, vb = w.WallVBot[0] + (w.WallVBot[1] - w.WallVBot[0]) * s;
+			su[i] = ut + (ub - ut) * t;
+			sv[i] = vt + (vb - vt) * t;
+		}
+		else
+		{
+			const float u = x / 64.f, v = -y / 64.f;
+			su[i] = w.FlatA * u + w.FlatB * v + w.FlatC;
+			sv[i] = w.FlatD * u + w.FlatE * v + w.FlatF;
+		}
+	}
+	FVitaBucket *b = w.Cur;
+	for (unsigned k = 1; k + 1 < n; k++)
+	{
+		const unsigned idx[3] = { 0, k, k + 1 };
+		for (int j = 0; j < 3; j++)
+		{
+			const unsigned i = idx[j];
+			b->Xyz.Push(w.FanXyz[i * 3]); b->Xyz.Push(w.FanXyz[i * 3 + 1]); b->Xyz.Push(w.FanXyz[i * 3 + 2]);
+			b->Uv.Push(su[i]); b->Uv.Push(sv[i]);
+			b->Uv2.Push(w.FanUv[i * 2]); b->Uv2.Push(w.FanUv[i * 2 + 1]);
+			b->Rgba.Push(w.Color);
+		}
 	}
 }
 
@@ -504,6 +581,7 @@ void Vita_FlushWalls()
 {
 	if (VitaWalls.Open && VitaBucketsUsed > 0)
 	{
+		VITA_PERF(VPERF_BATCHDRAW);
 		bool fogon; PalEntry fc; float fd;
 		gl_RenderState.VitaGetFog(fogon, fc, fd);
 		const int eq = gl_RenderState.VitaGetBlendEquation();
@@ -512,7 +590,14 @@ void Vita_FlushWalls()
 		glEnableClientState(GL_COLOR_ARRAY);
 		// buckets using the caller's texture state first, before any bind
 		for (unsigned i = 0; i < VitaBucketsUsed; i++) if (VitaBuckets[i]->Tex == NULL) Vita_DrawBucket(VitaBuckets[i]);
-		for (unsigned i = 0; i < VitaBucketsUsed; i++) if (VitaBuckets[i]->Tex != NULL) Vita_DrawBucket(VitaBuckets[i]);
+		bool lighttex = false;
+		for (unsigned i = 0; i < VitaBucketsUsed; i++) if (VitaBuckets[i]->Tex != NULL) { Vita_DrawBucket(VitaBuckets[i]); lighttex |= VitaBuckets[i]->LightTex; }
+		if (lighttex)
+		{
+			// the light pass's other surfaces expect the light texture on unit 0
+			glBindTexture(GL_TEXTURE_2D, Vita_LightTexId);
+			FHardwareTexture::lastbound[0] = Vita_LightTexId;
+		}
 		glDisableClientState(GL_VERTEX_ARRAY);
 		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 		glDisableClientState(GL_COLOR_ARRAY);
@@ -523,6 +608,7 @@ void Vita_FlushWalls()
 		for (unsigned i = 0; i < VitaBucketsUsed; i++)
 		{
 			VitaBuckets[i]->Xyz.Clear();
+			VitaBuckets[i]->Uv2.Clear();
 			VitaBuckets[i]->Uv.Clear();
 			VitaBuckets[i]->Rgba.Clear();
 		}
@@ -558,18 +644,19 @@ void Vita_BatchCheck()
 	const int cm = tex != NULL ? VitaWalls.NextCm : 0, flags = tex != NULL ? VitaWalls.NextFlags : 0;
 	if (VitaWalls.ForceNoFog) on = false;
 	if (!on) { fc = 0; fd = 0; }
+	const bool lt = VitaWalls.LightPassMode != 0;
 	FVitaBucket *cur = VitaWalls.Cur;
 	if (cur == NULL || cur->Tex != tex || cur->CmColormap != cm || cur->Flags != flags || cur->FogOn != on
-		|| cur->FogColor != fc || cur->FogDensity != fd || cur->BlendEq != eq)
+		|| cur->FogColor != fc || cur->FogDensity != fd || cur->BlendEq != eq || cur->LightTex != lt)
 	{
-		unsigned h = (unsigned)(((uintptr_t)tex >> 4) * 2654435761u) ^ (unsigned)cm * 31 ^ (unsigned)flags * 17 ^ (unsigned)fc.d * 7 ^ (unsigned)(fd * 100000.f) * 13 ^ (unsigned)eq ^ (on ? 0x5555 : 0);
+		unsigned h = (unsigned)(((uintptr_t)tex >> 4) * 2654435761u) ^ (unsigned)cm * 31 ^ (unsigned)flags * 17 ^ (unsigned)fc.d * 7 ^ (unsigned)(fd * 100000.f) * 13 ^ (unsigned)eq ^ (on ? 0x5555 : 0) ^ (lt ? 0xa5a5 : 0);
 		h &= 511;
 		cur = NULL;
 		for (int probe = 0; probe < 512; probe++, h = (h + 1) & 511)
 		{
 			if (VitaBucketGen[h] != VitaGen) break;	// empty slot
 			FVitaBucket *b = VitaBuckets[VitaBucketHash[h] - 1];
-			if (b->Tex == tex && b->CmColormap == cm && b->Flags == flags && b->FogOn == on && b->FogColor == fc && b->FogDensity == fd && b->BlendEq == eq) { cur = b; break; }
+			if (b->Tex == tex && b->CmColormap == cm && b->Flags == flags && b->FogOn == on && b->FogColor == fc && b->FogDensity == fd && b->BlendEq == eq && b->LightTex == lt) { cur = b; break; }
 		}
 		if (cur == NULL)
 		{
@@ -583,7 +670,7 @@ void Vita_BatchCheck()
 			if (VitaBucketsUsed == VitaBuckets.Size()) VitaBuckets.Push(new FVitaBucket);
 			cur = VitaBuckets[VitaBucketsUsed++];
 			cur->Tex = tex; cur->CmColormap = cm; cur->Flags = flags;
-			cur->FogOn = on; cur->FogColor = fc; cur->FogDensity = fd; cur->BlendEq = eq;
+			cur->FogOn = on; cur->FogColor = fc; cur->FogDensity = fd; cur->BlendEq = eq; cur->LightTex = lt;
 			VitaBucketGen[h] = VitaGen;
 			VitaBucketHash[h] = VitaBucketsUsed;
 		}
@@ -600,7 +687,7 @@ CVAR(Bool, gl_vita_batchwalls, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 // [Vita] Dynamic lights per vertex
 //
 //==========================================================================
-CVAR(Bool, vita_vertexlights, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, vita_vertexlights, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Float, vita_vertexlights_split, 96.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)	// split edges longer than this near a light
 
 bool Vita_VertexLightsOn()
@@ -856,7 +943,22 @@ void GLWall::Draw(int pass)
 		else if (!(seg->sidedef->Flags & WALLF_POLYOBJ)) node = seg->sidedef->lighthead[pass==GLPASS_LIGHT_ADDITIVE];
 		else if (sub) node = sub->lighthead[pass==GLPASS_LIGHT_ADDITIVE];
 		else node = NULL;
-		Vita_BatchSurface(NULL, 0, 0, true);
+		EXTERN_CVAR(Bool, vita_lighttexpass)
+		if (vita_lighttexpass && pass == GLPASS_LIGHT && gltexture != NULL)
+		{
+			// light x surface texture in one go (no separate texture pass)
+			Vita_BatchSurface(gltexture, Colormap.colormap, flags & 3, true);
+			VitaWalls.LightPassMode = 1;
+			VitaWalls.WallX1 = glseg.x1; VitaWalls.WallY1 = glseg.y1;
+			VitaWalls.WallDX = glseg.x2 - glseg.x1; VitaWalls.WallDY = glseg.y2 - glseg.y1;
+			const float l2 = VitaWalls.WallDX * VitaWalls.WallDX + VitaWalls.WallDY * VitaWalls.WallDY;
+			VitaWalls.WallInvLen2 = l2 > 0 ? 1.f / l2 : 0.f;
+			VitaWalls.WallZTop[0] = ztop[0]; VitaWalls.WallZTop[1] = ztop[1];
+			VitaWalls.WallZBot[0] = zbottom[0]; VitaWalls.WallZBot[1] = zbottom[1];
+			VitaWalls.WallUTop[0] = uplft.u; VitaWalls.WallVTop[0] = uplft.v; VitaWalls.WallUTop[1] = uprgt.u; VitaWalls.WallVTop[1] = uprgt.v;
+			VitaWalls.WallUBot[0] = lolft.u; VitaWalls.WallVBot[0] = lolft.v; VitaWalls.WallUBot[1] = lorgt.u; VitaWalls.WallVBot[1] = lorgt.v;
+		}
+		else Vita_BatchSurface(NULL, 0, 0, true);
 		VitaWalls.Collecting = true;
 		for (; node; node = node->nextLight)
 		{
@@ -867,6 +969,7 @@ void GLWall::Draw(int pass)
 			}
 		}
 		VitaWalls.Collecting = false;
+		VitaWalls.LightPassMode = 0;
 		return;
 	}
 	Vita_FlushWalls();

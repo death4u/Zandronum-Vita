@@ -72,6 +72,8 @@
 #include "gl/models/gl_models.h"
 #include "gl/scene/gl_clipper.h"
 #include "gl/scene/gl_drawinfo.h"
+#include "gl/scene/gl_vitawallbatch.h"
+#include "gl/textures/gl_hwtexture.h"
 #include "gl/scene/gl_portal.h"
 #include "gl/shaders/gl_shader.h"
 #include "gl/textures/gl_material.h"
@@ -478,9 +480,29 @@ void FGLRenderer::RenderScene(int recursion)
 	gl_drawinfo->drawlists[GLDL_LIGHTFOGMASKED].Sort();
 	gl_drawinfo->drawlists[GLDL_LIGHTFOGMASKED].Draw(pass);
 
+#ifdef __vita__
+	// [Vita] vita_lighttexpass: lit surfaces are drawn textured with the
+	// sector light like everything else, then each light adds
+	// light x texture (two texture units) - no untextured base pass and no
+	// separate texture pass, one draw of every lit surface less.
+	EXTERN_CVAR(Bool, vita_lighttexpass)
+	const bool vita_ltp = vita_lighttexpass && GL_MULTIPASS_LIGHTS && !gl_dynlight_shader && gl_lights && gl_texture && pass == GLPASS_PLAIN;
+	if (vita_ltp)
+	{
+		gl_RenderState.EnableBrightmap(true);
+		gl_drawinfo->drawlists[GLDL_LIGHT].Draw(pass);
+		gl_drawinfo->drawlists[GLDL_LIGHTBRIGHT].Draw(pass);
+		gl_drawinfo->drawlists[GLDL_LIGHTMASKED].Draw(pass);
+		gl_RenderState.EnableBrightmap(false);
+	}
+#endif
+
 	// And now the multipass stuff
 	if (GL_MULTIPASS_LIGHTS && !gl_dynlight_shader && gl_lights)
 	{
+#ifdef __vita__
+		if (!vita_ltp) {
+#endif
 		// First pass: empty background with sector light only
 
 		// Part 1: solid geometry. This is set up so that there are no transparent parts
@@ -500,6 +522,9 @@ void FGLRenderer::RenderScene(int recursion)
 		gl_drawinfo->drawlists[GLDL_LIGHTMASKED].Draw(GLPASS_BASE_MASKED);
 		gl_RenderState.EnableBrightmap(false);
 		gl_RenderState.SetTextureMode(TM_MODULATE);
+#ifdef __vita__
+		}
+#endif
 
 
 		// second pass: draw lights (on fogged surfaces they are added to the textures!)
@@ -508,6 +533,9 @@ void FGLRenderer::RenderScene(int recursion)
 		{
 			if (gl_SetupLightTexture())
 			{
+#ifdef __vita__
+				Vita_LightTexId = FHardwareTexture::lastbound[0];
+#endif
 				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 				glDepthFunc(GL_EQUAL);
 				if (glset.lightmode == 8) glVertexAttrib1f(VATTR_LIGHTLEVEL, 1.0f); // Korshun.
@@ -525,7 +553,11 @@ void FGLRenderer::RenderScene(int recursion)
 		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
 		gl_RenderState.EnableFog(false);
 		glDepthFunc(GL_LEQUAL);
+#ifdef __vita__
+		if (gl_texture && !vita_ltp)
+#else
 		if (gl_texture) 
+#endif
 		{
 			gl_RenderState.EnableAlphaTest(false);
 			gl_drawinfo->drawlists[GLDL_LIGHT].Sort();

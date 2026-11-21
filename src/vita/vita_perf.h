@@ -40,6 +40,7 @@ enum
 	VPERF_MEXPAND,		// part of MODELS: unpacking/blending vertices
 	VPERF_MDRAW,		// part of MODELS: draw calls
 	VPERF_MBIND,		// part of MODELS: skin binds
+	VPERF_BATCHDRAW,	// drawing the collected wall/flat batches (vitaGL draw calls)
 	VPERF_COUNT
 };
 

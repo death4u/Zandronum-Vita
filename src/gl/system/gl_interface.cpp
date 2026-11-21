@@ -189,6 +189,12 @@ void gl_LoadExtensions()
 		vita_multipasslights = true;	// off before 0032: Schism and other maps lit by dynamic lights were dark
 		vita_glconfig = 4;
 	}
+	if (vita_glconfig < 5)
+	{
+		EXTERN_CVAR(Bool, vita_vertexlights)
+		vita_vertexlights = false;	// 0039's per-vertex lights cost more than they saved (hardware, Lockup)
+		vita_glconfig = 5;
+	}
 #else
 
 	const char *version = (const char*)glGetString(GL_VERSION);

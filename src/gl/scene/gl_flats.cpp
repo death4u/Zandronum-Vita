@@ -540,7 +540,16 @@ void GLFlat::Draw(int pass)
 			else
 			{
 				gl_SetFog((255+lightlevel)>>1, 0, &Colormap, false);
-				Vita_BatchSurface(NULL, 0, 0, true);
+				EXTERN_CVAR(Bool, vita_lighttexpass)
+				if (vita_lighttexpass && pass == GLPASS_LIGHT && gltexture != NULL)
+				{
+					Vita_BatchSurface(gltexture, Colormap.colormap, 0, true);
+					FVitaUVXform fx = Vita_PlaneUV(&plane, gltexture);
+					VitaWalls.LightPassMode = 2;
+					VitaWalls.FlatA = fx.a; VitaWalls.FlatB = fx.b; VitaWalls.FlatC = fx.c;
+					VitaWalls.FlatD = fx.d; VitaWalls.FlatE = fx.e; VitaWalls.FlatF = fx.f;
+				}
+				else Vita_BatchSurface(NULL, 0, 0, true);
 				VitaWalls.Collecting = true;
 				for (int i=0; i<sector->subsectorcount; i++)
 				{
@@ -557,6 +566,7 @@ void GLFlat::Draw(int pass)
 						DrawSubsectorLights(node->sub, pass);
 				}
 				VitaWalls.Collecting = false;
+				VitaWalls.LightPassMode = 0;
 				return;
 			}
 			Vita_BatchCheck();

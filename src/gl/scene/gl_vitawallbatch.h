@@ -30,7 +30,8 @@ struct FVitaBucket
 	PalEntry FogColor;
 	float FogDensity;
 	int BlendEq;
-	TArray<float> Xyz, Uv;	// triangles
+	bool LightTex;			// light pass: Uv = surface texture (unit 0), Uv2 = light texture (unit 1)
+	TArray<float> Xyz, Uv, Uv2;	// triangles
 	TArray<unsigned> Rgba;	// one colour per vertex
 };
 
@@ -51,7 +52,15 @@ struct FVitaWallBatch
 	// polygons are split and lit per vertex
 	struct FLightNode *LightHead[2];
 	bool ForceNoFog;		// lit polygon: fog baked into its vertex colours
+	// Light pass with the surface texture (vita_lighttexpass): the vertex
+	// texture coordinates are the light's; the surface's are worked out
+	// from the position. 1 = wall (Wall* below), 2 = flat (Flat*).
+	int LightPassMode;
+	float WallX1, WallY1, WallDX, WallDY, WallInvLen2, WallZTop[2], WallZBot[2];
+	float WallUTop[2], WallVTop[2], WallUBot[2], WallVBot[2];
+	float FlatA, FlatB, FlatC, FlatD, FlatE, FlatF;
 };
+extern unsigned Vita_LightTexId;	// GL texture of the light pass (gllight.png)
 extern FVitaWallBatch VitaWalls;
 extern unsigned Vita_CurColor;	// last glColor (linker wrappers in vita_perf.cpp)
 void Vita_FlushWalls();
@@ -110,6 +119,12 @@ static inline void VitaGL_End()
 			Vita_EndPolyLights();
 			return;
 		}
+	}
+	if (VitaWalls.LightPassMode != 0)
+	{
+		extern void Vita_EmitLightPassFan();
+		Vita_EmitLightPassFan();
+		return;
 	}
 	for (unsigned k = 1; k + 1 < n; k++)
 	{

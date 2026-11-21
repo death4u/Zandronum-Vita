@@ -9277,7 +9277,16 @@ int DLevelScript::RunScript ()
 #ifdef __vita__
 	// [Vita] Profile ACS time per script (see vita/vita_perf).
 	if (!Vita_PerfDetail)
-		return RunScriptInner();
+	{
+		// one run over 40 ms is logged (0039: 190-260 ms ACS spikes in fights)
+		const unsigned long long vt0 = Vita_PerfNow();
+		const int vr = RunScriptInner();
+		const unsigned long long vdt = Vita_PerfNow() - vt0;
+		if (vdt > 40000)
+			Vita_BootLog("slow script: %s %llu ms, activator %s", ScriptPresentation(script).GetChars(), vdt / 1000,
+				activator != NULL ? activator->GetClass()->TypeName.GetChars() : "-");
+		return vr;
+	}
 	static TMap<int, const char *> names;
 	AActor *act = activator;
 	const bool bot = act != NULL && act->player != NULL && act->player->bIsBot;
@@ -9295,6 +9304,9 @@ int DLevelScript::RunScript ()
 	unsigned ops0 = Vita_PcodeTotal;
 	int result = RunScriptInner();
 	Vita_PerfOps = Vita_PcodeTotal - ops0;
+	if (Vita_PerfNow() - t0 > 40000)
+		Vita_BootLog("slow script: %s %llu ms, %u opcodes, activator %s", *name, (Vita_PerfNow() - t0) / 1000, Vita_PerfOps,
+			act != NULL ? act->GetClass()->TypeName.GetChars() : "-");
 	Vita_PerfThinker((const void *)(intptr_t)(0x7F000000 ^ key), *name, Vita_PerfNow() - t0);
 	Vita_PerfOps = 0;
 	return result;
