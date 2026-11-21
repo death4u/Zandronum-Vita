@@ -33,12 +33,58 @@ Config, saves, controls and logs are kept in `ux0:data/zandronum/`.
 
 ## Controls
 
-- Each game or mod combination keeps its own controls layout in `ux0:data/zandronum/controls/`. Changes made in the controls menu are saved automatically.
-- Buttons can have a tap action and a separate hold action.
-- **Start** opens the main menu.
-- **Holding Square** is *use* (open doors, press switches) in every game.
-- **Fire** restarts the level after you die in single player.
-- HaloDoom gets its own layout with HaloDoom's commands (reload, grenades, zoom, melee, grab weapon).
+Left stick moves, right stick looks.
+
+### All games (default layout)
+
+| Button | Action |
+|---|---|
+| R | Fire (also restarts the level after you die in single player) |
+| L | Alt fire |
+| Cross | Jump |
+| Circle | Crouch |
+| Square | Use (open doors, press switches); holding Square is use too |
+| Triangle | Next weapon |
+| D-pad left / right | Previous / next weapon |
+| D-pad down | Reload |
+| D-pad up | Automap |
+| Select | Scoreboard |
+| Start | Main menu |
+
+### HaloDoom
+
+HaloDoom is detected automatically and gets its own layout with HaloDoom's commands:
+
+| Button | Action |
+|---|---|
+| R | Fire |
+| L | Throw grenade |
+| Cross | Jump |
+| Circle | Melee |
+| Square | Tap: reload. Hold: pick up weapon / use |
+| Triangle | Switch weapon |
+| D-pad left | Switch grenade type |
+| D-pad down | Crouch (toggle) |
+| D-pad up | Zoom |
+| Select | Scoreboard |
+| Start | Main menu |
+
+### Menus, console and chat
+
+| Button | Action |
+|---|---|
+| D-pad | Move |
+| Cross | Accept |
+| Circle | Back |
+| Start | Close the menu |
+| L / R | Page up / down |
+| Square | Backspace |
+| Triangle | Opens the on-screen keyboard (console and chat) |
+
+### Changing the controls
+
+- Every button can have a tap action and a separate hold action. Holds are set in the controls menu by holding the button while binding.
+- Each game and mod combination keeps its own layout in `ux0:data/zandronum/controls/`. Changes are saved automatically.
 
 ## Building
 
