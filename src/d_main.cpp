@@ -1212,6 +1212,9 @@ drawfullconsole:
 		M_Drawer ();			// menu is drawn even on top of everything
 		VITA_2D("menu");
 		FStat::PrintStat ();
+#ifdef __vita__
+		{ extern void Vita_WarmupOverlay(); Vita_WarmupOverlay(); }
+#endif
 		screen->Update ();		// page flip or blit buffer
 		VITA_2D("screen update/swap");
 	}

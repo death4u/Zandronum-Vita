@@ -10,6 +10,7 @@
 #include "v_palette.h"
 #include "g_level.h"
 #include "vita/vita_system.h"
+#include "c_cvars.h"
 
 static unsigned long long LastDraw;
 static FString Title;
@@ -56,12 +57,63 @@ void Vita_LoadScreenBegin(const char *mapname)
 	Vita_LoadProgress("Map", 0, 0, true);
 }
 
+void Vita_WarmupBegin();
 void Vita_LoadScreenEnd()
 {
 	Active = false;
+	Vita_WarmupBegin();
 }
 
 bool Vita_LoadScreenActive()
 {
 	return Active;
+}
+
+// [Vita] 0046: level-start warm-up. The first seconds of a level (first
+// updates of every actor, first draws of everything in view, background
+// texture uploads) froze the game: Brutal Doom MAP01 had one 9.6 s frame
+// and ~6 s at 0-8 fps after the loading screen. The game now runs normally
+// under this screen until it has run 1 s of game time, the texture builder
+// is idle and 8 frames in a row took under 200 ms, i.e. no more freezes
+// (at most 10 s).
+CVAR(Bool, vita_levelwarmup, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+static bool Warmup;
+static unsigned long long WarmupStart, WarmupLastFrame;
+static int WarmupGoodFrames;
+extern bool Vita_TexBuildIdle();
+
+void Vita_WarmupBegin()
+{
+	if (!vita_levelwarmup || !stricmp(level.mapname, "TITLEMAP")) return;
+	Warmup = true;
+	WarmupStart = WarmupLastFrame = sceKernelGetProcessTimeWide();
+	WarmupGoodFrames = 0;
+}
+
+bool Vita_WarmupActive() { return Warmup; }
+
+// Called just before the frame is shown.
+void Vita_WarmupOverlay()
+{
+	if (!Warmup || screen == NULL || SmallFont == NULL) return;
+	const unsigned long long now = sceKernelGetProcessTimeWide();
+	const unsigned long long ft = now - WarmupLastFrame;
+	WarmupLastFrame = now;
+	if (ft < 200000) WarmupGoodFrames++; else WarmupGoodFrames = 0;
+	if (gamestate != GS_LEVEL || now - WarmupStart > 10000000ull ||
+		(level.maptime >= TICRATE && WarmupGoodFrames >= 8 && Vita_TexBuildIdle()))
+	{
+		Vita_BootLog("level start: game shown after %llu ms of warm-up (%d game tics)", (now - WarmupStart) / 1000, level.maptime);
+		Warmup = false;
+		return;
+	}
+	const int W = SCREENWIDTH, H = SCREENHEIGHT;
+	screen->Clear(0, 0, W, H, GPalette.BlackIndex, 0);
+	const int scale = CleanXfac;
+	FFont *big = BigFont != NULL ? BigFont : SmallFont;
+	FString title; title.Format("Loading %s", level.mapname);
+	const int ty = H / 2 - big->GetHeight() * scale - 24;
+	screen->DrawText(big, CR_GREEN, (W - big->StringWidth(title) * scale) / 2, ty, title, DTA_CleanNoMove, true, TAG_DONE);
+	const char *line = "Getting ready";
+	screen->DrawText(SmallFont, CR_GRAY, (W - SmallFont->StringWidth(line) * scale) / 2, H / 2 + 8, line, DTA_CleanNoMove, true, TAG_DONE);
 }

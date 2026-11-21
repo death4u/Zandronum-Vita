@@ -53,20 +53,40 @@ static void Vita_MkDir(const char *path)
 // stall every 15 s in 0040). Lines wait in a buffer per file; the thread
 // writes them out within a few ms. Before the thread runs (start-up) and
 // on fatal errors they are written directly.
+// [Vita] 0046: appending never waits. Each file has two buffers; writers
+// reserve space in the active one with an atomic add and copy their line in,
+// the log thread swaps buffers and waits (briefly) for writers still copying
+// into the old one. In 0045 writers took a kernel mutex, and while the log
+// thread holding it was pushed off its core, game threads waited 64-200 ms
+// per log line.
+struct FVitaLogBuf
+{
+	char Data[96 * 1024];
+	volatile unsigned Len;		// reserved bytes (may exceed the size: dropped)
+	volatile int Writers;		// writers still copying in
+};
 struct FVitaLogFile
 {
 	const char *Path;
-	char Buf[96 * 1024];
-	unsigned Len;
-	unsigned Dropped;
+	FVitaLogBuf Buf[2];
+	volatile int Active;
+	volatile unsigned Dropped;
 	bool Truncate;		// first write empties the file
 };
-static FVitaLogFile VitaLogs[2] = { { VITA_BOOT_LOG, {0}, 0, 0, false }, { VITA_DATA_ROOT "/console.txt", {0}, 0, 0, true } };
-static SceUID VitaLogMutex = -1, VitaLogSema = -1, VitaLogThread = -1;
+static FVitaLogFile VitaLogs[2];
+static void Vita_LogInitFiles()
+{
+	if (VitaLogs[0].Path != NULL) return;
+	VitaLogs[0].Path = VITA_BOOT_LOG;
+	VitaLogs[1].Path = VITA_DATA_ROOT "/console.txt";
+	VitaLogs[1].Truncate = true;
+}
+static SceUID VitaLogSema = -1, VitaLogThread = -1;
 static volatile int VitaLogPending;
 
 static void Vita_LogWriteDirect(FVitaLogFile &f, const char *text, unsigned len)
 {
+	Vita_LogInitFiles();
 	// Opened per write: Vita3K only commits a file's data when it is closed.
 	SceUID fd = sceIoOpen(f.Path, SCE_O_WRONLY | SCE_O_CREAT | (f.Truncate ? SCE_O_TRUNC : SCE_O_APPEND), 0666);
 	f.Truncate = false;
@@ -77,30 +97,35 @@ static void Vita_LogWriteDirect(FVitaLogFile &f, const char *text, unsigned len)
 	}
 }
 
-static char VitaLogOut[96 * 1024];
 static void Vita_LogFlushFile(int i)
 {
 	FVitaLogFile &f = VitaLogs[i];
-	sceKernelLockMutex(VitaLogMutex, 1, NULL);
-	unsigned len = f.Len;
-	if (len > 0) memcpy(VitaLogOut, f.Buf, len);
-	unsigned dropped = f.Dropped;
-	f.Len = 0;
-	f.Dropped = 0;
-	sceKernelUnlockMutex(VitaLogMutex, 1);
+	const int old = f.Active;
+	FVitaLogBuf &b = f.Buf[old];
+	if (b.Len == 0) return;
+	f.Buf[1 - old].Len = 0;
+	__atomic_store_n(&f.Active, 1 - old, __ATOMIC_SEQ_CST);
+	while (__atomic_load_n(&b.Writers, __ATOMIC_SEQ_CST) != 0) sceKernelDelayThread(100);
+	unsigned len = b.Len;
+	if (len > sizeof(b.Data)) len = sizeof(b.Data);
+	if (len > 0) Vita_LogWriteDirect(f, b.Data, len);
+	const unsigned dropped = __atomic_exchange_n(&f.Dropped, 0u, __ATOMIC_SEQ_CST);
 	if (dropped > 0)
-		len += snprintf(VitaLogOut + len, sizeof(VitaLogOut) - len, "(log: %u lines dropped, buffer full)\n", dropped);
-	if (len > 0) Vita_LogWriteDirect(f, VitaLogOut, len);
+	{
+		char msg[64];
+		int n = snprintf(msg, sizeof(msg), "(log: %u lines dropped, buffer full)\n", dropped);
+		Vita_LogWriteDirect(f, msg, n);
+	}
+	b.Len = 0;
 }
 
 static int Vita_LogThreadFunc(SceSize, void *)
 {
+	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("log writer"); }
 	for (;;)
 	{
 		sceKernelWaitSema(VitaLogSema, 1, NULL);
-		// [Vita] 0045: written at most once a second. Before, every line
-		// opened, wrote and closed the file on the memory card, competing
-		// with the game's own reads.
+		// written at most once a second (0045)
 		sceKernelDelayThread(1000000);
 		VitaLogPending = 0;
 		for (int i = 0; i < 2; i++) Vita_LogFlushFile(i);
@@ -110,10 +135,9 @@ static int Vita_LogThreadFunc(SceSize, void *)
 
 static void Vita_LogStartThread()
 {
-	VitaLogMutex = sceKernelCreateMutex("vita_log", 0, 0, NULL);
 	VitaLogSema = sceKernelCreateSema("vita_log", 0, 0, 0x7fffffff, NULL);
 	SceUID t = sceKernelCreateThread("vita_log", Vita_LogThreadFunc, 0x10000100 + 40, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
-	if (VitaLogMutex >= 0 && VitaLogSema >= 0 && t >= 0)
+	if (VitaLogSema >= 0 && t >= 0)
 	{
 		VitaLogThread = t;
 		sceKernelStartThread(t, 0, NULL);
@@ -128,10 +152,22 @@ static void Vita_LogAppend(int file, const char *text, unsigned len)
 		Vita_LogWriteDirect(f, text, len);
 		return;
 	}
-	sceKernelLockMutex(VitaLogMutex, 1, NULL);
-	if (f.Len + len <= sizeof(f.Buf)) { memcpy(f.Buf + f.Len, text, len); f.Len += len; }
-	else f.Dropped++;
-	sceKernelUnlockMutex(VitaLogMutex, 1);
+	for (;;)
+	{
+		const int a = __atomic_load_n(&f.Active, __ATOMIC_SEQ_CST);
+		FVitaLogBuf &b = f.Buf[a];
+		__atomic_add_fetch(&b.Writers, 1, __ATOMIC_SEQ_CST);
+		if (__atomic_load_n(&f.Active, __ATOMIC_SEQ_CST) != a)
+		{	// swapped meanwhile: use the new one
+			__atomic_sub_fetch(&b.Writers, 1, __ATOMIC_SEQ_CST);
+			continue;
+		}
+		const unsigned pos = __atomic_fetch_add(&b.Len, len, __ATOMIC_SEQ_CST);
+		if (pos + len <= sizeof(b.Data)) memcpy(b.Data + pos, text, len);
+		else __atomic_add_fetch(&f.Dropped, 1u, __ATOMIC_SEQ_CST);
+		__atomic_sub_fetch(&b.Writers, 1, __ATOMIC_SEQ_CST);
+		break;
+	}
 	if (!VitaLogPending) { VitaLogPending = 1; sceKernelSignalSema(VitaLogSema, 1); }
 }
 
@@ -244,6 +280,7 @@ extern "C" void Vita_EarlyInit(void)
 	atexit(Vita_LogExit);
 	Vita_StartEventWatch();
 	Vita_LogStartThread();
+	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("main"); }
 
 	scePowerSetArmClockFrequency(444);
 	scePowerSetBusClockFrequency(222);
@@ -445,9 +482,23 @@ static size_t Vita_BigSize(void *p)
 
 unsigned Vita_BigBlocksKB() { return Vita_BigTotal; }
 
+// [Vita] 0046: time spent in malloc/free/realloc by the thread whose actor
+// update is being watched (slow-tick line), to tell whether its waits are on
+// newlib's single malloc lock.
+extern volatile SceUID Vita_TickWatchThread;
+unsigned long long Vita_TickMallocUs;
+unsigned Vita_TickMallocCalls;
+struct FVitaMallocTimer
+{
+	unsigned long long t0;
+	FVitaMallocTimer() : t0(Vita_TickWatchThread >= 0 && Vita_TickWatchThread == sceKernelGetThreadId() ? sceKernelGetProcessTimeWide() : 0) {}
+	~FVitaMallocTimer() { if (t0) { Vita_TickMallocUs += sceKernelGetProcessTimeWide() - t0; Vita_TickMallocCalls++; } }
+};
+
 extern "C" void __wrap_free(void *p)
 {
 	if (p == NULL) return;
+	FVitaMallocTimer vt;
 	if (Vita_BigCount != 0 && Vita_BigFree(p) != 0) return;
 	__real_free(p);
 }
@@ -460,6 +511,7 @@ extern "C" size_t __wrap_malloc_usable_size(void *p)
 
 extern "C" void *__wrap_malloc(size_t size)
 {
+	FVitaMallocTimer vt;
 	void *p = __real_malloc(size);
 	if (p == NULL && size >= (1u << 20))
 	{
@@ -473,6 +525,7 @@ extern "C" void *__wrap_malloc(size_t size)
 
 extern "C" void *__wrap_realloc(void *old, size_t size)
 {
+	FVitaMallocTimer vt;
 	size_t oldbig = Vita_BigSize(old);
 	if (oldbig != 0)
 	{

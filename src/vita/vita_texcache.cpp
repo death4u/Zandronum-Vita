@@ -449,6 +449,7 @@ void Vita_IoBusy(unsigned ms)
 
 static int WriterEntry(SceSize, void *)
 {
+	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("texcache writer"); }
 	for (;;)
 	{
 		sceKernelWaitSema(WriteSema, 1, NULL);
@@ -655,6 +656,7 @@ static void RunJob(const FVtcJob &jobin)
 
 static int JobEntry(SceSize, void *)
 {
+	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("texture builder"); }
 	for (;;)
 	{
 		sceKernelWaitSema(JobSema, 1, NULL);
@@ -738,6 +740,16 @@ static bool LoadReady(unsigned long long key, FVitaTexCacheMeta &meta, bool mipm
 }
 
 // Waits for the builder (level change: the textures it works on are about to be freed).
+// [Vita] 0046: nothing queued or being built (the level-start warm-up waits for this).
+bool Vita_TexBuildIdle()
+{
+	if (JobThread < 0) return true;
+	sceKernelLockMutex(JobMutex, 1, NULL);
+	const bool idle = Jobs.Size() == 0 && JobBusy == 0;
+	sceKernelUnlockMutex(JobMutex, 1);
+	return idle;
+}
+
 void Vita_TexCacheAsyncDrain()
 {
 	if (JobThread < 0) return;

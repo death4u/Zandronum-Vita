@@ -21,9 +21,11 @@ CUSTOM_CVAR(Bool, vita_perfdetail, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 bool Vita_PerfDetail;
 
-// Without vita_perfdetail, every 5th 3-second window is profiled in detail
-// anyway, so play-test logs always say where the time goes.
-CVAR(Bool, vita_perfburst, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// With vita_perfbursts, every 5th 3-second window is profiled in detail.
+// 0046: off by default (renamed from vita_perfburst so saved configs don't
+// keep it on): the detailed windows and their report froze the game for
+// 230-460 ms every 15 s on the Vita.
+CVAR(Bool, vita_perfbursts, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 unsigned long long Vita_PerfAcc[VPERF_COUNT];
 
@@ -115,6 +117,7 @@ struct FPerfSnap
 	char Callers[256];
 };
 static FPerfSnap PerfSnap;
+static unsigned long long Vita_PerfGpuQueryUs;
 
 static void Vita_PerfFormat(FPerfSnap &S)
 {
@@ -255,7 +258,14 @@ static void Vita_PerfSnapshot(int frames, unsigned long long period, unsigned lo
 	S.GCTime = Vita_GCTime; S.LogicStartDelay = Vita_LogicStartDelay; S.LogicRunTime = Vita_LogicRunTime;
 	S.HeapMB = Vita_HeapReservedMB(); S.BigKB = Vita_BigBlocksKB(); S.ObjMB = (unsigned)(GC::AllocBytes >> 20);
 #ifndef NO_GL
-	S.VglRam = (unsigned)(vglMemFree(VGL_MEM_RAM) >> 20); S.VglVram = (unsigned)(vglMemFree(VGL_MEM_VRAM) >> 20);
+	{
+		// (0046: timed on its own; the report took 30-90 ms every 3 s)
+		const unsigned long long g0 = Vita_PerfNow();
+		static unsigned vram, vvram; static int age = 99;
+		if (++age >= 10) { age = 0; vram = (unsigned)(vglMemFree(VGL_MEM_RAM) >> 20); vvram = (unsigned)(vglMemFree(VGL_MEM_VRAM) >> 20); }
+		S.VglRam = vram; S.VglVram = vvram;
+		Vita_PerfGpuQueryUs = Vita_PerfNow() - g0;
+	}
 	S.PoolPeak = LegacyPoolPeak; S.PoolSize = (unsigned)(legacy_pool_size >> 10);
 #endif
 	if (S.Detail)
@@ -304,7 +314,7 @@ void Vita_PerfFrame()
 		const unsigned long long vs0 = Vita_PerfNow();
 		Vita_PerfSnapshot(frames, period, worst);
 		const unsigned long long vs = Vita_PerfNow() - vs0;
-		if (vs > 5000) Vita_BootLog("profiler report took %llu ms", vs / 1000);
+		if (vs > 5000) Vita_BootLog("profiler report took %llu ms (GPU memory query %llu ms)", vs / 1000, Vita_PerfGpuQueryUs / 1000);
 	}
 #ifndef NO_GL
 	{ extern unsigned Vita_GLCount[8]; memset(Vita_GLCount, 0, sizeof(Vita_GLCount)); memset(Vita_GLPhaseDraws, 0, sizeof(Vita_GLPhaseDraws)); }
@@ -321,7 +331,7 @@ void Vita_PerfFrame()
 		static int window = 0;
 		window++;
 		if (!vita_perfdetail)
-			Vita_PerfDetail = vita_perfburst && (window % 5) == 4;
+			Vita_PerfDetail = vita_perfbursts && (window % 5) == 4;
 	}
 #ifndef NO_GL
 	LegacyPoolPeak = 0;
@@ -438,6 +448,20 @@ volatile SceUID Vita_TickWatchThread = -1;	// set by the ticking thread; -1 = id
 static volatile unsigned Vita_TickSamples[3];	// running, ready, waiting
 static volatile SceUID Vita_TickWaitId;
 static volatile unsigned Vita_TickWaitType, Vita_TickWaitIdCount;
+// Game threads by name, so the watcher can say which ones ran while the
+// watched thread waited.
+struct FVitaNamedThread { SceUID Id; const char *Name; volatile unsigned RunWhileWaiting; };
+static FVitaNamedThread Vita_Threads[16];
+static volatile int Vita_NumThreads;
+void Vita_RegisterThread(const char *name)
+{
+	const int n = __atomic_fetch_add(&Vita_NumThreads, 1, __ATOMIC_SEQ_CST);
+	if (n >= 16) return;
+	Vita_Threads[n].Name = name;
+	Vita_Threads[n].RunWhileWaiting = 0;
+	__atomic_store_n(&Vita_Threads[n].Id, sceKernelGetThreadId(), __ATOMIC_SEQ_CST);
+}
+
 static int Vita_TickWatchFunc(SceSize, void *)
 {
 	SceUID lastId = -1; unsigned lastCount = 0;
@@ -450,6 +474,18 @@ static int Vita_TickWatchFunc(SceSize, void *)
 		memset(&info, 0, sizeof(info));
 		info.size = sizeof(info);
 		if (sceKernelGetThreadInfo(t, &info) < 0) continue;
+		if (!(info.status & SCE_THREAD_RUNNING))
+		{
+			// who runs instead
+			const int n = Vita_NumThreads < 16 ? Vita_NumThreads : 16;
+			for (int i = 0; i < n; i++)
+			{
+				const SceUID id = Vita_Threads[i].Id;
+				if (id <= 0 || id == t) continue;
+				SceKernelThreadInfo oi; memset(&oi, 0, sizeof(oi)); oi.size = sizeof(oi);
+				if (sceKernelGetThreadInfo(id, &oi) >= 0 && (oi.status & SCE_THREAD_RUNNING)) Vita_Threads[i].RunWhileWaiting++;
+			}
+		}
 		if (info.status & SCE_THREAD_RUNNING) Vita_TickSamples[0]++;
 		else if (info.status & SCE_THREAD_READY) Vita_TickSamples[1]++;
 		else
@@ -475,13 +511,15 @@ void Vita_TickWatchBegin()
 	}
 	Vita_TickSamples[0] = Vita_TickSamples[1] = Vita_TickSamples[2] = 0;
 	Vita_TickWaitId = -1; Vita_TickWaitType = 0; Vita_TickWaitIdCount = 0;
+	for (int i = 0; i < 16; i++) Vita_Threads[i].RunWhileWaiting = 0;
 	Vita_TickLogUs = Vita_TickScriptStartUs = 0;
+	{ extern unsigned long long Vita_TickMallocUs; extern unsigned Vita_TickMallocCalls; Vita_TickMallocUs = 0; Vita_TickMallocCalls = 0; }
 	Vita_TickWatchThread = sceKernelGetThreadId();
 }
 void Vita_TickWatchEnd() { Vita_TickWatchThread = -1; }
 const char *Vita_TickWatchReport()
 {
-	static char buf[220];
+	static char buf[420];
 	char what[48] = "-";
 	if (Vita_TickWaitIdCount > 0)
 	{
@@ -491,7 +529,17 @@ const char *Vita_TickWatchReport()
 		else if (sceKernelGetSemaInfo(Vita_TickWaitId, &si) >= 0) snprintf(what, sizeof(what), "semaphore %s", si.name);
 		else snprintf(what, sizeof(what), "type %x id %x", Vita_TickWaitType, (unsigned)Vita_TickWaitId);
 	}
-	snprintf(buf, sizeof(buf), "samples every 2 ms: running %u, preempted %u, waiting %u (mostly on %s); log writing %llu ms, script starts %llu ms",
-		Vita_TickSamples[0], Vita_TickSamples[1], Vita_TickSamples[2], what, Vita_TickLogUs / 1000, Vita_TickScriptStartUs / 1000);
+	extern unsigned long long Vita_TickMallocUs; extern unsigned Vita_TickMallocCalls;
+	char others[96] = "";
+	{
+		size_t ol = 0;
+		const int n = Vita_NumThreads < 16 ? Vita_NumThreads : 16;
+		for (int i = 0; i < n && ol < sizeof(others) - 24; i++)
+			if (Vita_Threads[i].RunWhileWaiting > 0)
+				ol += snprintf(others + ol, sizeof(others) - ol, "%s%s %u", ol ? ", " : "", Vita_Threads[i].Name, Vita_Threads[i].RunWhileWaiting);
+		if (ol == 0) snprintf(others, sizeof(others), "none of the game's threads");
+	}
+	snprintf(buf, sizeof(buf), "samples every 2 ms: running %u, preempted %u, waiting %u (mostly on %s); memory allocation %llu ms in %u calls, log writing %llu ms, script starts %llu ms; running meanwhile: %s",
+		Vita_TickSamples[0], Vita_TickSamples[1], Vita_TickSamples[2], what, Vita_TickMallocUs / 1000, Vita_TickMallocCalls, Vita_TickLogUs / 1000, Vita_TickScriptStartUs / 1000, others);
 	return buf;
 }

@@ -181,6 +181,7 @@ unsigned long long Vita_LogicStartDelay, Vita_LogicRunTime;	// for the profiler
 static int LogicEntry(SceSize, void *)
 {
 	LogicThreadId = sceKernelGetThreadId();
+	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("logic"); }
 	for (;;)
 	{
 		sceKernelWaitSema(StartSema, 1, NULL);

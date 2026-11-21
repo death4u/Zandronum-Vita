@@ -868,12 +868,26 @@ void VitaSoundRenderer::WriteDump()
 
 //==========================================================================
 //
+// [Vita] 0046: SDL threads start at the creator's priority with no core
+// restriction, so the sound decoder and the music feeder could take a core
+// from the game threads while they worked (0045: game thread pushed off the
+// CPU for up to 40 ms at a time). They move themselves to the third core.
+#include <psp2/kernel/threadmgr.h>
+static void Vita_MoveToCore2(int prioOffset)
+{
+	const SceUID me = sceKernelGetThreadId();
+	sceKernelChangeThreadCpuAffinityMask(me, SCE_KERNEL_CPU_MASK_USER_2);
+	sceKernelChangeThreadPriority(me, 0x10000100 + prioOffset);
+}
+
 // Feeder thread: keeps every stream's ring buffer topped up.
 //
 //==========================================================================
 
 int VitaSoundRenderer::FeederThread(void *userdata)
 {
+	Vita_MoveToCore2(15);	// above the texture threads: music must not run dry
+	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("music feeder"); }
 	VitaSoundRenderer *self = (VitaSoundRenderer *)userdata;
 	while (!self->FeederQuit)
 	{
@@ -1150,6 +1164,8 @@ static VitaSample *DecodeCurrent;
 
 static int DecodeThreadFunc(void *)
 {
+	Vita_MoveToCore2(35);
+	{ extern void Vita_RegisterThread(const char *); Vita_RegisterThread("sound decoder"); }
 	for (;;)
 	{
 		SDL_SemWait(DecodeSem);
