@@ -1,0 +1,50 @@
+diff --git a/src/video/vita/SDL_vitavideo.c b/src/video/vita/SDL_vitavideo.c
+index 3e4701eb..eeef5ace 100644
+--- a/src/video/vita/SDL_vitavideo.c
++++ b/src/video/vita/SDL_vitavideo.c
+@@ -215,6 +215,7 @@ SDL_Rect **VITA_ListModes(_THIS, SDL_PixelFormat *format, Uint32 flags)
+     };
+     SDL_Rect **modes = VITA_modes;
+ 
++    (void)modes;
+     switch(format->BitsPerPixel)
+     {
+         case 8:
+@@ -222,7 +223,9 @@ SDL_Rect **VITA_ListModes(_THIS, SDL_PixelFormat *format, Uint32 flags)
+         case 16:
+         case 24:
+         case 32:
+-        return modes;
++        /* Any size works: the surface is a texture that gets centered or
++           scaled onto the 960x544 screen (SDL_VITA_SetVideoModeScaling). */
++        return (SDL_Rect **)-1;
+ 
+         default:
+         return (SDL_Rect **) -1;
+@@ -619,7 +622,16 @@ int VITA_GL_Init(_THIS)
+             default: gxm_ms = SCE_GXM_MULTISAMPLE_NONE; break;
+         }
+ 
+-        vglInitExtended(0, SCREEN_W, SCREEN_H, MEMORY_VITAGL_THRESHOLD, gxm_ms);
++        /* Immediate-mode (glBegin/glEnd) vertices need vitaGL's legacy pool;
++           with 0 every glVertex writes through a NULL pointer. The size can
++           be set with VITAGL_LEGACY_POOL (bytes). */
++        {
++            int legacy_pool = 6 * 1024 * 1024;
++            const char *env = SDL_getenv("VITAGL_LEGACY_POOL");
++            if (env && SDL_atoi(env) > 0)
++                legacy_pool = SDL_atoi(env);
++            vglInitExtended(legacy_pool, SCREEN_W, SCREEN_H, MEMORY_VITAGL_THRESHOLD, gxm_ms);
++        }
+         vgl_initialized = 1;
+     }
+ 
+@@ -755,7 +767,7 @@ void VITA_VideoQuit(_THIS)
+ #if SDL_VIDEO_OPENGL_VITAGL
+     if (vgl_initialized)
+     {
+-        vglEnd();
++        /* vitaGL has no shutdown call */
+         vgl_initialized = 0;
+     }
+     this->gl_config.driver_loaded = 0;

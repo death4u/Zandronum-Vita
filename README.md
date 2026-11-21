@@ -1,53 +1,71 @@
-Welcome to Zandronum!
-=====================
+# Zandronum Vita
 
-A continuation of Skulltag.
----------------------------
+A port of [Zandronum](https://zandronum.com/) to the PlayStation Vita. Zandronum is the multiplayer-oriented Doom source port that continues Skulltag.
 
-Zandronum is a multiplayer oriented port, based off Skulltag, for Doom and Doom II by [id Software](http://www.idsoftware.com/).
+This repository is a fork of [TorrSamaho/zandronum](https://github.com/TorrSamaho/zandronum) (Zandronum 3.3-alpha) with the Vita changes added on top. The original Zandronum readme is in [README.zandronum.md](README.zandronum.md).
 
-Zandronum brings classic Doom into the 21st century, maintaining the essence of what has made Doom great for so many years and, at the same time, adding new features to modernize it, creating a fresh, fun new experience.
+## Status (v1)
 
-Here's why you should kill your time with Zandronum, versus vanilla Doom:
- 
-* Excellent online play
-    * Client/server architecture: play and switch between games with ease
-    * Supports up to 64 players
-        * Wide array of gameplay modes
-        * Competitive: Team DM, Duel, CTF, Possession, LMS, Terminator, Skulltag
-        * Cooperative: Survival, Invasion (or both!)
-        * Modifiers, like Instagib and Buckshot, can be used to spice up any game.
-* Modern and beautiful
-    * Support for large number of [ZDoom](http://zdoom.org) and [GZDoom](http://www.osnanet.de/c.oelckers/gzdoom/index.html) mods
-    * Choose between GZDoom's OpenGL renderer, or Doom's Software renderer
-    * Useful features like a console, Quake-style key bindings, freelooking, and jumping
-    * Support for many Doom engine based games including Heretic, Hexen, and Strife
-    * Supports modern versions of Windows, Mac OS X, and Linux.
-* Compatible with Skulltag mods
-    * Supports announcers and skins for online play
-    * Runes, new weapons, and new monsters for modders
-    * Bots, and support for custom bots
-* So much more!
+- Runs Doom/Doom II/Freedoom and mods on a real Vita, with GZDoom's OpenGL renderer through vitaGL.
+- Tested mainly with **Brutal Doom v21** and **HaloDoom** on **Freedoom 2**, in single player and in offline games with bots.
+- Online play has not been tested.
+- Heavy mods can still drop below 25 fps in big fights and can stall briefly when a map starts.
 
-Acknowledgements
------
+## Requirements
 
-Special thanks to [Octobus](https://octobus.net/) and [Clever Cloud](https://clever-cloud.com/) for generously providing hosting services for this project.
+- A Vita with homebrew enabled (HENkaku / Ensō) and VitaShell to install the VPK.
+- `libshacccg.suprx` in `ur0:data/` (or `ur0:data/external/`). vitaGL compiles its shaders on the device with it. Without it the game falls back to the much slower software renderer.
+- An IWAD: `doom2.wad`, `doom.wad`, `freedoom2.wad` or another supported game.
 
-Links
------
+## Installing
 
-* [Official Website](http://zandronum.com/)
-* [Community Forums](http://zandronum.com/forum/)
-* [Wiki](http://wiki.zandronum.com/)
-* [Bugtracker](http://zandronum.com/tracker/)
+1. Install `zandronum.vpk` with VitaShell.
+2. Copy your IWAD to `ux0:data/zandronum/`.
+3. Copy mods (`.wad` / `.pk3`) to `ux0:data/zandronum/mods/`.
+4. Start Zandronum. The launcher lists the games and mods it found:
+   - **X** selects the game or toggles a mod (mods load in the order you pick them).
+   - **Square** clears the mods.
+   - **L/R** change page.
+   - **Start** plays.
+   - **Select** quits.
 
+Config, saves, controls and logs are kept in `ux0:data/zandronum/`.
 
-License
--------
+## Controls
 
-New code in Zandronum is released under a 4-clause license based on the OSI-approved and GPL-compatible [Sleepycat License](http://www.opensource.org/licenses/Sleepycat), with the addition of the "No Endorsement" clause from the 3-clause [New BSD License](http://www.opensource.org/licenses/BSD-3-Clause).  Practically, this means that Zandronum's source code is safe to use in either GPL or Doom Source License/Raven Source License/etc. source ports as long as the terms of the Zandronum license are satisfied.
+- Each game or mod combination keeps its own controls layout in `ux0:data/zandronum/controls/`. Changes made in the controls menu are saved automatically.
+- Buttons can have a tap action and a separate hold action.
+- **Start** opens the main menu.
+- **Holding Square** is *use* (open doors, press switches) in every game.
+- **Fire** restarts the level after you die in single player.
+- HaloDoom gets its own layout with HaloDoom's commands (reload, grenades, zoom, melee, grab weapon).
 
-The Zandronum license only covers Zandronum-specific code.  Some source files contain additional notices of original copyright by their contributors.
+## Building
 
-See [ZDoom license page](http://zdoom.org/wiki/license) for more details on other licenses used within Zandronum.
+You need a VitaSDK toolchain plus these libraries installed into `$VITASDK/arm-vita-eabi`:
+
+- [vitaGL](https://github.com/Rinnegatamante/vitaGL), with `src/vita/vitagl-zandronum.patch` applied. Build it with `make NO_DEBUG=1`.
+- [SDL 1.2 for Vita](https://github.com/Northfear/SDL-1.2-vita), with `src/vita/sdl12-vita-vitagl.patch` applied. Build it with `SDL_VITAGL=1`.
+- vitaShaRK, SceShaccCgExt, libmathneon, taiHEN stubs, zlib, zstd and opus.
+
+Then build Zandronum:
+
+```sh
+mkdir build && cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake \
+         -DCMAKE_BUILD_TYPE=Release -DNO_ASM=ON -DNO_GTK=ON -DNO_SOUND=ON
+make
+```
+
+The VPK is written to `build/src/zandronum.vpk`. `-DNO_SOUND=ON` only turns off FMOD; the Vita has its own SDL-based sound and music mixer.
+
+The Vita-specific code is mostly in `src/vita/`, plus `__vita__` sections throughout the engine and the renderer (`src/gl/`).
+
+## Notes
+
+- `vita-halodoom.pk3` (inside the VPK) holds re-encoded copies of eight HaloDoom textures. The Vita can't decode the originals (progressive JPEGs). The textures belong to the HaloDoom authors.
+- When something goes wrong, `ux0:data/zandronum/boot.log` and `console.txt` say what happened. They're the files to attach to a bug report.
+
+## License
+
+Same as Zandronum: see [LICENSE.txt](LICENSE.txt) and the license notes in the original readme.
