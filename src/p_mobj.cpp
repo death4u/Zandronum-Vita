@@ -7456,7 +7456,8 @@ AActor *P_SpawnPlayerMissile (AActor *source, fixed_t x, fixed_t y, fixed_t z,
 	{
 		return NULL;
 	}
-	if (source->player && source->player->ReadyWeapon && (source->player->ReadyWeapon->WeaponFlags & WIF_NOAUTOAIM))
+	extern bool Vita_SpawnMissileNoAutoAim;	// [Vita] ZDoom 2.8's FPF_NOAUTOAIM
+	if (source->player && source->player->ReadyWeapon && ((source->player->ReadyWeapon->WeaponFlags & WIF_NOAUTOAIM) || Vita_SpawnMissileNoAutoAim))
 	{
 		// Keep exactly the same angle and pitch as the player's own aim
 		an = angle;

@@ -1407,6 +1407,22 @@ void APowerTargeter::PositionAccuracy ()
 
 // Frightener Powerup --------------------------------
 
+IMPLEMENT_CLASS (APowerBuddha)
+
+void APowerBuddha::InitEffect ()
+{
+	Super::InitEffect();
+	if (Owner == NULL || Owner->player == NULL) return;
+	Owner->player->cheats |= CF_BUDDHA;
+}
+
+void APowerBuddha::EndEffect ()
+{
+	Super::EndEffect();
+	if (Owner == NULL || Owner->player == NULL) return;
+	Owner->player->cheats &= ~CF_BUDDHA;
+}
+
 IMPLEMENT_CLASS (APowerFrightener)
 
 //===========================================================================

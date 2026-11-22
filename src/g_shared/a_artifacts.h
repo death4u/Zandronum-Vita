@@ -188,6 +188,15 @@ protected:
 	void EndEffect ();
 };
 
+// [Vita] ZDoom 2.8: take damage but don't die while it lasts
+class APowerBuddha : public APowerup
+{
+	DECLARE_CLASS (APowerBuddha, APowerup)
+protected:
+	void InitEffect ();
+	void EndEffect ();
+};
+
 class APowerTimeFreezer : public APowerup
 {
 	DECLARE_CLASS( APowerTimeFreezer, APowerup )

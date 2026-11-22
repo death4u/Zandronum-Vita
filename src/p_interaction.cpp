@@ -1384,6 +1384,7 @@ thrust:
 		&& !(target->flags & MF_NOCLIP)
 		&& !(inflictor->flags2 & MF2_NODMGTHRUST)
 		&& !(flags & DMG_THRUSTLESS)
+		&& !(target->flags7 & MF7_DONTTHRUST)	// [Vita]
 		&& (source == NULL || source->player == NULL || !(source->flags2 & MF2_NODMGTHRUST))
 		&& (( PLAYER_CannotAffectAllyWith( source, target, inflictor, ZADF_DONT_PUSH_ALLIES ) == false ) || ( target->player == COOP_GetVoodooDollDummyPlayer() )) // [RK] Dolls need to be pushed.
 		&& ( NETWORK_InClientMode() == false ) )

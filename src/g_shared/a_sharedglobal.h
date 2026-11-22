@@ -146,6 +146,8 @@ class DEarthquake : public DThinker
 	HAS_OBJECT_POINTERS
 public:
 	DEarthquake (AActor *center, int intensity, int duration, int damrad, int tremrad, FSoundID quakesfx);
+	// [Vita] ZDoom 2.8's A_QuakeEx (separate X/Y/Z intensities, QF_ flags)
+	DEarthquake (AActor *center, int intensityX, int intensityY, int intensityZ, int duration, int damrad, int tremrad, FSoundID quakesfx, int flags);
 
 	void Serialize (FArchive &arc);
 	void Tick ();
@@ -154,9 +156,13 @@ public:
 	fixed_t m_TremorRadius, m_DamageRadius;
 	int m_Intensity;
 	int m_Countdown;
+	int m_IntensityY, m_IntensityZ, m_Flags, m_CountdownStart;	// [Vita]
+	fixed_t GetModIntensity(int intensity) const;
 	FSoundID m_QuakeSFX;
 
 	static int StaticGetQuakeIntensity (AActor *viewer);
+	// [Vita] per axis, in map units (fixed point); false if no quake reaches the viewer
+	static bool StaticGetQuakeIntensities (AActor *viewer, fixed_t &x, fixed_t &y, fixed_t &z);
 
 private:
 	DEarthquake ();

@@ -1719,6 +1719,63 @@ ExpVal FxRandom::EvalExpression (AActor *self)
 
 //==========================================================================
 //
+// [Vita] ZDoom 2.8's randompick / frandompick
+//
+//==========================================================================
+
+FxRandomPick::FxRandomPick(FRandom * r, TArray<FxExpression*> mi, bool floaty, const FScriptPosition &pos)
+: FxExpression(pos)
+{
+	for (unsigned int index = 0; index < mi.Size(); index++)
+	{
+		FxExpression *casted;
+		if (floaty) casted = mi[index];	// (no FxFloatCast here: values are converted where they are used)
+		else casted = new FxIntCast(mi[index]);
+		min.Push(casted);
+	}
+	rng = r;
+	ValueType = floaty ? VAL_Float : VAL_Int;
+}
+
+FxRandomPick::~FxRandomPick()
+{
+}
+
+FxExpression *FxRandomPick::Resolve(FCompileContext &ctx)
+{
+	CHECKRESOLVED();
+	for (unsigned int index = 0; index < min.Size(); index++)
+	{
+		RESOLVE(min[index], ctx);
+		ABORT(min[index]);
+	}
+	return this;
+}
+
+ExpVal FxRandomPick::EvalExpression(AActor *self)
+{
+	ExpVal val;
+	int max = min.Size();
+	if (max > 0)
+	{
+		int select = (*rng)(max);
+		val = min[select]->EvalExpression(self);
+	}
+	else if (ValueType == VAL_Int)
+	{
+		val.Type = VAL_Int;
+		val.Int = (*rng)();
+	}
+	else
+	{
+		val.Type = VAL_Float;
+		val.Float = (*rng)(0x40000000) / double(0x40000000);
+	}
+	return val;
+}
+
+//==========================================================================
+//
 //
 //
 //==========================================================================

@@ -1212,6 +1212,7 @@ void FMultiPatchTexture::ParsePatch(FScanner &sc, TexPart & part, bool silent, i
 //
 //==========================================================================
 
+extern FString Vita_PendingLongName;
 FMultiPatchTexture::FMultiPatchTexture (FScanner &sc, int usetype)
 : Pixels (0), Spans(0), Parts(0), bRedirect(false), bTranslucentPatches(false)
 {
@@ -1234,7 +1235,24 @@ FMultiPatchTexture::FMultiPatchTexture (FScanner &sc, int usetype)
 			bSilent = false;
 		}
 	}
-	uppercopy(Name, !textureName ? sc.String : textureName);
+	{
+		// [Vita] ZDoom 2.8 allows texture names longer than 8 characters
+		// (e.g. "NUMSMALL0"). Here names are 8 characters at most: a long
+		// one gets a unique short name and TexMan finds it by the long one
+		// (FTextureManager::AddLongName, CheckForTexture). Copying it into
+		// Name[9] overflowed before.
+		const char *src = !textureName ? sc.String : textureName;
+		if (strlen(src) > 8)
+		{
+			static int longcount;
+			mysnprintf(Name, sizeof(Name), "~L%06d", ++longcount);
+			Vita_PendingLongName = src;
+		}
+		else
+		{
+			uppercopy(Name, src);
+		}
+	}
 	Name[8] = 0;
 	sc.MustGetStringName(",");
 	sc.MustGetNumber();
@@ -1338,8 +1356,16 @@ FMultiPatchTexture::FMultiPatchTexture (FScanner &sc, int usetype)
 
 
 
+FString Vita_PendingLongName;
+
 void FTextureManager::ParseXTexture(FScanner &sc, int usetype)
 {
+	Vita_PendingLongName = "";
 	FTexture *tex = new FMultiPatchTexture(sc, usetype);
-	TexMan.AddTexture (tex);
+	FTextureID id = TexMan.AddTexture (tex);
+	if (Vita_PendingLongName.Len() > 0)
+	{
+		TexMan.AddLongName(Vita_PendingLongName, id);
+		Vita_PendingLongName = "";
+	}
 }

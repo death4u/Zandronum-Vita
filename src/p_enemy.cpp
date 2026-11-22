@@ -3104,7 +3104,9 @@ void A_Chase(AActor *self)
 // A_FaceTracer
 //
 //=============================================================================
-void A_Face (AActor *self, AActor *other, angle_t max_turn, angle_t max_pitch)
+// [Vita] ZDoom 2.8: angle/pitch offsets, FAF_ flags and z offset
+enum { VFAF_BOTTOM = 1, VFAF_MIDDLE = 2, VFAF_TOP = 4 };
+void A_Face (AActor *self, AActor *other, angle_t max_turn, angle_t max_pitch, angle_t ang_offset = 0, angle_t pitch_offset = 0, int flags = 0, fixed_t z_add = 0)
 {
 	// [BC] This is handled server-side.
 	if ( NETWORK_InClientMode() )
@@ -3139,28 +3141,28 @@ void A_Face (AActor *self, AActor *other, angle_t max_turn, angle_t max_pitch)
 		{
 			if (self->angle - other_angle < ANGLE_180)
 			{
-				self->angle -= max_turn;
+				self->angle -= max_turn + ang_offset;
 			}
 			else
 			{
-				self->angle += max_turn;
+				self->angle += max_turn + ang_offset;
 			}
 		}
 		else
 		{
 			if (other_angle - self->angle < ANGLE_180)
 			{
-				self->angle += max_turn;
+				self->angle += max_turn + ang_offset;
 			}
 			else
 			{
-				self->angle -= max_turn;
+				self->angle -= max_turn + ang_offset;
 			}
 		}
 	}
 	else
 	{
-		self->angle = other_angle;
+		self->angle = other_angle + ang_offset;
 	}
 
 	// [DH] Now set pitch. In order to maintain compatibility, this can be
@@ -3180,6 +3182,10 @@ void A_Face (AActor *self, AActor *other, angle_t max_turn, angle_t max_pitch)
 		{
 			target_z = other->z + other->height / 2;
 		}
+		if (flags & VFAF_BOTTOM) target_z = other->z + other->GetBobOffset();
+		if (flags & VFAF_MIDDLE) target_z = other->z + (other->height / 2) + other->GetBobOffset();
+		if (flags & VFAF_TOP) target_z = other->z + other->height + other->GetBobOffset();
+		target_z += z_add;
 		double dist_z = target_z - source_z;
 		double dist = sqrt(dist_x*dist_x + dist_y*dist_y + dist_z*dist_z);
 
@@ -3202,10 +3208,11 @@ void A_Face (AActor *self, AActor *other, angle_t max_turn, angle_t max_pitch)
 		{
 			self->pitch = other_pitch;
 		}
+		self->pitch += pitch_offset;
 	}
 
 	// This will never work well if the turn angle is limited.
-	if (max_turn == 0 && (self->angle == other_angle) && other->flags & MF_SHADOW && !(self->flags6 & MF6_SEEINVISIBLE) )
+	if (max_turn == 0 && (self->angle == other_angle + ang_offset) && other->flags & MF_SHADOW && !(self->flags6 & MF6_SEEINVISIBLE) )
     {
 		self->angle += pr_facetarget.Random2() << 21;
     }
@@ -3232,29 +3239,41 @@ void A_FaceTracer (AActor *self, angle_t max_turn, angle_t max_pitch)
 
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FaceTarget)
 {
-	ACTION_PARAM_START(2);
+	ACTION_PARAM_START(6);
 	ACTION_PARAM_ANGLE(max_turn, 0);
 	ACTION_PARAM_ANGLE(max_pitch, 1);
+	ACTION_PARAM_ANGLE(ang_offset, 2);
+	ACTION_PARAM_ANGLE(pitch_offset, 3);
+	ACTION_PARAM_INT(flags, 4);
+	ACTION_PARAM_FIXED(z_add, 5);
 
-	A_FaceTarget(self, max_turn, max_pitch);
+	A_Face(self, self->target, max_turn, max_pitch, ang_offset, pitch_offset, flags, z_add);
 }
 
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FaceMaster)
 {
-	ACTION_PARAM_START(2);
+	ACTION_PARAM_START(6);
 	ACTION_PARAM_ANGLE(max_turn, 0);
 	ACTION_PARAM_ANGLE(max_pitch, 1);
+	ACTION_PARAM_ANGLE(ang_offset, 2);
+	ACTION_PARAM_ANGLE(pitch_offset, 3);
+	ACTION_PARAM_INT(flags, 4);
+	ACTION_PARAM_FIXED(z_add, 5);
 
-	A_FaceMaster(self, max_turn, max_pitch);
+	A_Face(self, self->master, max_turn, max_pitch, ang_offset, pitch_offset, flags, z_add);
 }
 
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FaceTracer)
 {
-	ACTION_PARAM_START(2);
+	ACTION_PARAM_START(6);
 	ACTION_PARAM_ANGLE(max_turn, 0);
 	ACTION_PARAM_ANGLE(max_pitch, 1);
+	ACTION_PARAM_ANGLE(ang_offset, 2);
+	ACTION_PARAM_ANGLE(pitch_offset, 3);
+	ACTION_PARAM_INT(flags, 4);
+	ACTION_PARAM_FIXED(z_add, 5);
 
-	A_FaceTracer(self, max_turn, max_pitch);
+	A_Face(self, self->tracer, max_turn, max_pitch, ang_offset, pitch_offset, flags, z_add);
 }
 
 //===========================================================================

@@ -148,6 +148,12 @@ void FTextureManager::DeleteAll()
 	BuildTileFiles.Clear();
 }
 
+// [Vita] TEXTURES names longer than 8 characters (ZDoom 2.8)
+void FTextureManager::AddLongName (const char *longname, FTextureID id)
+{
+	if (id.isValid()) LongNames[FName(longname)] = id.GetIndex();
+}
+
 //==========================================================================
 //
 // FTextureManager :: CheckForTexture
@@ -170,6 +176,11 @@ FTextureID FTextureManager::CheckForTexture (const char *name, int usetype, BITF
 	if (name[0] == '-' && name[1] == '\0')
 	{
 		return FTextureID(0);
+	}
+	if (strlen(name) > 8)	// [Vita] long TEXTURES names (see AddLongName)
+	{
+		int *idx = LongNames.CheckKey(FName(name, true));
+		if (idx != NULL) return FTextureID(*idx);
 	}
 	i = HashFirst[MakeKey (name) % HASH_SIZE];
 

@@ -63,6 +63,18 @@ const int SXF_TRANSFERSCALE = 16384;
 const int SXF_TRANSFERSPECIAL = 32768;
 const int SXF_CLEARCALLERSPECIAL = 65536;
 const int SXF_TRANSFERSTENCILCOL = 131072;
+// [Vita] ZDoom 2.8
+const int SXF_TRANSFERALPHA =				1 << 18;
+const int SXF_TRANSFERRENDERSTYLE =		1 << 19;
+const int SXF_SETTARGET =				1 << 20;
+const int SXF_SETTRACER =				1 << 21;
+const int SXF_NOPOINTERS =				1 << 22;
+const int SXF_ORIGINATOR =				1 << 23;
+const int SXF_TRANSFERSPRITEFRAME	=	1 << 24;
+const int SXF_TRANSFERROLL =				1 << 25;
+const int SXF_ISTARGET =					1 << 26;
+const int SXF_ISMASTER =					1 << 27;
+const int SXF_ISTRACER =					1 << 28;
 
 // Flags for A_Chase
 const int CHF_FASTCHASE = 1;
@@ -111,6 +123,10 @@ const int WRF_NOFIRE = WRF_NOPRIMARY | WRF_NOSECONDARY;
 const int WRF_ALLOWRELOAD = 16;
 const int WRF_ALLOWZOOM = 32;
 const int WRF_DISABLESWITCH = 64;
+const int WRF_ALLOWUSER1 = 128;	// [Vita] ZDoom 2.8
+const int WRF_ALLOWUSER2 = 256;
+const int WRF_ALLOWUSER3 = 512;
+const int WRF_ALLOWUSER4 = 1024;
 
 // Morph constants
 const int MRF_ADDSTAMINA = 1;
@@ -163,6 +179,13 @@ const int CPF_USEAMMO = 1;
 const int CPF_DAGGER = 2;
 const int CPF_PULLIN = 4;
 const int CPF_NORANDOMPUFFZ = 8;
+const int CPF_NOTURN = 16;	// [Vita] ZDoom 2.8
+const int CPF_STEALARMOR = 32;
+
+// [Vita] ZDoom 2.8: A_FireCustomMissile flags
+const int FPF_AIMATANGLE = 1;
+const int FPF_TRANSFERTRANSLATION = 2;
+const int FPF_NOAUTOAIM = 4;
 
 // Flags for A_Teleport
 const int TF_TELEFRAG = 1;const int TF_RANDOMDECIDE = 2;
@@ -186,6 +209,12 @@ enum
 	RGF_CUBE		=	1 << 9,
 	RGF_NOSIGHT		=	1 << 10,
 	RGF_MISSILES	=	1 << 11,
+	RGF_INCLUSIVE	=	1 << 12,	// [Vita] ZDoom 2.8
+	RGF_ITEMS		=	1 << 13,
+	RGF_KILLED		=	1 << 14,
+	RGF_EXFILTER	=	1 << 15,
+	RGF_EXSPECIES	=	1 << 16,
+	RGF_EITHER		=	1 << 17,
 };
 
 // Activation flags
@@ -310,6 +339,9 @@ Const Int WARPF_COPYINTERPOLATION = 0x40;
 Const Int WARPF_STOP = 0x80;
 Const Int WARPF_TOFLOOR = 0x100;
 Const Int WARPF_TESTONLY = 0x200;
+Const Int WARPF_ABSOLUTEPOSITION = 0x400;	// [Vita] ZDoom 2.8
+Const Int WARPF_COPYVELOCITY = 0x4000;
+Const Int WARPF_COPYPITCH = 0x8000;
 
 // flags for A_SetPitch/SetAngle
 const int SPF_FORCECLAMP = 1;
@@ -365,3 +397,68 @@ const int AMF_EMITFROMTARGET = 4;
 
 // This is only here to provide one global variable for testing.
 native int testglobalvar;
+
+// [Vita] ZDoom 2.8 constants (A_SpawnParticle, A_QuakeEx, A_Damage*, A_Remove*,
+// A_CheckProximity, A_Face*)
+enum
+{
+	SPF_FULLBRIGHT =	1,
+	SPF_RELPOS =		1 << 1,
+	SPF_RELVEL =		1 << 2,
+	SPF_RELACCEL =		1 << 3,
+	SPF_RELANG =		1 << 4,
+	SPF_RELATIVE =	SPF_RELPOS|SPF_RELVEL|SPF_RELACCEL|SPF_RELANG
+};
+enum
+{
+	QF_RELATIVE =		1,
+	QF_SCALEDOWN =		1 << 1,
+	QF_SCALEUP =		1 << 2,
+	QF_MAX =			1 << 3,
+	QF_FULLINTENSITY =	1 << 4,
+	QF_WAVE =			1 << 5,
+};
+enum
+{
+	DMSS_FOILINVUL =		0x00000001,
+	DMSS_AFFECTARMOR =		0x00000002,
+	DMSS_KILL =				0x00000004,
+	DMSS_NOFACTOR =			0x00000008,
+	DMSS_FOILBUDDHA =		0x00000010,
+	DMSS_NOPROTECT =		0x00000020,
+	DMSS_EXFILTER =			0x00000040,
+	DMSS_EXSPECIES =		0x00000080,
+	DMSS_EITHER =			0x00000100,
+};
+enum
+{
+	RMVF_MISSILES =			0x00000001,
+	RMVF_NOMONSTERS =		0x00000002,
+	RMVF_MISC =				0x00000004,
+	RMVF_EVERYTHING =		0x00000008,
+	RMVF_EXFILTER =			0x00000010,
+	RMVF_EXSPECIES =		0x00000020,
+	RMVF_EITHER =			0x00000040,
+};
+enum
+{
+	CPXF_ANCESTOR			= 1,
+	CPXF_LESSOREQUAL		= 1 << 1,
+	CPXF_NOZ				= 1 << 2,
+	CPXF_COUNTDEAD			= 1 << 3,
+	CPXF_DEADONLY			= 1 << 4,
+	CPXF_EXACT				= 1 << 5,
+	CPXF_SETTARGET =		1 << 6,
+	CPXF_SETMASTER =		1 << 7,
+	CPXF_SETTRACER =		1 << 8,
+	CPXF_FARTHEST =			1 << 9,
+	CPXF_CLOSEST =			1 << 10,
+	CPXF_SETONPTR =			1 << 11,
+	CPXF_CHECKSIGHT =		1 << 12,
+};
+enum
+{
+	FAF_BOTTOM = 1,
+	FAF_MIDDLE = 2,
+	FAF_TOP = 4,
+};

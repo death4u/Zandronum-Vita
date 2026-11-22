@@ -272,6 +272,32 @@ static uint32 ParticleColor(int r, int g, int b)
 	return ParticleColor(MAKERGB(r, g, b));
 }
 
+// [Vita] ZDoom 2.8's P_SpawnParticle (for A_SpawnParticle).
+void P_SpawnParticle(fixed_t x, fixed_t y, fixed_t z, fixed_t velx, fixed_t vely, fixed_t velz, PalEntry color, bool fullbright, BYTE startalpha, BYTE lifetime, WORD size, int fadestep, fixed_t accelx, fixed_t accely, fixed_t accelz)
+{
+	particle_t *particle = NewParticle();
+
+	if (particle)
+	{
+		particle->x = x;
+		particle->y = y;
+		particle->z = z;
+		particle->velx = velx;
+		particle->vely = vely;
+		particle->velz = velz;
+		particle->color = ParticleColor(color);
+		particle->trans = startalpha;
+		if (fadestep < 0) fadestep = FADEFROMTTL(lifetime);
+		particle->fade = fadestep;
+		particle->ttl = lifetime;
+		particle->accx = accelx;
+		particle->accy = accely;
+		particle->accz = accelz;
+		particle->bright = fullbright;
+		particle->size = size > 127 ? 127 : size;	// 7 bits here
+	}
+}
+
 void P_InitEffects ()
 {
 	const struct ColorList *color = Colors;

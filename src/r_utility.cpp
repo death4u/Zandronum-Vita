@@ -888,13 +888,15 @@ void R_SetupFrame (AActor *actor)
 	// [AK] Don't apply earthquake effects to free-roaming spectators.
 	if (!paused && ((camera->player == nullptr) || (camera->player->bSpectating == false)))
 	{
-		int intensity = DEarthquake::StaticGetQuakeIntensity (camera);
-		if (intensity != 0)
+		// [Vita] per-axis intensities (ZDoom 2.8 A_QuakeEx); the same
+		// +-2 x intensity jitter as before for plain quakes
+		fixed_t qx, qy, qz;
+		if (DEarthquake::StaticGetQuakeIntensities (camera, qx, qy, qz))
 		{
 			fixed_t quakefactor = FLOAT2FIXED(r_quakeintensity);
-
-			viewx += quakefactor * ((pr_torchflicker() % (intensity<<2)) - (intensity<<1));
-			viewy += quakefactor * ((pr_torchflicker() % (intensity<<2)) - (intensity<<1));
+			if (qx > 0) viewx += FixedMul(quakefactor, FixedMul(qx, (pr_torchflicker() << 10) - (2 << FRACBITS)));
+			if (qy > 0) viewy += FixedMul(quakefactor, FixedMul(qy, (pr_torchflicker() << 10) - (2 << FRACBITS)));
+			if (qz > 0) viewz += FixedMul(quakefactor, FixedMul(qz, (pr_torchflicker() << 10) - (2 << FRACBITS)));
 		}
 	}
 

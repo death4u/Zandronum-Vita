@@ -5853,7 +5853,7 @@ void P_RadiusAttack(AActor *bombspot, AActor *bombsource, int bombdamage, int bo
 				{
 					if (!(flags & RADF_NODAMAGE))
 						newdam = P_DamageMobj(thing, bombspot, bombsource, damage, bombmod);
-					else if (thing->player == NULL && !(flags & RADF_NOIMPACTDAMAGE))
+					else if (thing->player == NULL && !(flags & RADF_NOIMPACTDAMAGE) && !(thing->flags7 & MF7_DONTTHRUST))
 					{
 						thing->flags2 |= MF2_BLASTED;
 
@@ -5882,7 +5882,7 @@ void P_RadiusAttack(AActor *bombspot, AActor *bombsource, int bombdamage, int bo
 
 					if ((flags & RADF_NODAMAGE) || !(bombspot->flags2 & MF2_NODMGTHRUST))
 					{
-						if (bombsource == NULL || !(bombsource->flags2 & MF2_NODMGTHRUST))
+						if ((bombsource == NULL || !(bombsource->flags2 & MF2_NODMGTHRUST)) && !(thing->flags7 & MF7_DONTTHRUST))	// [Vita]
 						{
 							thrust = points * 0.5f / (double)thing->Mass;
 							if (bombsource == thing)

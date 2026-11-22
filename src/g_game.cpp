@@ -5834,3 +5834,26 @@ CCMD( freeze )
 int Vita_BigSelfTest();
 CCMD(vita_bigtest) { Printf("vita_bigtest: %d\n", Vita_BigSelfTest()); }
 #endif
+
+#ifdef __vita__
+// [Vita] test: lists the actors near the console player (class, sprite,
+// distance, flags) in boot.log
+CCMD(vita_dumpnear)
+{
+	AActor *pmo = players[consoleplayer].mo;
+	if (pmo == NULL) return;
+	TThinkerIterator<AActor> it;
+	AActor *mo;
+	int n = 0;
+	while ((mo = it.Next()) != NULL && n < 80)
+	{
+		if (mo == pmo || !stricmp(sprites[mo->sprite].name, "TNT1") || (mo->flags & MF_NOSECTOR)) continue;
+		fixed_t d = P_AproxDistance(mo->x - pmo->x, mo->y - pmo->y);
+		if (d > 1024 * FRACUNIT) continue;
+		n++;
+		Vita_BootLog("near: %s sprite %s frame %d dist %d z %d render %s style %d alpha %d scale %d", mo->GetClass()->TypeName.GetChars(),
+			sprites[mo->sprite].name, mo->frame, d >> FRACBITS, (mo->z - pmo->z) >> FRACBITS,
+			(mo->renderflags & RF_INVISIBLE) ? "invisible" : "visible", (int)mo->RenderStyle.AsDWORD, mo->alpha >> 8, mo->scaleX >> 8);
+	}
+}
+#endif

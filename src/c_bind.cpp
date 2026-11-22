@@ -369,6 +369,21 @@ static int GetKeyFromName (const char *name)
 		return atoi (name + 1);
 	}
 
+#ifdef __vita__
+	// [Vita] Gamepad key names used by other ports (ZDoom Vita, XInput
+	// layouts) map to the Vita's buttons, so a mod's "bind pad_a ..." works.
+	{
+		static const struct { const char *name; int button; } padalias[] =
+		{
+			{ "pad_y", 0 }, { "pad_b", 1 }, { "pad_a", 2 }, { "pad_x", 3 },
+			{ "lshoulder", 4 }, { "rshoulder", 5 },
+			{ "dpaddown", 6 }, { "dpadleft", 7 }, { "dpadup", 8 }, { "dpadright", 9 },
+			{ "pad_back", 10 }, { "pad_start", 11 },
+		};
+		for (size_t a = 0; a < countof(padalias); a++)
+			if (!stricmp(name, padalias[a].name)) return KEY_FIRSTJOYBUTTON + padalias[a].button;
+	}
+#endif
 	// Otherwise, we scan the KeyNames[] array for a matching name
 	for (i = 0; i < NUM_KEYS; i++)
 	{

@@ -80,6 +80,7 @@
 #include "p_acs.h"
 #include "unlagged.h"
 #include "d_netinf.h"
+#include "p_effect.h"
 
 static FRandom pr_camissile ("CustomActorfire");
 static FRandom pr_camelee ("CustomMelee");
@@ -791,9 +792,10 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Jump)
 //==========================================================================
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_JumpIfHealthLower)
 {
-	ACTION_PARAM_START(2);
+	ACTION_PARAM_START(3);
 	ACTION_PARAM_INT(health, 0);
 	ACTION_PARAM_STATE(jump, 1);
+	ACTION_PARAM_INT(ptr_selector, 2);	// [Vita] ZDoom 2.8
 
 	// [BC] Don't jump here in client mode.
 	if ( NETWORK_InClientMode() )
@@ -802,7 +804,8 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_JumpIfHealthLower)
 			return;
 	}
 
-	if (self->health < health) ACTION_JUMP(jump, CLIENTUPDATE_FRAME);	// [BC] Clients don't know what the actor's health is.
+	AActor *measured = COPY_AAPTR(self, ptr_selector);
+	if (measured && measured->health < health) ACTION_JUMP(jump, CLIENTUPDATE_FRAME);	// [BC] Clients don't know what the actor's health is.
 
 	ACTION_SET_RESULT(false);	// Jumps should never set the result for inventory state chains!
 }
@@ -1726,6 +1729,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FireBullets)
 //
 //==========================================================================
 // [BB] This functions is needed to keep code duplication at a minimum while applying the spread power.
+bool Vita_SpawnMissileNoAutoAim;
 void A_FireCustomMissileHelper ( AActor * self,
 								 const fixed_t x,
 								 const fixed_t y,
@@ -1770,8 +1774,9 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FireCustomMissile)
 	ACTION_PARAM_BOOL(UseAmmo, 2);
 	ACTION_PARAM_INT(SpawnOfs_XY, 3);
 	ACTION_PARAM_FIXED(SpawnHeight, 4);
-	ACTION_PARAM_BOOL(AimAtAngle, 5);
+	ACTION_PARAM_INT(fpflags, 5);	// [Vita] ZDoom 2.8 flags: FPF_AIMATANGLE 1, FPF_TRANSFERTRANSLATION 2, FPF_NOAUTOAIM 4
 	ACTION_PARAM_ANGLE(pitch, 6);
+	const INTBOOL AimAtAngle = fpflags & 1;
 
 	if (!self->player) return;
 
@@ -1802,6 +1807,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FireCustomMissile)
 		fixed_t SavedPlayerPitch = self->pitch;
 		self->pitch -= pitch;
 
+		Vita_SpawnMissileNoAutoAim = (fpflags & 4) != 0;
 		A_FireCustomMissileHelper( self, x, y, z, shootangle, ti, Angle , AimAtAngle, linetarget );
 
 		if (NULL != self->player )
@@ -1814,6 +1820,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FireCustomMissile)
 		}
 
 		//AActor * misl=P_SpawnPlayerMissile (self, x, y, z, ti, shootangle, &linetarget);
+		Vita_SpawnMissileNoAutoAim = false;
 		self->pitch = SavedPlayerPitch;
 /*
 		// automatic handling of seeker missiles
@@ -1866,6 +1873,12 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CustomPunch)
 	ACTION_PARAM_CLASS(PuffType, 3);
 	ACTION_PARAM_FIXED(Range, 4);
 	ACTION_PARAM_FIXED(LifeSteal, 5);
+	ACTION_PARAM_INT(lifestealmax, 6);		// [Vita] ZDoom 2.8 (armour stealing not done here)
+	ACTION_PARAM_CLASS(armorbonustype, 7);
+	ACTION_PARAM_SOUND(MeleeSound, 8);
+	ACTION_PARAM_SOUND(MissSound, 9);
+	(void)armorbonustype;
+	const int CPF_NOTURN_V = 16;
 
 	if (!self->player) return;
 
@@ -1911,6 +1924,8 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CustomPunch)
 
 	P_LineAttack (self, angle, Range, pitch, Damage, NAME_Melee, PuffType, puffFlags, &linetarget, &actualdamage);
 
+	if (!linetarget && MissSound) S_Sound(self, CHAN_WEAPON, MissSound, 1, ATTN_NORM, true);
+
 	// turn to face target
 	if (linetarget)
 	{
@@ -1919,13 +1934,15 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CustomPunch)
 		const int prevhealth = self->health;
 
 		if (LifeSteal && !(linetarget->flags5 & MF5_DONTDRAIN))
-			P_GiveBody (self, (actualdamage * LifeSteal) >> FRACBITS);
+			P_GiveBody (self, (actualdamage * LifeSteal) >> FRACBITS, lifestealmax);
 
 		if (weapon != NULL)
 		{
-			S_Sound (self, CHAN_WEAPON, weapon->AttackSound, 1, ATTN_NORM, true );	// [BC] Inform the clients.
+			if (MeleeSound) S_Sound (self, CHAN_WEAPON, MeleeSound, 1, ATTN_NORM, true);
+			else S_Sound (self, CHAN_WEAPON, weapon->AttackSound, 1, ATTN_NORM, true );	// [BC] Inform the clients.
 		}
 
+		if (!(flags & CPF_NOTURN_V))
 		self->angle = R_PointToAngle2 (self->x,
 										self->y,
 										linetarget->x,
@@ -2414,6 +2431,18 @@ enum SIX_Flags
 	SIXF_TRANSFERSPECIAL		= 1 << 15,
 	SIXF_CLEARCALLERSPECIAL		= 1 << 16,
 	SIXF_TRANSFERSTENCILCOL		= 1 << 17,
+	// [Vita] ZDoom 2.8
+	SIXF_TRANSFERALPHA			= 1 << 18,
+	SIXF_TRANSFERRENDERSTYLE	= 1 << 19,
+	SIXF_SETTARGET				= 1 << 20,
+	SIXF_SETTRACER				= 1 << 21,
+	SIXF_NOPOINTERS				= 1 << 22,
+	SIXF_ORIGINATOR				= 1 << 23,
+	SIXF_TRANSFERSPRITEFRAME	= 1 << 24,
+	SIXF_TRANSFERROLL			= 1 << 25,
+	SIXF_ISTARGET				= 1 << 26,
+	SIXF_ISMASTER				= 1 << 27,
+	SIXF_ISTRACER				= 1 << 28,
 };
 
 // [BB] Changed return value to bool (returns false if the actor already was destroyed).
@@ -2450,6 +2479,7 @@ static bool InitSpawnedItem(AActor *self, AActor *mo, int flags)
 	{
 		mo->pitch = self->pitch;
 	}
+	if (!(flags & SIXF_ORIGINATOR))	// [Vita]
 	while (originator && originator->isMissile())
 	{
 		originator = originator->target;
@@ -2503,6 +2533,27 @@ static bool InitSpawnedItem(AActor *self, AActor *mo, int flags)
 		// If this is a missile or something else set the target to the originator
 		mo->target = originator ? originator : self;
 	}
+	// [Vita] ZDoom 2.8 pointer flags
+	if (flags & SIXF_NOPOINTERS)
+	{
+		mo->LastHeard = NULL;
+		mo->target = NULL;
+		mo->master = NULL;
+		mo->tracer = NULL;
+	}
+	if ((flags & SIXF_SETMASTER) && !(mo->flags3 & MF3_ISMONSTER)) mo->master = originator;
+	if (flags & SIXF_SETTARGET) mo->target = originator;
+	if (flags & SIXF_SETTRACER) mo->tracer = originator;
+	if (flags & SIXF_TRANSFERALPHA) mo->alpha = self->alpha;
+	if (flags & SIXF_TRANSFERRENDERSTYLE) mo->RenderStyle = self->RenderStyle;
+	if (flags & SIXF_TRANSFERSPRITEFRAME)
+	{
+		mo->sprite = self->sprite;
+		mo->frame = self->frame;
+	}
+	if (flags & SIXF_ISTARGET) self->target = mo;
+	if (flags & SIXF_ISMASTER) self->master = mo;
+	if (flags & SIXF_ISTRACER) self->tracer = mo;
 	if (flags & SIXF_TRANSFERSCALE)
 	{
 		mo->scaleX = self->scaleX;
@@ -4808,6 +4859,22 @@ DEFINE_ACTION_FUNCTION(AActor, A_RemoveMaster)
 	}
 }
 
+// [Vita] ZDoom 2.8's flags for the A_Remove* functions
+enum { RMVF_MISSILES = 1, RMVF_NOMONSTERS = 2, RMVF_MISC = 4, RMVF_EVERYTHING = 8, RMVF_EXFILTER = 16, RMVF_EXSPECIES = 32, RMVF_EITHER = 64 };
+static void Vita_DoRemove(AActor *removetarget, int flags, const PClass *filter, FName species)
+{
+	const PClass *actorClass = removetarget->GetClass();
+	bool filterpass = filter == NULL || ((flags & RMVF_EXFILTER) ? actorClass != filter : actorClass == filter);
+	FName sp = removetarget->GetSpecies();
+	bool speciespass = species == NAME_None || ((flags & RMVF_EXSPECIES) ? sp != species : sp == species);
+	if (!((flags & RMVF_EITHER) ? (filterpass || speciespass) : (filterpass && speciespass))) return;
+	if ((flags & RMVF_EVERYTHING)
+		|| ((flags & RMVF_MISC) && !((removetarget->flags3 & MF3_ISMONSTER) && (removetarget->flags & MF_MISSILE)))
+		|| ((removetarget->flags3 & MF3_ISMONSTER) && !(flags & RMVF_NOMONSTERS))
+		|| ((removetarget->flags & MF_MISSILE) && (flags & RMVF_MISSILES)))
+		P_RemoveThing(removetarget);
+}
+
 //===========================================================================
 //
 // A_RemoveChildren
@@ -4817,14 +4884,18 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RemoveChildren)
 {
 	TThinkerIterator<AActor> it;
 	AActor *mo;
-	ACTION_PARAM_START(1);
+	ACTION_PARAM_START(4);
 	ACTION_PARAM_BOOL(removeall,0);
+	ACTION_PARAM_INT(flags, 1);		// [Vita] ZDoom 2.8: flags, filter, species
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
 
 	while ((mo = it.Next()) != NULL)
 	{
 		if (mo->master == self && (mo->health <= 0 || removeall))
 		{
-			P_RemoveThing(mo);
+			if (flags == 0 && filter == NULL && species == NAME_None) P_RemoveThing(mo);
+			else Vita_DoRemove(mo, flags, filter, species);
 		}
 	}
 }
@@ -5581,7 +5652,7 @@ enum WARPF
 
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 {
-	ACTION_PARAM_START(7);
+	ACTION_PARAM_START(10);
 
 	ACTION_PARAM_INT(destination_selector, 0);
 	ACTION_PARAM_FIXED(xofs, 1);
@@ -5590,6 +5661,10 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 	ACTION_PARAM_ANGLE(angle, 4);
 	ACTION_PARAM_INT(flags, 5);
 	ACTION_PARAM_STATE(success_state, 6);
+	ACTION_PARAM_FIXED(heightoffset, 7);	// [Vita] ZDoom 2.8
+	ACTION_PARAM_FIXED(radiusoffset, 8);
+	ACTION_PARAM_ANGLE(pitch, 9);
+	enum { VWARPF_ABSOLUTEPOSITION = 0x400, VWARPF_COPYVELOCITY = 0x4000, VWARPF_COPYPITCH = 0x8000 };
 
 	fixed_t
 
@@ -5614,8 +5689,13 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 	{
 		angle += (flags & WARPF_USECALLERANGLE) ? self->angle : reference->angle;
 	}
+	zofs += FixedMul(reference->height, heightoffset);
+	const fixed_t vrad = FixedMul(radiusoffset, reference->radius);
+	const fixed_t bx = (flags & VWARPF_ABSOLUTEPOSITION) ? 0 : reference->x;
+	const fixed_t by = (flags & VWARPF_ABSOLUTEPOSITION) ? 0 : reference->y;
+	const fixed_t bz = (flags & VWARPF_ABSOLUTEPOSITION) ? 0 : reference->z;
 
-	if (!(flags & WARPF_ABSOLUTEOFFSET))
+	if (!(flags & WARPF_ABSOLUTEOFFSET) && !(flags & VWARPF_ABSOLUTEPOSITION))
 	{
 		angle_t fineangle = angle>>ANGLETOFINESHIFT;
 		oldx = xofs;
@@ -5627,6 +5707,11 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 		xofs = FixedMul(oldx, finecosine[fineangle]) + FixedMul(yofs, finesine[fineangle]);
 		yofs = FixedMul(oldx, finesine[fineangle]) - FixedMul(yofs, finecosine[fineangle]);
 	}
+	if (vrad)
+	{
+		xofs += FixedMul(vrad, finecosine[angle >> ANGLETOFINESHIFT]);
+		yofs += FixedMul(vrad, finesine[angle >> ANGLETOFINESHIFT]);
+	}
 
 	oldx = self->x;
 	oldy = self->y;
@@ -5637,9 +5722,9 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 		// set correct xy
 
 		self->SetOrigin(
-			reference->x + xofs,
-			reference->y + yofs,
-			reference->z);
+			bx + xofs,
+			by + yofs,
+			bz);
 
 		// now the caller's floorz should be appropriate for the assigned xy-position
 		// assigning position again with
@@ -5664,9 +5749,9 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 	else
 	{
 		self->SetOrigin(
-			reference->x + xofs,
-			reference->y + yofs,
-			reference->z + zofs);
+			bx + xofs,
+			by + yofs,
+			bz + zofs);
 	}
 	
 	if ((flags & WARPF_NOCHECKPOSITION) || P_TestMobjLocation(self))
@@ -5678,6 +5763,9 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 		else
 		{
 			self->angle = angle;
+			if (flags & VWARPF_COPYPITCH) self->pitch = reference->pitch;
+			if (pitch) self->pitch += pitch;
+			if (flags & VWARPF_COPYVELOCITY) { self->velx = reference->velx; self->vely = reference->vely; self->velz = reference->velz; }
 
 			if (flags & WARPF_STOP)
 			{
@@ -5884,7 +5972,97 @@ enum RadiusGiveFlags
 	RGF_CUBE		=	1 << 9,
 	RGF_NOSIGHT		=	1 << 10,
 	RGF_MISSILES	=	1 << 11,
+	// [Vita] ZDoom 2.8
+	RGF_INCLUSIVE	=	1 << 12,
+	RGF_ITEMS		=	1 << 13,
+	RGF_KILLED		=	1 << 14,
+	RGF_EXFILTER	=	1 << 15,
+	RGF_EXSPECIES	=	1 << 16,
+	RGF_EITHER		=	1 << 17,
 };
+
+// [Vita] ZDoom 2.8.1's version (filter, species, minimum distance, RGF_ITEMS
+// and the other new flags), with Zandronum's spectator and server handling.
+static bool Vita_RadiusGiveOne(AActor *self, AActor *thing, const PClass *item, int amount, fixed_t distance, int flags, const PClass *filter, FName species, fixed_t mindist)
+{
+	const bool isMissile = !!(thing->flags & MF_MISSILE);
+	bool missilePass = !!((flags & RGF_MISSILES) && isMissile);
+	if (thing == self)
+	{
+		if (!(flags & RGF_GIVESELF)) return false;
+	}
+	else if (isMissile)
+	{
+		if (!missilePass) return false;
+	}
+	// [AK] Don't give items to spectators.
+	if (thing->player && thing->player->bSpectating) return false;
+
+	const PClass *cls = thing->GetClass();
+	bool filterpass = filter == NULL || ((flags & RGF_EXFILTER) ? cls != filter : cls == filter);
+	FName sp = thing->GetSpecies();
+	bool speciespass = species == NAME_None || ((flags & RGF_EXSPECIES) ? sp != species : sp == species);
+	if ((flags & RGF_EITHER) ? !(filterpass || speciespass) : !(filterpass && speciespass))
+	{
+		if (thing != self) return false;
+	}
+	if ((thing != self) && (flags & (RGF_NOTARGET | RGF_NOMASTER | RGF_NOTRACER)))
+	{
+		bool targetPass = !((thing == self->target) && (flags & RGF_NOTARGET));
+		bool masterPass = !((thing == self->master) && (flags & RGF_NOMASTER));
+		bool tracerPass = !((thing == self->tracer) && (flags & RGF_NOTRACER));
+		bool ptrPass = (flags & RGF_INCLUSIVE) ? (targetPass || masterPass || tracerPass) : (targetPass && masterPass && tracerPass);
+		if (!ptrPass) return false;
+	}
+	bool selfPass = !!((flags & RGF_GIVESELF) && thing == self);
+	bool corpsePass = !!((flags & RGF_CORPSES) && thing->flags & MF_CORPSE);
+	bool killedPass = !!((flags & RGF_KILLED) && thing->flags6 & MF6_KILLED);
+	bool monsterPass = !!((flags & RGF_MONSTERS) && thing->flags3 & MF3_ISMONSTER);
+	bool objectPass = !!((flags & RGF_OBJECTS) && (thing->player == NULL) && (!(thing->flags3 & MF3_ISMONSTER))
+		&& ((thing->flags & MF_SHOOTABLE) || (thing->flags6 & MF6_VULNERABLE)));
+	bool playerPass = !!((flags & RGF_PLAYERS) && (thing->player != NULL) && (thing->player->mo == thing));
+	bool voodooPass = !!((flags & RGF_VOODOO) && (thing->player != NULL) && (thing->player->mo != thing));
+	if (!selfPass && (monsterPass || objectPass || playerPass || voodooPass))
+	{
+		if (thing->health <= 0 && !(corpsePass || killedPass)) return false;
+	}
+	bool itemPass = !!((flags & RGF_ITEMS) && thing->IsKindOf(RUNTIME_CLASS(AInventory)));
+	if (!(selfPass || monsterPass || corpsePass || killedPass || itemPass || objectPass || missilePass || playerPass || voodooPass))
+		return false;
+
+	double dx = (double)(thing->x - self->x), dy = (double)(thing->y - self->y);
+	double dz = (double)((thing->z + thing->height/2) - (self->z + self->height/2));
+	if (flags & RGF_CUBE)
+	{
+		double dist = (double)distance, mn = (double)mindist;
+		dx = fabs(dx); dy = fabs(dy); dz = fabs(dz);
+		if ((dx > dist || dy > dist || dz > dist) || (mn && (dx < mn && dy < mn && dz < mn))) return false;
+	}
+	else
+	{
+		double distsquared = double(distance) * double(distance), minsquared = double(mindist) * double(mindist);
+		double lengthsquared = dx*dx + dy*dy + dz*dz;
+		if (lengthsquared > distsquared || (minsquared && lengthsquared < minsquared)) return false;
+	}
+	if ((flags & RGF_NOSIGHT) || P_CheckSight(thing, self, SF_IGNOREVISIBILITY | SF_IGNOREWATERBOUNDARY))
+	{
+		AInventory *gift = static_cast<AInventory *>(Spawn(item, 0, 0, 0, NO_REPLACE));
+		if (gift->IsKindOf(RUNTIME_CLASS(AHealth))) gift->Amount *= amount;
+		else gift->Amount = amount;
+		gift->flags |= MF_DROPPED;
+		gift->ClearCounters();
+		if (!gift->CallTryPickup(thing))
+		{
+			gift->Destroy();
+			return false;
+		}
+		// [BB] If a player got something, inform the clients.
+		if ((thing->player) && (NETWORK_GetState() == NETSTATE_SERVER))
+			SERVERCOMMANDS_GiveInventoryNotOverwritingAmount(thing, gift);
+		return true;
+	}
+	return false;
+}
 
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RadiusGive)
 {
@@ -5893,138 +6071,35 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RadiusGive)
 	ACTION_PARAM_FIXED(distance, 1);
 	ACTION_PARAM_INT(flags, 2);
 	ACTION_PARAM_INT(amount, 3);
+	ACTION_PARAM_CLASS(filter, 4);
+	ACTION_PARAM_NAME(species, 5);
+	ACTION_PARAM_FIXED(mindist, 6);
 
 	// [BB] This is handled server-side.
 	if ( NETWORK_InClientModeAndActorNotClientHandled( self ) )
 		return;
 
-	// We need a valid item, valid targets, and a valid range
-	if (item == NULL || (flags & RGF_MASK) == 0 || distance <= 0)
+	if (item == NULL || (flags & RGF_MASK) == 0 || distance <= 0 || mindist >= distance)
 	{
+		ACTION_SET_RESULT(false);
 		return;
 	}
-	if (amount == 0)
-	{
-		amount = 1;
-	}
-	FBlockThingsIterator it(FBoundingBox(self->x, self->y, distance));
-	double distsquared = double(distance) * double(distance);
-
-	TThinkerIterator<AActor> it_missiles; // [JM] Iterator for missiles. (Temporary, until Zandronum catches up with later ZDoom revisions.)
-
+	if (amount == 0) amount = 1;
 	AActor *thing;
-	while ((thing = (flags & RGF_MISSILES) ? it_missiles.Next() : it.Next())) // [JM] Use TThinkerIterator for RGF_MISSILES, like later ZDoom revisions.
+	bool given = false;
+	if (flags & RGF_MISSILES)
 	{
-		// Don't give to inventory items
-		if (thing->flags & MF_SPECIAL)
-		{
-			continue;
-		}
-		// Avoid giving to self unless requested
-		if (thing == self && !(flags & RGF_GIVESELF))
-		{
-			continue;
-		}
-		// Avoiding special pointers if requested
-		if (((thing == self->target) && (flags & RGF_NOTARGET)) ||
-			((thing == self->tracer) && (flags & RGF_NOTRACER)) ||
-			((thing == self->master) && (flags & RGF_NOMASTER)))
-		{
-			continue;
-		}
-		// Don't give to dead thing unless requested
-		if (thing->flags & MF_CORPSE)
-		{
-			if (!(flags & RGF_CORPSES))
-			{
-				continue;
-			}
-		}
-		else if (thing->health <= 0 || thing->flags6 & MF6_KILLED)
-		{
-			continue;
-		}
-		// Players, monsters, and other shootable objects
-		// [AK] Don't give items to spectators.
-		if ((thing->player) && (thing->player->bSpectating == false))
-		{
-			if ((thing->player->mo == thing) && !(flags & RGF_PLAYERS))
-			{
-				continue;
-			}
-			if ((thing->player->mo != thing) && !(flags & RGF_VOODOO))
-			{
-				continue;
-			}
-		}
-		else if (thing->flags3 & MF3_ISMONSTER)
-		{
-			if (!(flags & RGF_MONSTERS))
-			{
-				continue;
-			}
-		}
-		else if (thing->flags & MF_SHOOTABLE || thing->flags6 & MF6_VULNERABLE)
-		{
-			if (!(flags & RGF_OBJECTS))
-			{
-				continue;
-			}
-		}
-		else if (thing->flags & MF_MISSILE)
-		{
-			if (!(flags & RGF_MISSILES))
-			{
-				continue;
-			}
-		}
-		else
-		{
-			continue;
-		}
-
-		if (flags & RGF_CUBE)
-		{ // check if inside a cube
-			if (abs(thing->x - self->x) > distance ||
-				abs(thing->y - self->y) > distance ||
-				abs((thing->z + thing->height/2) - (self->z + self->height/2)) > distance)
-			{
-				continue;
-			}
-		}
-		else
-		{ // check if inside a sphere
-			TVector3<double> tpos(thing->x, thing->y, thing->z + thing->height/2);
-			TVector3<double> spos(self->x, self->y, self->z + self->height/2);
-			if ((tpos - spos).LengthSquared() > distsquared)
-			{
-				continue;
-			}
-		}
-		fixed_t dz = abs ((thing->z + thing->height/2) - (self->z + self->height/2));
-
-		if ((flags & RGF_NOSIGHT) || P_CheckSight (thing, self, SF_IGNOREVISIBILITY|SF_IGNOREWATERBOUNDARY))
-		{ // OK to give; target is in direct path, or the monster doesn't care about it being in line of sight.
-			AInventory *gift = static_cast<AInventory *>(Spawn (item, 0, 0, 0, NO_REPLACE));
-			if (gift->IsKindOf(RUNTIME_CLASS(AHealth)))
-			{
-				gift->Amount *= amount;
-			}
-			else
-			{
-				gift->Amount = amount;
-			}
-			gift->flags |= MF_DROPPED;
-			gift->ClearCounters();
-			if (!gift->CallTryPickup (thing))
-			{
-				gift->Destroy ();
-			}
-			// [BB] If a player got something, inform the clients.
-			else if ( ( thing->player ) && ( NETWORK_GetState( ) == NETSTATE_SERVER ) )
-				SERVERCOMMANDS_GiveInventoryNotOverwritingAmount( thing, gift );
-		}
+		TThinkerIterator<AActor> it;
+		while ((thing = it.Next()))
+			if (Vita_RadiusGiveOne(self, thing, item, amount, distance, flags, filter, species, mindist)) given = true;
 	}
+	else
+	{
+		FBlockThingsIterator it(FBoundingBox(self->x, self->y, distance));
+		while ((thing = it.Next()))
+			if (Vita_RadiusGiveOne(self, thing, item, amount, distance, flags, filter, species, mindist)) given = true;
+	}
+	ACTION_SET_RESULT(given);
 }
 
 
@@ -6107,4 +6182,255 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_ClientsideACSExecute)
 	bool res = !!P_ExecuteSpecial(ACS_ExecuteWithResult, NULL, self, false, -scriptname, arg1, arg2, arg3, arg4);
 
 	ACTION_SET_RESULT(res);
+}
+
+//===========================================================================
+//
+// [Vita] ZDoom 2.8 action functions, so that DECORATE written for ZDoom
+// 2.8.1 (e.g. the Boltgun packs made for ZDoom Vita) loads here too.
+//
+//===========================================================================
+
+enum
+{
+	VSPF_FULLBRIGHT = 1,
+	VSPF_RELPOS = 1 << 1,
+	VSPF_RELVEL = 1 << 2,
+	VSPF_RELACCEL = 1 << 3,
+	VSPF_RELANG = 1 << 4,
+};
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SpawnParticle)
+{
+	ACTION_PARAM_START(16);
+	ACTION_PARAM_COLOR(color,		0);
+	ACTION_PARAM_INT(flags,			1);
+	ACTION_PARAM_INT(lifetime,		2);
+	ACTION_PARAM_INT(size,			3);
+	ACTION_PARAM_ANGLE(angle,		4);
+	ACTION_PARAM_FIXED(xoff,		5);
+	ACTION_PARAM_FIXED(yoff,		6);
+	ACTION_PARAM_FIXED(zoff,		7);
+	ACTION_PARAM_FIXED(xvel,		8);
+	ACTION_PARAM_FIXED(yvel,		9);
+	ACTION_PARAM_FIXED(zvel,		10);
+	ACTION_PARAM_FIXED(accelx,		11);
+	ACTION_PARAM_FIXED(accely,		12);
+	ACTION_PARAM_FIXED(accelz,		13);
+	ACTION_PARAM_FIXED(startalphaf, 14);
+	ACTION_PARAM_FIXED(fadestepf,	15);
+
+	// particles are only drawn, never simulated by the server
+	if (NETWORK_GetState() == NETSTATE_SERVER) return;
+	{ EXTERN_CVAR(Bool, r_particles) if (!r_particles) return; }
+
+	BYTE startalpha = (BYTE)Scale(clamp(startalphaf, 0, FRACUNIT), 255, FRACUNIT);
+	int fadestep = fadestepf < 0 ? -1 : Scale(clamp(fadestepf, 0, FRACUNIT), 255, FRACUNIT);
+	lifetime = clamp<int>(lifetime, 0, 255);
+	size = clamp<int>(size, 0, 65535);
+
+	if (lifetime != 0)
+	{
+		const angle_t ang = (angle + ((flags & VSPF_RELANG) ? self->angle : 0)) >> ANGLETOFINESHIFT;
+		if (flags & VSPF_RELPOS)
+		{
+			const fixed_t xof1 = xoff;
+			xoff = FixedMul(xof1, finecosine[ang]) + FixedMul(yoff, finesine[ang]);
+			yoff = FixedMul(xof1, finesine[ang]) - FixedMul(yoff, finecosine[ang]);
+		}
+		if (flags & VSPF_RELVEL)
+		{
+			const fixed_t newxvel = FixedMul(xvel, finecosine[ang]) + FixedMul(yvel, finesine[ang]);
+			yvel = FixedMul(xvel, finesine[ang]) - FixedMul(yvel, finecosine[ang]);
+			xvel = newxvel;
+		}
+		if (flags & VSPF_RELACCEL)
+		{
+			fixed_t newaccelx = FixedMul(accelx, finecosine[ang]) + FixedMul(accely, finesine[ang]);
+			accely = FixedMul(accelx, finesine[ang]) - FixedMul(accely, finecosine[ang]);
+			accelx = newaccelx;
+		}
+		P_SpawnParticle(self->x + xoff, self->y + yoff, self->z + zoff, xvel, yvel, zvel, color, !!(flags & VSPF_FULLBRIGHT),
+			startalpha, lifetime, size, fadestep, accelx, accely, accelz);
+	}
+}
+
+static bool Vita_CheckSpecies(AActor *mo, FName filterSpecies, bool exclude)
+{
+	FName actorSpecies = mo->GetSpecies();
+	if (filterSpecies == NAME_None) return true;
+	return exclude ? (actorSpecies != filterSpecies) : (actorSpecies == filterSpecies);
+}
+
+static bool Vita_CheckClass(AActor *mo, const PClass *filterClass, bool exclude)
+{
+	const PClass *actorClass = mo->GetClass();
+	if (filterClass == NULL) return true;
+	return exclude ? (actorClass != filterClass) : (actorClass == filterClass);
+}
+
+enum
+{
+	DMSS_FOILINVUL = 1, DMSS_AFFECTARMOR = 2, DMSS_KILL = 4, DMSS_NOFACTOR = 8, DMSS_FOILBUDDHA = 16,
+	DMSS_NOPROTECT = 32, DMSS_EXFILTER = 64, DMSS_EXSPECIES = 128, DMSS_EITHER = 256,
+};
+
+static void Vita_DoDamage(AActor *dmgtarget, AActor *self, int amount, FName DamageType, int flags, const PClass *filter, FName species)
+{
+	if (NETWORK_InClientMode()) return;	// the server deals damage
+	bool filterpass = Vita_CheckClass(dmgtarget, filter, !!(flags & DMSS_EXFILTER)),
+		speciespass = Vita_CheckSpecies(dmgtarget, species, !!(flags & DMSS_EXSPECIES));
+	if ((flags & DMSS_EITHER) ? (filterpass || speciespass) : (filterpass && speciespass))
+	{
+		int dmgFlags = 0;
+		if (flags & DMSS_FOILINVUL) dmgFlags |= DMG_FOILINVUL;
+		if (flags & (DMSS_KILL | DMSS_NOFACTOR)) dmgFlags |= DMG_NO_FACTOR;
+		if (!(flags & DMSS_AFFECTARMOR) || (flags & DMSS_KILL)) dmgFlags |= DMG_NO_ARMOR;
+		if (flags & DMSS_KILL) amount += dmgtarget->health;
+		if (amount > 0)
+			P_DamageMobj(dmgtarget, self, self, amount, DamageType, dmgFlags);
+		else if (amount < 0)
+			P_GiveBody(dmgtarget, -amount);
+	}
+}
+
+#define VITA_DAMAGE_FUNC(fname, who) \
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, fname) \
+{ \
+	ACTION_PARAM_START(5); \
+	ACTION_PARAM_INT(amount, 0); \
+	ACTION_PARAM_NAME(DamageType, 1); \
+	ACTION_PARAM_INT(flags, 2); \
+	ACTION_PARAM_CLASS(filter, 3); \
+	ACTION_PARAM_NAME(species, 4); \
+	AActor *t = (who); \
+	if (t != NULL) Vita_DoDamage(t, self, amount, DamageType, flags, filter, species); \
+}
+VITA_DAMAGE_FUNC(A_DamageSelf, self)
+VITA_DAMAGE_FUNC(A_DamageTarget, self->target)
+VITA_DAMAGE_FUNC(A_DamageTracer, self->tracer)
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetHealth)
+{
+	ACTION_PARAM_START(2);
+	ACTION_PARAM_INT(health, 0);
+	ACTION_PARAM_INT(ptr, 1);
+
+	AActor *mobj = COPY_AAPTR(self, ptr);
+	if (!mobj || NETWORK_InClientMode()) return;
+	if (health <= 0) health = 1;
+	player_t *player = mobj->player;
+	if (player && player->mo != NULL)
+		player->mo->health = mobj->health = player->health = health;
+	else
+		mobj->health = health;
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetSpeed)
+{
+	ACTION_PARAM_START(2);
+	ACTION_PARAM_FIXED(speed, 0);
+	ACTION_PARAM_INT(ptr, 1);
+
+	AActor *ref = COPY_AAPTR(self, ptr);
+	if (!ref)
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+	ref->Speed = speed;
+}
+
+enum
+{
+	CPXF_ANCESTOR = 1, CPXF_LESSOREQUAL = 1 << 1, CPXF_NOZ = 1 << 2, CPXF_COUNTDEAD = 1 << 3, CPXF_DEADONLY = 1 << 4,
+	CPXF_EXACT = 1 << 5, CPXF_SETTARGET = 1 << 6, CPXF_SETMASTER = 1 << 7, CPXF_SETTRACER = 1 << 8,
+	CPXF_FARTHEST = 1 << 9, CPXF_CLOSEST = 1 << 10, CPXF_SETONPTR = 1 << 11, CPXF_CHECKSIGHT = 1 << 12,
+};
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CheckProximity)
+{
+	ACTION_PARAM_START(6);
+	ACTION_PARAM_STATE(jump, 0);
+	ACTION_PARAM_CLASS(classname, 1);
+	ACTION_PARAM_FIXED(distance, 2);
+	ACTION_PARAM_INT(count, 3);
+	ACTION_PARAM_INT(flags, 4);
+	ACTION_PARAM_INT(ptr, 5);
+
+	ACTION_SET_RESULT(false);
+
+	if (!jump && !(flags & (CPXF_SETTARGET | CPXF_SETMASTER | CPXF_SETTRACER))) return;
+	AActor *ref = COPY_AAPTR(self, ptr);
+	if (!ref || !classname || distance <= 0) return;
+
+	int counter = 0;
+	bool result = false;
+	fixed_t closer = distance, farther = 0, current = distance;
+	const bool ptrWillChange = !!(flags & (CPXF_SETTARGET | CPXF_SETMASTER | CPXF_SETTRACER));
+	const bool ptrDistPref = !!(flags & (CPXF_CLOSEST | CPXF_FARTHEST));
+
+	TThinkerIterator<AActor> it;
+	AActor *mo, *dist = NULL;
+	while ((mo = it.Next()))
+	{
+		if (mo == ref) continue;
+		if (flags & CPXF_ANCESTOR) { if (!mo->IsKindOf(classname)) continue; }
+		else if (classname != mo->GetClass()) continue;
+
+		const fixed_t d2 = P_AproxDistance(ref->x - mo->x, ref->y - mo->y);
+		if (d2 < distance && ((flags & CPXF_NOZ) ||
+			((ref->z > mo->z && ref->z - (mo->z + mo->height) < distance) ||
+			(ref->z <= mo->z && mo->z - (ref->z + ref->height) < distance))))
+		{
+			if ((flags & CPXF_CHECKSIGHT) && !P_CheckSight(mo, ref, SF_IGNOREVISIBILITY | SF_IGNOREWATERBOUNDARY)) continue;
+			if (ptrWillChange)
+			{
+				current = d2;
+				if ((flags & CPXF_CLOSEST) && current < closer) { dist = mo; closer = current; }
+				else if ((flags & CPXF_FARTHEST) && current > farther) { dist = mo; farther = current; }
+				else if (!dist) dist = mo;
+			}
+			if (mo->flags6 & MF6_KILLED)
+			{
+				if (!(flags & (CPXF_COUNTDEAD | CPXF_DEADONLY))) continue;
+				counter++;
+			}
+			else
+			{
+				if (flags & CPXF_DEADONLY) continue;
+				counter++;
+			}
+			if (counter > count)
+			{
+				result = (flags & (CPXF_LESSOREQUAL | CPXF_EXACT)) ? false : true;
+				if (ptrWillChange && ptrDistPref) continue;
+				break;
+			}
+		}
+	}
+	if (ptrWillChange && dist != NULL)
+	{
+		AActor *on = (flags & CPXF_SETONPTR) ? ref : self;
+		if (flags & CPXF_SETTARGET) on->target = dist;
+		if (flags & CPXF_SETMASTER) on->master = dist;
+		if (flags & CPXF_SETTRACER) on->tracer = dist;
+	}
+	if (counter == count) result = true;
+	else if (counter < count) result = !!((flags & CPXF_LESSOREQUAL) && !(flags & CPXF_EXACT));
+	if (jump && result) ACTION_JUMP(jump, CLIENTUPDATE_FRAME);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_QuakeEx)
+{
+	ACTION_PARAM_START(11);
+	ACTION_PARAM_INT(intensityX, 0);
+	ACTION_PARAM_INT(intensityY, 1);
+	ACTION_PARAM_INT(intensityZ, 2);
+	ACTION_PARAM_INT(duration, 3);
+	ACTION_PARAM_INT(damrad, 4);
+	ACTION_PARAM_INT(tremrad, 5);
+	ACTION_PARAM_SOUND(sound, 6);
+	ACTION_PARAM_INT(flags, 7);
+	P_StartQuakeXYZ(self, 0, intensityX, intensityY, intensityZ, duration, damrad, tremrad, sound, flags);
 }

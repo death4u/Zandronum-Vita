@@ -100,7 +100,14 @@ void FHardwareTexture::LoadImage(unsigned char * buffer,int w, int h, unsigned i
 	bool deletebuffer=false;
 	bool use_mipmapping = TexFilter[gl_texture_filter].mipmapping;
 
+#ifdef __vita__
+	// [Vita] alpha textures (crosshairs, decals, shades: white with the
+	// shade in alpha) as RGBA8: vitaGL's GL_ALPHA8 came out fully opaque
+	// (a solid square crosshair).
+	if (alphatexture) texformat=GL_RGBA8;
+#else
 	if (alphatexture) texformat=GL_ALPHA8;
+#endif
 	else if (forcenocompression) texformat = GL_RGBA8;
 #ifdef __vita__
 	// [Vita] vitaGL's DXT compression breaks on textures under 4x4 (HaloDoom's
@@ -389,9 +396,13 @@ FHardwareTexture::~FHardwareTexture()
 
 unsigned * FHardwareTexture::GetTexID(int cm, int translation)
 {
-	if (cm < 0 || cm >= CM_MAXCOLORMAP) cm=CM_DEFAULT;
+	// [Vita] CM_SHADE (0x10000002) is above CM_MAXCOLORMAP and was folded
+	// into CM_DEFAULT, so alpha-channel drawing (DTA_AlphaChannel) got the
+	// normal opaque picture: grayscale crosshairs (BoltgunZDoom) were solid
+	// squares. Shade textures now get their own slot in the translated list.
+	if (cm != CM_SHADE && (cm < 0 || cm >= CM_MAXCOLORMAP)) cm=CM_DEFAULT;
 
-	if (translation==0)
+	if (translation==0 && cm != CM_SHADE)
 	{
 		return &glTexID[cm];
 	}
@@ -503,7 +514,7 @@ void FHardwareTexture::BindToFrameBuffer()
 unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int h, bool wrap, int texunit,
 									  int cm, int translation)
 {
-	if (cm < 0 || cm >= CM_MAXCOLORMAP) cm=CM_DEFAULT;
+	if (cm != CM_SHADE && (cm < 0 || cm >= CM_MAXCOLORMAP)) cm=CM_DEFAULT;
 
 	unsigned int * pTexID=GetTexID(cm, translation);
 

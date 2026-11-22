@@ -289,6 +289,10 @@ enum
 	WF_WEAPONRELOADOK	= 1 << 5,		// [XA] Okay to reload this weapon.
 	WF_WEAPONZOOMOK		= 1 << 6,		// [XA] Okay to use weapon zoom function.
 	WF_REFIRESWITCHOK	= 1 << 7,		// Mirror WF_WEAPONSWITCHOK for A_ReFire
+	WF_USER1OK			= 1 << 8,		// [Vita] ZDoom 2.8: weapon states User1-4 (+user1..+user4)
+	WF_USER2OK			= 1 << 9,
+	WF_USER3OK			= 1 << 10,
+	WF_USER4OK			= 1 << 11,
 };	
 
 

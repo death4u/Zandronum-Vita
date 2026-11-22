@@ -31,6 +31,7 @@
 **
 */
 
+#include "doomtype.h"
 #include "vectors.h"
 #include "tables.h"
 
@@ -81,6 +82,7 @@ void P_FindParticleSubsectors ();
 class AActor;
 
 particle_t *JitterParticle (int ttl);
+void P_SpawnParticle(fixed_t x, fixed_t y, fixed_t z, fixed_t velx, fixed_t vely, fixed_t velz, PalEntry color, bool fullbright, BYTE startalpha, BYTE lifetime, WORD size, int fadestep, fixed_t accelx, fixed_t accely, fixed_t accelz);
 particle_t *JitterParticle (int ttl, float drift);
 
 void P_ThinkParticles (void);

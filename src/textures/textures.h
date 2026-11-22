@@ -453,6 +453,9 @@ public:
 
 	FTextureID CreateTexture (int lumpnum, int usetype=FTexture::TEX_Any);	// Also calls AddTexture
 	FTextureID AddTexture (FTexture *texture);
+	// [Vita] TEXTURES names longer than 8 characters (ZDoom 2.8)
+	void AddLongName (const char *longname, FTextureID id);
+	TMap<FName, int> LongNames;
 	FTextureID GetDefaultTexture() const { return DefaultTexture; }
 
 	void LoadTextureX(int wadnum);

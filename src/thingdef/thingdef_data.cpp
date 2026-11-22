@@ -252,6 +252,7 @@ static FFlagDef ActorFlags[]=
 	// [BB] Out of order ZDoom backport.
 	DEFINE_FLAG(MF7, USEKILLSCRIPTS, AActor, flags7),
 	DEFINE_FLAG(MF7, NOKILLSCRIPTS, AActor, flags7),
+	DEFINE_FLAG(MF7, DONTTHRUST, AActor, flags7),	// [Vita] ZDoom 2.8
 
 	// [BC] New DECORATE flag defines here.
 	DEFINE_FLAG(STFL, BLUETEAM, AActor, STFlags),

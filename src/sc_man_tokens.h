@@ -114,6 +114,8 @@ xx(TK_Abs,					"'abs'")
 xx(TK_Random,				"'random'")
 xx(TK_Random2,				"'random2'")
 xx(TK_FRandom,				"'frandom'")
+xx(TK_RandomPick,			"'randompick'")		// [Vita] ZDoom 2.8
+xx(TK_FRandomPick,			"'frandompick'")
 xx(TK_Is,					"'is'")
 xx(TK_Replaces,				"'replaces'")
 xx(TK_Vector,				"'vector'")

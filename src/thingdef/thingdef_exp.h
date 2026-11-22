@@ -555,6 +555,27 @@ public:
 
 //==========================================================================
 //
+// [Vita] ZDoom 2.8's randompick / frandompick
+//
+//==========================================================================
+
+class FxRandomPick : public FxExpression
+{
+protected:
+	FRandom * rng;
+	TDeletingArray<FxExpression*> min;
+
+public:
+
+	FxRandomPick(FRandom *, TArray<FxExpression*> mi, bool floaty, const FScriptPosition &pos);
+	~FxRandomPick();
+	FxExpression *Resolve(FCompileContext&);
+
+	ExpVal EvalExpression(AActor *self);
+};
+
+//==========================================================================
+//
 //
 //
 //==========================================================================
