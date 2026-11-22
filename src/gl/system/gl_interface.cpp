@@ -201,6 +201,12 @@ void gl_LoadExtensions()
 		vita_showfps = false;	// 0053: the FPS counter is off by default for the release
 		vita_glconfig = 6;
 	}
+	if (vita_glconfig < 7)
+	{
+		EXTERN_CVAR(Bool, vita_showfps)
+		vita_showfps = true;	// 0056: the FPS counter is back on
+		vita_glconfig = 7;
+	}
 #else
 
 	const char *version = (const char*)glGetString(GL_VERSION);
