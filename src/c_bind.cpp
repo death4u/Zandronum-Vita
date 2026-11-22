@@ -146,6 +146,9 @@ static const FBinding DefBindings[] =
 	{ "joy4", "+use" },
 #endif
 
+#ifndef __vita__
+	// [Vita] Not on the Vita: since 0053 these pad names are aliases of the
+	// Vita's buttons, so these binds overwrote the Vita layout above.
 	// Xbox 360 / PS2 controllers
 	{ "pad_a", "+use" },
 	{ "pad_y", "+jump" },
@@ -160,6 +163,7 @@ static const FBinding DefBindings[] =
 	{ "pad_start", "pause" },
 	{ "pad_back", "menu_main" },
 	{ "lthumb", "crouch" },
+#endif
 	{ NULL, NULL }
 };
 

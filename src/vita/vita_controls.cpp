@@ -226,10 +226,54 @@ static unsigned BindingsCrc()
 	return crc;
 }
 
+// Layout file version. 2 (build 0055): layouts were checked for the bad pad
+// bindings 0053 wrote (see RepairPadDefaults).
+static const int LAYOUT_VERSION = 2;
+static int LoadedLayoutVersion;
+
+// The Vita default for each pad button (Triangle, Circle, Cross, Square, L, R,
+// Down, Left, Up, Right, Select, Start), as in c_bind.cpp and the README.
+static const char *const VitaPadDefaults[VITA_PAD_BUTTONS] =
+{
+	"weapnext", "+crouch", "+jump", "+use", "+altattack", "+attack",
+	"+reload", "weapprev", "togglemap", "weapnext", "+showscores", "menu_main"
+};
+// What 0053 put on each button by mistake: the Xbox pad defaults, which its
+// pad-name aliases (pad_a, rshoulder, dpaddown...) mapped onto the Vita's buttons.
+static const char *const Bad0053PadBinds[VITA_PAD_BUTTONS] =
+{
+	"+jump", "", "+use", "", "weapprev", "weapnext",
+	"invuse", "invprev", "togglemap", "invnext", "menu_main", "pause"
+};
+
+// Puts the Vita default back on every pad button that still has 0053's wrong
+// binding. Buttons the player or a mod set to anything else are left alone.
+static int RepairPadDefaults()
+{
+	int fixed = 0;
+	for (int i = 0; i < VITA_PAD_BUTTONS; i++)
+	{
+		if (Bad0053PadBinds[i][0] == 0 || !stricmp(Bad0053PadBinds[i], VitaPadDefaults[i])) continue;
+		const FString &cur = Bindings.GetBinding(KEY_FIRSTJOYBUTTON + i);
+		if (cur.CompareNoCase(Bad0053PadBinds[i]) == 0)
+		{
+			Bindings.SetBind(KEY_FIRSTJOYBUTTON + i, VitaPadDefaults[i]);
+			fixed++;
+		}
+	}
+	return fixed;
+}
+
 static void SaveLayout()
 {
 	mkdir(CONTROLS_DIR, 0777);
 	FConfigFile f(LayoutPath);
+	f.SetSection("Vita", true); f.ClearCurrentSection();
+	{
+		char ver[16];
+		snprintf(ver, sizeof(ver), "%d", LAYOUT_VERSION);
+		f.SetValueForKey("Version", ver);
+	}
 	f.SetSection("Bindings", true); f.ClearCurrentSection(); Bindings.ArchiveBindings(&f);
 	f.SetSection("DoubleBindings", true); f.ClearCurrentSection(); DoubleBindings.ArchiveBindings(&f);
 	f.SetSection("AutomapBindings", true); f.ClearCurrentSection(); AutomapBindings.ArchiveBindings(&f);
@@ -244,6 +288,12 @@ static bool LoadLayout()
 	fclose(t);
 	FConfigFile f(LayoutPath);
 	const char *key, *value;
+	LoadedLayoutVersion = 1;
+	if (f.SetSection("Vita"))
+	{
+		const char *v = f.GetValueForKey("Version");
+		if (v != NULL) LoadedLayoutVersion = atoi(v);
+	}
 	if (f.SetSection("Bindings"))
 	{
 		Bindings.UnbindAll();
@@ -304,6 +354,13 @@ void Vita_ControlsInit()
 	if (LoadLayout())
 	{
 		Vita_BootLog("controls: layout of \"%s\" loaded from %s", game.GetChars(), LayoutPath.GetChars());
+		// 0055: undo 0053's bad pad bindings (R = next weapon, Start = pause...) once.
+		if (!halodoom && LoadedLayoutVersion < LAYOUT_VERSION)
+		{
+			int fixed = RepairPadDefaults();
+			SaveLayout();
+			Vita_BootLog("controls: layout updated to version %d, %d pad buttons reset to the Vita defaults", LAYOUT_VERSION, fixed);
+		}
 		// 0053: holding Square is use in every game; layouts saved before
 		// get it only if nothing is bound to holding Square (the rest stays)
 		if (!halodoom && Bindings.GetBinding(KEY_FIRSTJOYBUTTON + VITA_PAD_BUTTONS + 3).IsEmpty())
@@ -316,7 +373,13 @@ void Vita_ControlsInit()
 		return;
 	}
 	if (halodoom) HaloDoomDefaults();
-	else Bindings.DoBind("Hold_Square", "+use");	// 0053: holding Square is use in every game
+	else
+	{
+		// 0055: the config saved by 0053 may still hold its bad pad bindings.
+		int fixed = RepairPadDefaults();
+		if (fixed) Vita_BootLog("controls: %d pad buttons reset to the Vita defaults", fixed);
+		Bindings.DoBind("Hold_Square", "+use");	// 0053: holding Square is use in every game
+	}
 	SaveLayout();
 	Vita_BootLog("controls: new layout for \"%s\" (%s defaults) saved to %s", game.GetChars(),
 		halodoom ? "HaloDoom" : "general", LayoutPath.GetChars());
