@@ -946,6 +946,18 @@ void AInventory::ModifyDamage (int damage, FName damageType, int &newdamage, boo
 //
 //===========================================================================
 
+//===========================================================================
+//
+// AInventory :: GetNoTeleportFreeze	[Vita] ZDoom 2.8
+//
+//===========================================================================
+
+bool AInventory::GetNoTeleportFreeze ()
+{
+	// The flag isn't checked here: it only counts on powerups, not on powerup givers.
+	return Inventory != NULL ? Inventory->GetNoTeleportFreeze() : false;
+}
+
 fixed_t AInventory::GetSpeedFactor ()
 {
 	if (Inventory != NULL)
@@ -1685,6 +1697,8 @@ bool AInventory::TryPickupRestricted (AActor *&toucher)
 
 bool AInventory::CallTryPickup (AActor *toucher, AActor **toucher_return)
 {
+	TObjPtr<AInventory> Invstack = Inventory;	// [Vita] ZDoom 2.8: the item's own inventory, for IF_TRANSFER
+
 	// unmorphed versions of a currently morphed actor cannot pick up anything. 
 	if (toucher->flags & MF_UNMORPHED) return false;
 
@@ -1705,7 +1719,27 @@ bool AInventory::CallTryPickup (AActor *toucher, AActor **toucher_return)
 		GoAwayAndDie();
 	}
 
-	if (res) GiveQuest(toucher);
+	if (res)
+	{
+		GiveQuest(toucher);
+
+		// [Vita] ZDoom 2.8: transfer all inventory the old object had, if requested.
+		if (ItemFlags & IF_TRANSFER)
+		{
+			while (Invstack)
+			{
+				AInventory *titem = Invstack;
+				Invstack = titem->Inventory;
+				if (titem->Owner == this)
+				{
+					if (!titem->CallTryPickup(toucher)) // The object no longer can exist
+					{
+						titem->Destroy();
+					}
+				}
+			}
+		}
+	}
 	return res;
 }
 

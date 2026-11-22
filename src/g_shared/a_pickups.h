@@ -138,6 +138,8 @@ enum
 	IF_TOSSED			= 1<<22,	// Was spawned by P_DropItem (i.e. as a monster drop)
 	IF_ALWAYSRESPAWN	= 1<<23,	// Always respawn, regardless of dmflag
 	IF_FORCERESPAWNINSURVIVAL = 1<<24,	// [BB] Will be respawned in survival even without DF_ITEMS_RESPAWN.
+	IF_TRANSFER			= 1<<25,	// [Vita] ZDoom 2.8: items the item contains are also given to the picker
+	IF_NOTELEPORTFREEZE	= 1<<26,	// [Vita] ZDoom 2.8: doesn't freeze the player after teleporting
 
 };
 
@@ -207,6 +209,7 @@ public:
 	virtual void AbsorbDamage (int damage, FName damageType, int &newdamage);
 	virtual void ModifyDamage (int damage, FName damageType, int &newdamage, bool passive);
 	virtual fixed_t GetSpeedFactor();
+	virtual bool GetNoTeleportFreeze();	// [Vita] ZDoom 2.8
 	virtual int AlterWeaponSprite (visstyle_t *vis);
 
 	virtual PalEntry GetBlend ();

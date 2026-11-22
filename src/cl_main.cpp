@@ -5841,7 +5841,7 @@ void ServerCommands::TeleportThing::Execute()
 {
 	// Spawn teleport fog at the source.
 	if ( sourcefog )
-		Spawn<ATeleportFog>( actor->x, actor->y, actor->z + (( actor->flags & MF_MISSILE ) ? 0 : TELEFOGHEIGHT ), ALLOW_REPLACE );
+		P_SpawnActorTeleportFog( actor, actor->x, actor->y, actor->z + (( actor->flags & MF_MISSILE ) ? 0 : TELEFOGHEIGHT ), true );	// [Vita]
 
 	// Set the thing's new position.
 	CLIENT_MoveThing( actor, x, y, z );
@@ -5857,10 +5857,9 @@ void ServerCommands::TeleportThing::Execute()
 		// Spawn the fog slightly in front of the thing's destination.
 		angle_t fineangle = angle >> ANGLETOFINESHIFT;
 
-		Spawn<ATeleportFog>( actor->x + ( 20 * finecosine[fineangle] ),
+		P_SpawnActorTeleportFog( actor, actor->x + ( 20 * finecosine[fineangle] ),
 			actor->y + ( 20 * finesine[fineangle] ),
-			actor->z + (( actor->flags & MF_MISSILE ) ? 0 : TELEFOGHEIGHT ),
-			ALLOW_REPLACE );
+			actor->z + (( actor->flags & MF_MISSILE ) ? 0 : TELEFOGHEIGHT ), false );	// [Vita]
 	}
 
 	// Set the thing's new momentum.

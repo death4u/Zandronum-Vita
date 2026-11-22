@@ -525,13 +525,13 @@ void P_PlayerStartStomp(AActor *actor)
 
 inline fixed_t secfriction(const sector_t *sec)
 {
-	fixed_t friction = Terrains[TerrainTypes[sec->GetTexture(sector_t::floor)]].Friction;
+	fixed_t friction = Terrains[P_SECTOR_TERRAIN(sec, sector_t::floor)].Friction;
 	return friction != 0 ? friction : sec->friction;
 }
 
 inline fixed_t secmovefac(const sector_t *sec)
 {
-	fixed_t movefactor = Terrains[TerrainTypes[sec->GetTexture(sector_t::floor)]].MoveFactor;
+	fixed_t movefactor = Terrains[P_SECTOR_TERRAIN(sec, sector_t::floor)].MoveFactor;
 	return movefactor != 0 ? movefactor : sec->movefactor;
 }
 
@@ -596,7 +596,7 @@ int P_GetFriction(const AActor *mo, int *frictionfactor)
 #endif
 
 			if (!(sec->special & FRICTION_MASK) &&
-				Terrains[TerrainTypes[sec->GetTexture(sector_t::floor)]].Friction == 0)
+				Terrains[P_SECTOR_TERRAIN(sec, sector_t::floor)].Friction == 0)
 			{
 				continue;
 			}
@@ -610,6 +610,19 @@ int P_GetFriction(const AActor *mo, int *frictionfactor)
 				movefactor = secmovefac(sec);
 			}
 		}
+	}
+
+	// [Vita] ZDoom 2.8: the actor's own Friction property scales the result.
+	if (mo->Friction != FRACUNIT)
+	{
+		friction = clamp(FixedMul(friction, mo->Friction), 0, FRACUNIT);
+		// Same conversion as P_SetSectorFriction
+		if (friction >= ORIG_FRICTION)	// ice
+			movefactor = ((0x10092 - friction) * 1024) / 4352 + 568;
+		else
+			movefactor = ((friction - 0xDB34)*(0xA))/0x80;
+		if (movefactor < 32)
+			movefactor = 32;
 	}
 
 	if (frictionfactor)
@@ -890,6 +903,14 @@ bool PIT_CheckLine(line_t *ld, const FBoundingBox &box, FCheckPosition &tm)
 		spechit.Push(ld);
 	}
 
+	return true;
+}
+
+// [Vita] ZDoom 2.8: RipLevelMin/RipLevelMax limit which rippers can pass through an actor.
+static bool CheckRipLevel(AActor *victim, AActor *projectile)
+{
+	if (victim->RipLevelMin > 0 && projectile->RipperLevel < victim->RipLevelMin) return false;
+	if (victim->RipLevelMax > 0 && projectile->RipperLevel > victim->RipLevelMax) return false;
 	return true;
 }
 
@@ -1188,8 +1209,8 @@ bool PIT_CheckThing(AActor *thing, FCheckPosition &tm)
 					//     cases where they are clearly supposed to do that
 					if (thing->IsFriend(tm.thing->target))
 					{
-						// Friends never harm each other
-						return false;
+						// Friends never harm each other, unless the shooter has HARMFRIENDS. [Vita] ZDoom 2.8
+						if (!(tm.thing->target->flags7 & MF7_HARMFRIENDS)) return false;
 					}
 					if (thing->TIDtoHate != 0 && thing->TIDtoHate == tm.thing->target->TIDtoHate)
 					{
@@ -1221,7 +1242,7 @@ bool PIT_CheckThing(AActor *thing, FCheckPosition &tm)
 		{
 			return true;
 		}
-		if (tm.DoRipping && !(thing->flags5 & MF5_DONTRIP))
+		if ((tm.DoRipping && !(thing->flags5 & MF5_DONTRIP)) && CheckRipLevel(thing, tm.thing))	// [Vita] rip levels
 		{
 			if (!(tm.thing->flags6 & MF6_NOBOSSRIP) || !(thing->flags2 & MF2_BOSS))
 			{
@@ -1278,7 +1299,7 @@ bool PIT_CheckThing(AActor *thing, FCheckPosition &tm)
 		damage = tm.thing->GetMissileDamage((tm.thing->flags4 & MF4_STRIFEDAMAGE) ? 3 : 7, 1);
 		if ( NETWORK_InClientMode() == false )
 		{
-			if ((damage > 0) || (tm.thing->flags6 & MF6_FORCEPAIN))
+			if ((damage > 0) || (tm.thing->flags6 & MF6_FORCEPAIN) || (tm.thing->flags7 & MF7_CAUSEPAIN))	// [Vita] CAUSEPAIN
 			{
 				if (( tm.thing->target ) &&
 					( tm.thing->target->player ) &&
@@ -1318,6 +1339,16 @@ bool PIT_CheckThing(AActor *thing, FCheckPosition &tm)
 				if ( thing->player && ( NETWORK_GetState( ) == NETSTATE_SERVER ) )
 					SERVERCOMMANDS_SetPlayerHealth ( static_cast<ULONG> ( thing->player - players ) );
 			}
+		}
+		// [Vita] ZDoom 2.8: THRUREFLECT actors let missiles pass through them.
+		if ((thing->flags7 & MF7_THRUREFLECT) && (thing->flags2 & MF2_REFLECTIVE) && (tm.thing->flags & MF_MISSILE))
+		{
+			if (tm.thing->flags2 & MF2_SEEKERMISSILE)
+			{
+				tm.thing->tracer = tm.thing->target;
+			}
+			tm.thing->target = thing;
+			return true;
 		}
 		return false;		// don't traverse any more
 	}
@@ -3543,6 +3574,8 @@ bool P_BounceWall(AActor *mo)
 extern FRandom pr_bounce;
 bool P_BounceActor(AActor *mo, AActor *BlockingMobj, bool ontop)
 {
+	// [Vita] ZDoom 2.8: don't bounce off reflective actors that let things pass through them.
+	if (BlockingMobj && ((BlockingMobj->flags2 & MF2_REFLECTIVE) && (BlockingMobj->flags7 & MF7_THRUREFLECT))) return true;
 	if (mo && BlockingMobj && ((mo->BounceFlags & BOUNCE_AllActors)
 		|| ((mo->flags & MF_MISSILE) && (!(mo->flags2 & MF2_RIP) || (BlockingMobj->flags5 & MF5_DONTRIP) || ((mo->flags6 & MF6_NOBOSSRIP) && (BlockingMobj->flags2 & MF2_BOSS))) && (BlockingMobj->flags2 & MF2_REFLECTIVE))
 		|| ((BlockingMobj->player == NULL) && (!(BlockingMobj->flags3 & MF3_ISMONSTER)))
@@ -4451,9 +4484,10 @@ AActor *P_LineAttack(AActor *t1, angle_t angle, fixed_t distance,
 			// Note: The puff may not yet be spawned here so we must check the class defaults, not the actor.
 			int newdam = damage;
 			// [EP] Skip this for clients.
-			if ( ( NETWORK_InClientMode( ) == false ) && (damage || (puffDefaults != NULL && puffDefaults->flags6 & MF6_FORCEPAIN)))
+			if ( ( NETWORK_InClientMode( ) == false ) && (damage || (puffDefaults != NULL && ((puffDefaults->flags6 & MF6_FORCEPAIN) || (puffDefaults->flags7 & MF7_CAUSEPAIN)))))	// [Vita] CAUSEPAIN
 			{
 				int dmgflags = DMG_INFLICTOR_IS_PUFF | pflag;
+				if (puffDefaults != NULL && (puffDefaults->flags7 & MF7_FOILBUDDHA)) dmgflags |= DMG_FOILBUDDHA;	// [Vita] ZDoom 2.8
 				// Allow MF5_PIERCEARMOR on a weapon as well.
 				if (t1->player != NULL && (dmgflags & DMG_PLAYERATTACK) && t1->player->ReadyWeapon != NULL &&
 					t1->player->ReadyWeapon->flags5 & MF5_PIERCEARMOR)
@@ -4958,7 +4992,8 @@ void P_RailAttack(AActor *source, int damage, int offset_xy, fixed_t offset_z, i
 					damage = 999;
 
 				// [RK] If the attack source is a player, send the DMG_PLAYERATTACK flag.
-				int newdam = P_DamageMobj(hitactor, thepuff ? thepuff : source, source, damage, damagetype, DMG_INFLICTOR_IS_PUFF | (source->player ? DMG_PLAYERATTACK : 0));
+				int newdam = P_DamageMobj(hitactor, thepuff ? thepuff : source, source, damage, damagetype, DMG_INFLICTOR_IS_PUFF | (source->player ? DMG_PLAYERATTACK : 0)
+					| (puffDefaults && (puffDefaults->flags3 & MF3_FOILINVUL) ? DMG_FOILINVUL : 0) | (puffDefaults && (puffDefaults->flags7 & MF7_FOILBUDDHA) ? DMG_FOILBUDDHA : 0));	// [Vita] ZDoom 2.8
 
 				if (bleed)
 				{
@@ -6307,6 +6342,8 @@ int P_PushUp(AActor *thing, FChangePosition *cpos)
 		// is normally for projectiles which would have exploded by now anyway...
 		// [BB] Adapted this for ZADF_UNBLOCK_PLAYERS.
 		if (P_CheckUnblock(thing, intersect) || (thing->flags6 & MF6_THRUSPECIES && thing->GetSpecies() == intersect->GetSpecies()))
+			continue;
+		if ((thing->flags & MF_MISSILE) && (intersect->flags2 & MF2_REFLECTIVE) && (intersect->flags7 & MF7_THRUREFLECT))	// [Vita] ZDoom 2.8
 			continue;
 		if (!(intersect->flags2 & MF2_PASSMOBJ) ||
 			(!(intersect->flags3 & MF3_ISMONSTER) && intersect->Mass > mymass) ||

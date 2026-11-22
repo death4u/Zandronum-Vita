@@ -8,6 +8,7 @@
 #include "s_sound.h"
 #include "a_sharedglobal.h"
 #include "statnums.h"
+#include "r_utility.h"	// [Vita] r_TicFrac for QF_WAVE
 #include "farchive.h"
 // [BB] New #includes.
 #include "network.h"
@@ -56,15 +57,20 @@ DEarthquake::DEarthquake (AActor *center, int intensity, int duration,
 	m_IntensityZ = 0;
 	m_Flags = 0;
 	m_CountdownStart = duration;
+	m_WaveSpeedX = m_WaveSpeedY = m_WaveSpeedZ = 0;	// [Vita]
 }
 
 // [Vita] ZDoom 2.8's A_QuakeEx
 enum { VQF_RELATIVE = 1, VQF_SCALEDOWN = 1 << 1, VQF_SCALEUP = 1 << 2, VQF_MAX = 1 << 3, VQF_FULLINTENSITY = 1 << 4, VQF_WAVE = 1 << 5 };
 
 DEarthquake::DEarthquake (AActor *center, int intensityX, int intensityY, int intensityZ, int duration,
-						  int damrad, int tremrad, FSoundID quakesound, int flags)
+						  int damrad, int tremrad, FSoundID quakesound, int flags,
+						  double waveSpeedX, double waveSpeedY, double waveSpeedZ)
 						  : DThinker(STAT_EARTHQUAKE)
 {
+	m_WaveSpeedX = waveSpeedX;
+	m_WaveSpeedY = waveSpeedY;
+	m_WaveSpeedZ = waveSpeedZ;
 	m_QuakeSFX = quakesound;
 	m_Spot = center;
 	m_DamageRadius = damrad << (FRACBITS);
@@ -95,27 +101,72 @@ fixed_t DEarthquake::GetModIntensity(int intensity) const
 	return in;
 }
 
-bool DEarthquake::StaticGetQuakeIntensities (AActor *victim, fixed_t &x, fixed_t &y, fixed_t &z)
+// [Vita] ZDoom 2.8: QF_WAVE turns the intensity into the amplitude of a sine
+// wave (waveMultiplier = full waves per second) instead of random jitter.
+fixed_t DEarthquake::GetModWave(double waveMultiplier) const
 {
-	x = y = z = 0;
-	if (victim->player != NULL && (victim->player->cheats & CF_NOCLIP)) return false;
+	double time = m_Countdown - FIXED2DBL(r_TicFrac);
+	return FLOAT2FIXED(sin(waveMultiplier * time * (M_PI * 2 / TICRATE)));
+}
+
+// [Vita] ZDoom 2.8: per-axis intensities; QF_RELATIVE ones follow the camera's
+// angle, QF_WAVE ones are offsets on a sine wave.
+int DEarthquake::StaticGetQuakeIntensities (AActor *victim, FQuakeJiggers &jiggers)
+{
+	if (victim->player != NULL && (victim->player->cheats & CF_NOCLIP)) return 0;
 	TThinkerIterator<DEarthquake> iterator (STAT_EARTHQUAKE);
 	DEarthquake *quake;
-	bool any = false;
+	int count = 0;
 	while ( (quake = iterator.Next()) != NULL)
 	{
 		if (quake->m_Spot == NULL) continue;
 		fixed_t dist = P_AproxDistance (victim->x - quake->m_Spot->x, victim->y - quake->m_Spot->y);
 		if (dist >= quake->m_TremorRadius) continue;
-		any = true;
-		x = MAX(x, quake->GetModIntensity(quake->m_Intensity));
-		y = MAX(y, quake->GetModIntensity(quake->m_IntensityY));
-		z = MAX(z, quake->GetModIntensity(quake->m_IntensityZ));
+		++count;
+		// Doubled, as in ZDoom 2.8 (the jitter is +-2 x intensity).
+		fixed_t x = 2 * quake->GetModIntensity(quake->m_Intensity);
+		fixed_t y = 2 * quake->GetModIntensity(quake->m_IntensityY);
+		fixed_t z = 2 * quake->GetModIntensity(quake->m_IntensityZ);
+		if (!(quake->m_Flags & VQF_WAVE))
+		{
+			if (quake->m_Flags & VQF_RELATIVE)
+			{
+				jiggers.RelIntensityX = MAX(x, jiggers.RelIntensityX);
+				jiggers.RelIntensityY = MAX(y, jiggers.RelIntensityY);
+				jiggers.RelIntensityZ = MAX(z, jiggers.RelIntensityZ);
+			}
+			else
+			{
+				jiggers.IntensityX = MAX(x, jiggers.IntensityX);
+				jiggers.IntensityY = MAX(y, jiggers.IntensityY);
+				jiggers.IntensityZ = MAX(z, jiggers.IntensityZ);
+			}
+		}
+		else
+		{
+			fixed_t mx = FixedMul(x, quake->GetModWave(quake->m_WaveSpeedX));
+			fixed_t my = FixedMul(y, quake->GetModWave(quake->m_WaveSpeedY));
+			fixed_t mz = FixedMul(z, quake->GetModWave(quake->m_WaveSpeedZ));
+			// Only the last wave quake counts, as in ZDoom 2.8.
+			if (quake->m_Flags & VQF_RELATIVE)
+			{
+				jiggers.RelOffsetX = mx;
+				jiggers.RelOffsetY = my;
+				jiggers.RelOffsetZ = mz;
+			}
+			else
+			{
+				jiggers.OffsetX = mx;
+				jiggers.OffsetY = my;
+				jiggers.OffsetZ = mz;
+			}
+		}
 	}
-	return any;
+	return count;
 }
 
-bool P_StartQuakeXYZ (AActor *activator, int tid, int intensityX, int intensityY, int intensityZ, int duration, int damrad, int tremrad, FSoundID quakesfx, int flags)
+bool P_StartQuakeXYZ (AActor *activator, int tid, int intensityX, int intensityY, int intensityZ, int duration, int damrad, int tremrad, FSoundID quakesfx, int flags,
+	double waveSpeedX, double waveSpeedY, double waveSpeedZ)
 {
 	if (intensityX) intensityX = clamp(intensityX, 1, 9);
 	if (intensityY) intensityY = clamp(intensityY, 1, 9);
@@ -125,7 +176,7 @@ bool P_StartQuakeXYZ (AActor *activator, int tid, int intensityX, int intensityY
 	{
 		if (activator != NULL)
 		{
-			new DEarthquake(activator, intensityX, intensityY, intensityZ, duration, damrad, tremrad, quakesfx, flags);
+			new DEarthquake(activator, intensityX, intensityY, intensityZ, duration, damrad, tremrad, quakesfx, flags, waveSpeedX, waveSpeedY, waveSpeedZ);
 			return true;
 		}
 	}
@@ -136,7 +187,7 @@ bool P_StartQuakeXYZ (AActor *activator, int tid, int intensityX, int intensityY
 		while ( (center = iterator.Next ()) )
 		{
 			res = true;
-			new DEarthquake(center, intensityX, intensityY, intensityZ, duration, damrad, tremrad, quakesfx, flags);
+			new DEarthquake(center, intensityX, intensityY, intensityZ, duration, damrad, tremrad, quakesfx, flags, waveSpeedX, waveSpeedY, waveSpeedZ);
 		}
 	}
 	return res;
@@ -155,6 +206,10 @@ void DEarthquake::Serialize (FArchive &arc)
 		<< m_TremorRadius << m_DamageRadius
 		<< m_QuakeSFX;
 	arc << m_IntensityY << m_IntensityZ << m_Flags << m_CountdownStart;	// [Vita]
+	if (SaveVersion >= 4507)
+		arc << m_WaveSpeedX << m_WaveSpeedY << m_WaveSpeedZ;	// [Vita] QF_WAVE
+	else if (arc.IsLoading())
+		m_WaveSpeedX = m_WaveSpeedY = m_WaveSpeedZ = 0;
 }
 
 //==========================================================================

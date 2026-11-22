@@ -20,6 +20,7 @@ public:
 	virtual void OwnerDied ();
 	virtual PalEntry GetBlend ();
 	virtual bool DrawPowerup (int x, int y);
+	virtual bool GetNoTeleportFreeze();	// [Vita] ZDoom 2.8
 	bool IsActiveRune(); // [TP]
 
 	int EffectTics;

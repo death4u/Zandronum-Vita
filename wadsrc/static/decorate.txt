@@ -110,6 +110,7 @@
 #include "actors/hexen/demons.txt"
 #include "actors/hexen/firedemon.txt"
 #include "actors/hexen/fog.txt"
+#include "actors/hexen/flies.txt"
 #include "actors/hexen/summon.txt"
 #include "actors/hexen/flechette.txt"
 #include "actors/hexen/clericboss.txt"

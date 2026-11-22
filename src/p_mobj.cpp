@@ -358,6 +358,14 @@ void AActor::Serialize (FArchive &arc)
 	{
 		arc << PoisonDamageType << PoisonDamageTypeReceived;
 	}
+	if (SaveVersion >= 4507)	// [Vita] ZDoom 2.8 fields
+	{
+		arc << Friction << TeleFogSourceType << TeleFogDestType << RipperLevel << RipLevelMin << RipLevelMax << DamageMultiply;
+	}
+	else if (arc.IsLoading())
+	{
+		DamageMultiply = FRACUNIT;	// [Vita]
+	}
 	arc << ConversationRoot << Conversation;
 	
 	// [BB] Zandronum additions.
@@ -2399,20 +2407,48 @@ fixed_t P_XYMovement (AActor *mo, fixed_t scrollx, fixed_t scrolly)
 				}
 				if (BlockingMobj && (BlockingMobj->flags2 & MF2_REFLECTIVE))
 				{
-					angle = R_PointToAngle2(BlockingMobj->x, BlockingMobj->y, mo->x, mo->y);
-
-					// Change angle for deflection/reflection
-					if (mo->AdjustReflectionAngle (BlockingMobj, angle))
+					// [Vita] ZDoom 2.8: THRUREFLECT keeps the missile's angle and speed;
+					// AIMREFLECT sends it straight back at its shooter; MIRRORREFLECT turns it around.
+					if (!(BlockingMobj->flags7 & MF7_THRUREFLECT))
 					{
-						goto explode;
-					}
+						angle = R_PointToAngle2(BlockingMobj->x, BlockingMobj->y, mo->x, mo->y);
 
-					// Reflect the missile along angle
-					mo->angle = angle;
-					angle >>= ANGLETOFINESHIFT;
-					mo->velx = FixedMul (mo->Speed>>1, finecosine[angle]);
-					mo->vely = FixedMul (mo->Speed>>1, finesine[angle]);
-					mo->velz = -mo->velz/2;
+						// Change angle for deflection/reflection
+						if (mo->AdjustReflectionAngle (BlockingMobj, angle))
+						{
+							goto explode;
+						}
+
+						bool tg = (mo->target != NULL);
+						bool blockingtg = (BlockingMobj->target != NULL);
+						if ((BlockingMobj->flags7 & MF7_AIMREFLECT) && (tg || blockingtg))
+						{
+							AActor *origin = tg ? mo->target : BlockingMobj->target;
+							TVector3<double> velocity(double(origin->x - mo->x), double(origin->y - mo->y),
+								double(origin->z + origin->height / 2 - mo->z));
+							velocity.Resize(double(mo->Speed));
+							mo->angle = R_PointToAngle2(mo->x, mo->y, origin->x, origin->y);
+							mo->velx = (fixed_t)velocity.X;
+							mo->vely = (fixed_t)velocity.Y;
+							mo->velz = (fixed_t)velocity.Z;
+						}
+						else if ((BlockingMobj->flags7 & MF7_MIRRORREFLECT) && (tg || blockingtg))
+						{
+							mo->angle += ANGLE_180;
+							mo->velx = -mo->velx / 2;
+							mo->vely = -mo->vely / 2;
+							mo->velz = -mo->velz / 2;
+						}
+						else
+						{
+							// Reflect the missile along angle
+							mo->angle = angle;
+							angle >>= ANGLETOFINESHIFT;
+							mo->velx = FixedMul (mo->Speed>>1, finecosine[angle]);
+							mo->vely = FixedMul (mo->Speed>>1, finesine[angle]);
+							mo->velz = -mo->velz/2;
+						}
+					}
 					if (mo->flags2 & MF2_SEEKERMISSILE)
 					{
 						mo->tracer = mo->target;
@@ -3811,6 +3847,7 @@ int AActor::SpecialMissileHit (AActor *victim)
 bool AActor::AdjustReflectionAngle (AActor *thing, angle_t &angle)
 {
 	if (flags2 & MF2_DONTREFLECT) return true;
+	if (thing->flags7 & MF7_THRUREFLECT) return false;	// [Vita] ZDoom 2.8
 
 	// Change angle for reflection
 	if (thing->flags4&MF4_SHIELDREFLECT)
@@ -4923,6 +4960,7 @@ AActor *AActor::StaticSpawn (const PClass *type, fixed_t ix, fixed_t iy, fixed_t
 	actor->frame = st->GetFrame();
 	actor->renderflags = (actor->renderflags & ~RF_FULLBRIGHT) | st->GetFullbright();
 	actor->touching_sectorlist = NULL;	// NULL head of sector list // phares 3/13/98
+	actor->DamageMultiply = FRACUNIT;	// [Vita] ZDoom 2.8
 	if (G_SkillProperty(SKILLP_FastMonsters))
 		actor->Speed = actor->GetClass()->Meta.GetMetaFixed(AMETA_FastSpeed, actor->Speed);
 
@@ -5349,7 +5387,7 @@ void AActor::AdjustFloorClip ()
 		sector_t *hsec = m->m_sector->GetHeightSec();
 		if (hsec == NULL && m->m_sector->floorplane.ZatPoint (x, y) == z)
 		{
-			fixed_t clip = Terrains[TerrainTypes[m->m_sector->GetTexture(sector_t::floor)]].FootClip;
+			fixed_t clip = Terrains[P_SECTOR_TERRAIN(m->m_sector, sector_t::floor)].FootClip;
 			if (clip < shallowestclip)
 			{
 				shallowestclip = clip;
@@ -6794,7 +6832,7 @@ int P_GetThingFloorType (AActor *thing)
 	}
 	else
 	{
-		return TerrainTypes[thing->Sector->GetTexture(sector_t::floor)];
+		return P_SECTOR_TERRAIN(thing->Sector, sector_t::floor);
 	}
 }
 
@@ -6876,11 +6914,11 @@ bool P_HitWater (AActor * thing, sector_t * sec, fixed_t x, fixed_t y, fixed_t z
 	hsec = sec->GetHeightSec();
 	if (hsec == NULL || !(hsec->MoreFlags & SECF_CLIPFAKEPLANES))
 	{
-		terrainnum = TerrainTypes[sec->GetTexture(sector_t::floor)];
+		terrainnum = P_SECTOR_TERRAIN(sec, sector_t::floor);
 	}
 	else
 	{
-		terrainnum = TerrainTypes[hsec->GetTexture(sector_t::floor)];
+		terrainnum = P_SECTOR_TERRAIN(hsec, sector_t::floor);
 	}
 #ifdef _3DFLOORS
 foundone:

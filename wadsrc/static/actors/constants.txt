@@ -14,6 +14,9 @@ const int SF_RANDOMLIGHTHIT = 4;
 const int SF_RANDOMLIGHTBOTH = 6;
 const int SF_NOUSEAMMOMISS = 8;
 const int SF_NOUSEAMMO = 16;
+const int SF_NOPULLIN = 32;	// [Vita] ZDoom 2.8
+const int SF_NOTURN = 64;
+const int SF_STEALARMOR = 128;
 
 // Flags for A_CustomMissile
 const int CMF_AIMOFFSET = 1;
@@ -109,6 +112,7 @@ const int JLOSF_FLIPFOV = 256;
 const int JLOSF_ALLYNOJUMP = 512;
 const int JLOSF_COMBATANTONLY = 1024;
 const int JLOSF_NOAUTOAIM = 2048;
+const int JLOSF_CHECKTRACER = 4096;	// [Vita] ZDoom 2.8
 
 // Flags for A_ChangeVelocity
 const int CVF_RELATIVE = 1;
@@ -141,6 +145,7 @@ const int MRF_NEWTIDBEHAVIOUR = 256;
 const int MRF_UNDOBYDEATH = 512;
 const int MRF_UNDOBYDEATHFORCED = 1024;
 const int MRF_UNDOBYDEATHSAVES = 2048;
+const int MRF_UNDOALWAYS = 8192;	// [Vita] ZDoom 2.8 (the internal value; 2.8.1 listed 4096 by mistake)
 
 // Flags for A_RailAttack and A_CustomRailgun
 const int RGF_SILENT = 1;
@@ -189,6 +194,19 @@ const int FPF_NOAUTOAIM = 4;
 
 // Flags for A_Teleport
 const int TF_TELEFRAG = 1;const int TF_RANDOMDECIDE = 2;
+// [Vita] ZDoom 2.8
+const int TF_FORCED = 4;
+const int TF_KEEPVELOCITY = 8;
+const int TF_KEEPANGLE = 16;
+const int TF_USESPOTZ = 32;
+const int TF_NOSRCFOG = 64;
+const int TF_NODESTFOG = 128;
+const int TF_USEACTORFOG = 256;
+const int TF_NOJUMP = 512;
+const int TF_OVERRIDE = 1024;
+const int TF_SENSITIVEZ = 2048;
+const int TF_KEEPORIENTATION = TF_KEEPVELOCITY|TF_KEEPANGLE;
+const int TF_NOFOG = TF_NOSRCFOG|TF_NODESTFOG;
 
 // Flags for A_WolfAttack
 const int WAF_NORANDOM = 1;
@@ -292,6 +310,7 @@ Const Int AAPTR_PLAYER7 = 4096;
 Const Int AAPTR_PLAYER8 = 8192;
 
 Const Int AAPTR_FRIENDPLAYER = 16384;
+Const Int AAPTR_LINETARGET = 0x8000;	// [Vita] ZDoom 2.8
 
 // Pointer operation flags
 
@@ -340,6 +359,11 @@ Const Int WARPF_STOP = 0x80;
 Const Int WARPF_TOFLOOR = 0x100;
 Const Int WARPF_TESTONLY = 0x200;
 Const Int WARPF_ABSOLUTEPOSITION = 0x400;	// [Vita] ZDoom 2.8
+Const Int WAPRF_ABSOLUTEPOSITION = 0x400;	// [Vita] ZDoom 2.8 (sic)
+Const Int WARPF_BOB = 0x800;
+Const Int WARPF_MOVEPTR = 0x1000;
+Const Int WARPF_USEPTR = 0x2000;
+Const Int WARPF_USETID = 0x2000;
 Const Int WARPF_COPYVELOCITY = 0x4000;
 Const Int WARPF_COPYPITCH = 0x8000;
 
@@ -383,6 +407,9 @@ enum
 
 	CLOFF_JUMP_ON_MISS =		0x200000,
 	CLOFF_AIM_VERT_NOOFFSET =	0x400000,
+	CLOFF_SETTARGET =			0x800000,	// [Vita] ZDoom 2.8
+	CLOFF_SETMASTER =			0x1000000,
+	CLOFF_SETTRACER =			0x2000000,
 
 	CLOFF_SKIPOBSTACLES = CLOFF_SKIPENEMY|CLOFF_SKIPFRIEND|CLOFF_SKIPOBJECT|CLOFF_SKIPNONHOSTILE,
 	CLOFF_NOAIM = CLOFF_NOAIM_VERT|CLOFF_NOAIM_HORZ
@@ -461,4 +488,44 @@ enum
 	FAF_BOTTOM = 1,
 	FAF_MIDDLE = 2,
 	FAF_TOP = 4,
+	FAF_NODISTFACTOR = 8,	// [Vita] ZDoom 2.8 (deprecated, does nothing)
+};
+
+// [Vita] ZDoom 2.8.1 constants
+// Flags for A_Kill (Master/Target/Tracer/Children/Siblings)
+enum
+{
+	KILS_FOILINVUL =		1 << 0,
+	KILS_KILLMISSILES =		1 << 1,
+	KILS_NOMONSTERS =		1 << 2,
+	KILS_FOILBUDDHA =		1 << 3,
+	KILS_EXFILTER =			1 << 4,
+	KILS_EXSPECIES =		1 << 5,
+	KILS_EITHER =			1 << 6,
+};
+
+// Flags for A_FadeIn/A_FadeOut/A_FadeTo
+enum
+{
+	FTF_REMOVE =	1 << 0,
+	FTF_CLAMP =		1 << 1,
+};
+
+// Flags for A_CheckBlock
+enum
+{
+	CBF_NOLINES =	1 << 0,
+	CBF_SETTARGET =	1 << 1,
+	CBF_SETMASTER =	1 << 2,
+	CBF_SETTRACER =	1 << 3,
+	CBF_SETONPTR =	1 << 4,
+	CBF_DROPOFF =	1 << 5,
+};
+
+// Flags for A_FaceMovementDirection
+enum
+{
+	FMDF_NOPITCH =		1 << 0,
+	FMDF_INTERPOLATE =	1 << 1,
+	FMDF_NOANGLE =		1 << 2,
 };

@@ -676,8 +676,27 @@ void P_PlayerInSpecialSector (player_t *player, sector_t * sector)
 		}
 	}
 
+	// [Vita] ZDoom 2.8 rules, for sectors set with ACS SetSectorDamage:
+	// a damage type, an interval, leaky damage through radiation suits, and
+	// negative damage that heals.
+	if (sector->damageinterval > 0)
+	{
+		if (sector->damage > 0)
+		{
+			if (ironfeet == NULL || pr_playerinspecialsector() < sector->leakydamage)
+			{
+				if (level.time % sector->damageinterval == 0 && !(player->cheats & CF_GODMODE))
+					P_DamageMobj (player->mo, NULL, NULL, sector->damage, sector->VitaDamageType);
+			}
+		}
+		else if (sector->damage < 0)
+		{
+			if (level.time % sector->damageinterval == 0)
+				P_GiveBody (player->mo, -sector->damage, 100);
+		}
+	}
 	// [RH] Apply any customizable damage
-	if (sector->damage)
+	else if (sector->damage)
 	{
 		if (sector->damage < 20)
 		{

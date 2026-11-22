@@ -720,6 +720,13 @@ void R_FreePastViewers ()
 //
 // If the actor changed in a non-interpolatable way, remove it.
 //
+// [Vita] ZDoom 2.8: random jitter of +-intensity plus a wave offset.
+static fixed_t Vita_QuakePower(fixed_t factor, fixed_t intensity, fixed_t offset)
+{
+	fixed_t randumb = (intensity <= 0) ? 0 : (fixed_t)(pr_torchflicker((int)(intensity * 2)) - intensity);
+	return FixedMul(factor, randumb + offset);
+}
+
 //==========================================================================
 
 void R_ClearPastViewer (AActor *actor)
@@ -888,15 +895,35 @@ void R_SetupFrame (AActor *actor)
 	// [AK] Don't apply earthquake effects to free-roaming spectators.
 	if (!paused && ((camera->player == nullptr) || (camera->player->bSpectating == false)))
 	{
-		// [Vita] per-axis intensities (ZDoom 2.8 A_QuakeEx); the same
-		// +-2 x intensity jitter as before for plain quakes
-		fixed_t qx, qy, qz;
-		if (DEarthquake::StaticGetQuakeIntensities (camera, qx, qy, qz))
+		// [Vita] ZDoom 2.8 quakes: per-axis intensities, QF_RELATIVE (follows the
+		// camera's angle) and QF_WAVE (sine offsets instead of random jitter).
+		FQuakeJiggers jiggers;
+		memset(&jiggers, 0, sizeof(jiggers));
+		if (DEarthquake::StaticGetQuakeIntensities (camera, jiggers) > 0)
 		{
 			fixed_t quakefactor = FLOAT2FIXED(r_quakeintensity);
-			if (qx > 0) viewx += FixedMul(quakefactor, FixedMul(qx, (pr_torchflicker() << 10) - (2 << FRACBITS)));
-			if (qy > 0) viewy += FixedMul(quakefactor, FixedMul(qy, (pr_torchflicker() << 10) - (2 << FRACBITS)));
-			if (qz > 0) viewz += FixedMul(quakefactor, FixedMul(qz, (pr_torchflicker() << 10) - (2 << FRACBITS)));
+			if ((jiggers.RelIntensityX | jiggers.RelOffsetX) != 0)
+			{
+				int ang = (camera->angle) >> ANGLETOFINESHIFT;
+				fixed_t power = Vita_QuakePower(quakefactor, jiggers.RelIntensityX, jiggers.RelOffsetX);
+				viewx += FixedMul(finecosine[ang], power);
+				viewy += FixedMul(finesine[ang], power);
+			}
+			if ((jiggers.RelIntensityY | jiggers.RelOffsetY) != 0)
+			{
+				int ang = (camera->angle + ANG90) >> ANGLETOFINESHIFT;
+				fixed_t power = Vita_QuakePower(quakefactor, jiggers.RelIntensityY, jiggers.RelOffsetY);
+				viewx += FixedMul(finecosine[ang], power);
+				viewy += FixedMul(finesine[ang], power);
+			}
+			if ((jiggers.RelIntensityZ | jiggers.RelOffsetZ) != 0)
+				viewz += Vita_QuakePower(quakefactor, jiggers.RelIntensityZ, jiggers.RelOffsetZ);
+			if ((jiggers.IntensityX | jiggers.OffsetX) != 0)
+				viewx += Vita_QuakePower(quakefactor, jiggers.IntensityX, jiggers.OffsetX);
+			if ((jiggers.IntensityY | jiggers.OffsetY) != 0)
+				viewy += Vita_QuakePower(quakefactor, jiggers.IntensityY, jiggers.OffsetY);
+			if ((jiggers.IntensityZ | jiggers.OffsetZ) != 0)
+				viewz += Vita_QuakePower(quakefactor, jiggers.IntensityZ, jiggers.OffsetZ);
 		}
 	}
 

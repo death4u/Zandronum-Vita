@@ -73,6 +73,11 @@ public:
 
 extern FTerrainTypeArray TerrainTypes;
 
+// [Vita] ZDoom 2.8: a sector's terrain, honouring ACS SetSectorTerrain.
+#define P_SECTOR_TERRAIN(sec, pos) \
+	((sec)->TerrainOverride[pos] > 0 ? (sec)->TerrainOverride[pos] - 1 : (int)TerrainTypes[(sec)->GetTexture(pos)])
+int P_FindTerrain (FName name);	// [Vita] -1 if there's no such terrain
+
 // at game start
 void P_InitTerrainTypes ();
 

@@ -92,6 +92,23 @@ void P_SpawnTeleportFog(fixed_t x, fixed_t y, fixed_t z, int spawnid)
 	}
 }
 
+//==========================================================================
+//
+// P_SpawnActorTeleportFog	[Vita] ZDoom 2.8
+//
+// Spawns the actor's own teleport fog (TeleFogSourceType before teleporting,
+// TeleFogDestType after). Neither set to anything means no fog.
+//
+//==========================================================================
+
+AActor *P_SpawnActorTeleportFog(AActor *mobj, fixed_t x, fixed_t y, fixed_t z, bool beforeTele)
+{
+	const PClass *type = beforeTele ? mobj->TeleFogSourceType : mobj->TeleFogDestType;
+	if (type == NULL)
+		return NULL;
+	return Spawn(type, x, y, z, ALLOW_REPLACE);
+}
+
 //
 // TELEPORTATION
 //
@@ -195,16 +212,16 @@ bool P_Teleport (AActor *thing, fixed_t x, fixed_t y, fixed_t z, angle_t angle,
 	if (sourceFog)
 	{
 		fixed_t fogDelta = thing->flags & MF_MISSILE ? 0 : TELEFOGHEIGHT;
-		AActor *fog = Spawn<ATeleportFog> (oldx, oldy, oldz + fogDelta, ALLOW_REPLACE);
-		fog->target = thing;
+		AActor *fog = P_SpawnActorTeleportFog(thing, oldx, oldy, oldz + fogDelta, true);	// [Vita]
+		if (fog != NULL) fog->target = thing;
 	}
 	if (useFog)
 	{
 		fixed_t fogDelta = thing->flags & MF_MISSILE ? 0 : TELEFOGHEIGHT;
 		an = angle >> ANGLETOFINESHIFT;
-		AActor *fog = Spawn<ATeleportFog> (x + 20*finecosine[an],
-			y + 20*finesine[an], thing->z + fogDelta, ALLOW_REPLACE);
-		fog->target = thing;
+		AActor *fog = P_SpawnActorTeleportFog(thing, x + 20*finecosine[an],
+			y + 20*finesine[an], thing->z + fogDelta, false);	// [Vita]
+		if (fog != NULL) fog->target = thing;
 		if (thing->player)
 		{
 			// [RH] Zoom player's field of vision
@@ -217,7 +234,8 @@ bool P_Teleport (AActor *thing, fixed_t x, fixed_t y, fixed_t z, angle_t angle,
 	if (thing->player && (useFog || !keepOrientation) && bHaltVelocity)
 	{
 		// Freeze player for about .5 sec
-		if (thing->Inventory == NULL || thing->Inventory->GetSpeedFactor() <= FRACUNIT)
+		// [Vita] ZDoom 2.8: powerups with NOTELEPORTFREEZE also prevent it.
+		if (thing->Inventory == NULL || (thing->Inventory->GetSpeedFactor() <= FRACUNIT && !thing->Inventory->GetNoTeleportFreeze()))
 			thing->reactiontime = 18;
 	}
 	if (thing->flags & MF_MISSILE)

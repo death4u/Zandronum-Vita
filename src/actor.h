@@ -343,12 +343,23 @@ enum
 	MF7_NOTELESTOMP		= 0x00000002,	// cannot telefrag under any circumstances (even when set by MAPINFO)
 	MF7_ALWAYSTELEFRAG	= 0x00000004,	// will unconditionally be telefragged when in the way. Overrides all other settings.
 	MF7_HANDLENODELAY	= 0x00000008,	// respect NoDelay state flag
+	MF7_WEAPONSPAWN		= 0x00000010,	// [Vita] ZDoom 2.8: subject to DF_NO_COOP_WEAPON_SPAWN dmflag
+	MF7_HARMFRIENDS		= 0x00000020,	// [Vita] ZDoom 2.8: is allowed to harm friendly monsters
+	MF7_BUDDHA			= 0x00000040,	// [Vita] ZDoom 2.8: behaves like the buddha cheat
+	MF7_FOILBUDDHA		= 0x00000080,	// [Vita] ZDoom 2.8: foils buddha mode
 	MF7_DONTTHRUST		= 0x00000100,	// [Vita] ZDoom 2.8: thrusting functions don't push this actor
+	MF7_ALLOWPAIN		= 0x00000200,	// [Vita] ZDoom 2.8: invulnerable/immune actors still react with pain
+	MF7_CAUSEPAIN		= 0x00000400,	// [Vita] ZDoom 2.8: damage sources cause pain like ALLOWPAIN
+	MF7_THRUREFLECT		= 0x00000800,	// [Vita] ZDoom 2.8: reflected missiles don't slow down or turn
+	MF7_MIRRORREFLECT	= 0x00001000,	// [Vita] ZDoom 2.8: reflected missiles turn 180 degrees
+	MF7_AIMREFLECT		= 0x00002000,	// [Vita] ZDoom 2.8: reflected missiles go straight back at the shooter
 
 	MF7_HITTARGET		= 0x00004000,	// The actor the projectile dies on is set to target, provided it's targetable anyway.
 	MF7_HITMASTER		= 0x00008000,	// Same as HITTARGET, except it's master instead of target.
 	MF7_HITTRACER		= 0x00010000,	// Same as HITTARGET, but for tracer.
 	MF7_NODECAL			= 0x00020000,	// [ZK] Forces puff to have no impact decal
+	MF7_LAXTELEFRAGDMG	= 0x00100000,	// [Vita] ZDoom 2.8: telefrag damage can be reduced
+	MF7_ICESHATTER		= 0x00200000,	// [Vita] ZDoom 2.8: shatters ice corpses regardless of damage type
 	MF7_FORCEDECAL		= 0x00040000,	// [ZK] Forces P_LineAttack to use the puff's decal, even if the player's weapon has a decal defined
 
 	// [BB] Out of order ZDoom backport.
@@ -1075,6 +1086,13 @@ public:
 	fixed_t			wallbouncefactor;	// The bounce factor for walls can be different.
 	int				bouncecount;	// Strife's grenades only bounce twice before exploding
 	fixed_t			gravity;		// [GRB] Gravity factor
+	fixed_t			Friction;		// [Vita] ZDoom 2.8: actor friction factor (FRACUNIT = normal)
+	const PClass	*TeleFogSourceType;	// [Vita] ZDoom 2.8: fog spawned where the actor teleports from (NULL = none)
+	const PClass	*TeleFogDestType;	// [Vita] ZDoom 2.8: fog spawned where the actor teleports to (NULL = none)
+	int				RipperLevel;	// [Vita] ZDoom 2.8
+	int				RipLevelMin;	// [Vita] ZDoom 2.8
+	int				RipLevelMax;	// [Vita] ZDoom 2.8
+	fixed_t			DamageMultiply;	// [Vita] ZDoom 2.8: ACS APROP_DamageMultiplier, scales damage this actor deals
 	int 			FastChaseStrafeCount;
 	fixed_t			pushfactor;
 	int				lastpush;

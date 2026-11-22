@@ -428,6 +428,8 @@ enum
 	APROP_ViewHeight	= 39,
 	APROP_AttackZOffset	= 40,
 	APROP_StencilColor	= 41,
+	APROP_Friction		= 42,	// [Vita] ZDoom 2.8
+	APROP_DamageMultiplier = 43,	// [Vita] ZDoom 2.8
 };	
 
 // [Dusk] Enumeration for GetTeamProperty

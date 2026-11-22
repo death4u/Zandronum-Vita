@@ -253,6 +253,17 @@ static FFlagDef ActorFlags[]=
 	DEFINE_FLAG(MF7, USEKILLSCRIPTS, AActor, flags7),
 	DEFINE_FLAG(MF7, NOKILLSCRIPTS, AActor, flags7),
 	DEFINE_FLAG(MF7, DONTTHRUST, AActor, flags7),	// [Vita] ZDoom 2.8
+	DEFINE_FLAG(MF7, WEAPONSPAWN, AActor, flags7),	// [Vita] ZDoom 2.8
+	DEFINE_FLAG(MF7, HARMFRIENDS, AActor, flags7),
+	DEFINE_FLAG(MF7, BUDDHA, AActor, flags7),
+	DEFINE_FLAG(MF7, FOILBUDDHA, AActor, flags7),
+	DEFINE_FLAG(MF7, ALLOWPAIN, AActor, flags7),
+	DEFINE_FLAG(MF7, CAUSEPAIN, AActor, flags7),
+	DEFINE_FLAG(MF7, THRUREFLECT, AActor, flags7),
+	DEFINE_FLAG(MF7, MIRRORREFLECT, AActor, flags7),
+	DEFINE_FLAG(MF7, AIMREFLECT, AActor, flags7),
+	DEFINE_FLAG(MF7, LAXTELEFRAGDMG, AActor, flags7),
+	DEFINE_FLAG(MF7, ICESHATTER, AActor, flags7),
 
 	// [BC] New DECORATE flag defines here.
 	DEFINE_FLAG(STFL, BLUETEAM, AActor, STFlags),
@@ -355,6 +366,8 @@ static FFlagDef InventoryFlags[] =
 	DEFINE_FLAG(IF, NOSCREENFLASH, AInventory, ItemFlags),
 	DEFINE_FLAG(IF, TOSSED, AInventory, ItemFlags),
 	DEFINE_FLAG(IF, ALWAYSRESPAWN, AInventory, ItemFlags),
+	DEFINE_FLAG(IF, TRANSFER, AInventory, ItemFlags),	// [Vita] ZDoom 2.8
+	DEFINE_FLAG(IF, NOTELEPORTFREEZE, AInventory, ItemFlags),	// [Vita] ZDoom 2.8
 	// [BB] New ST flags.
 	DEFINE_FLAG(IF, FORCERESPAWNINSURVIVAL, AInventory, ItemFlags),
 

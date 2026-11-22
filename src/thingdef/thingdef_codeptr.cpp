@@ -1730,6 +1730,8 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FireBullets)
 //==========================================================================
 // [BB] This functions is needed to keep code duplication at a minimum while applying the spread power.
 bool Vita_SpawnMissileNoAutoAim;
+static bool Vita_TransferTranslation = false;	// [Vita] FPF_TRANSFERTRANSLATION for the helper below
+
 void A_FireCustomMissileHelper ( AActor * self,
 								 const fixed_t x,
 								 const fixed_t y,
@@ -1759,10 +1761,16 @@ void A_FireCustomMissileHelper ( AActor * self,
 			misl->vely = FixedMul (missilespeed, finesine[an]);
 		}
 		if (misl->flags4&MF4_SPECTRAL) misl->health=-1;
+		if (Vita_TransferTranslation)	// [Vita] ZDoom 2.8: FPF_TRANSFERTRANSLATION
+			misl->Translation = self->Translation;
 
 		// [BC] If we're the server, tell clients to spawn this missile.
 		if ( NETWORK_GetState( ) == NETSTATE_SERVER )
+		{
 			SERVERCOMMANDS_SpawnMissileExact( misl );
+			if (Vita_TransferTranslation)
+				SERVERCOMMANDS_SetThingTranslation( misl );
+		}
 	}
 }
 
@@ -1808,6 +1816,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FireCustomMissile)
 		self->pitch -= pitch;
 
 		Vita_SpawnMissileNoAutoAim = (fpflags & 4) != 0;
+		Vita_TransferTranslation = (fpflags & 2) != 0;
 		A_FireCustomMissileHelper( self, x, y, z, shootangle, ti, Angle , AimAtAngle, linetarget );
 
 		if (NULL != self->player )
@@ -1821,6 +1830,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FireCustomMissile)
 
 		//AActor * misl=P_SpawnPlayerMissile (self, x, y, z, ti, shootangle, &linetarget);
 		Vita_SpawnMissileNoAutoAim = false;
+		Vita_TransferTranslation = false;
 		self->pitch = SavedPlayerPitch;
 /*
 		// automatic handling of seeker missiles
@@ -1873,12 +1883,12 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CustomPunch)
 	ACTION_PARAM_CLASS(PuffType, 3);
 	ACTION_PARAM_FIXED(Range, 4);
 	ACTION_PARAM_FIXED(LifeSteal, 5);
-	ACTION_PARAM_INT(lifestealmax, 6);		// [Vita] ZDoom 2.8 (armour stealing not done here)
+	ACTION_PARAM_INT(lifestealmax, 6);		// [Vita] ZDoom 2.8
 	ACTION_PARAM_CLASS(armorbonustype, 7);
 	ACTION_PARAM_SOUND(MeleeSound, 8);
 	ACTION_PARAM_SOUND(MissSound, 9);
-	(void)armorbonustype;
 	const int CPF_NOTURN_V = 16;
+	const int CPF_STEALARMOR_V = 32;	// [Vita] ZDoom 2.8
 
 	if (!self->player) return;
 
@@ -1934,7 +1944,31 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CustomPunch)
 		const int prevhealth = self->health;
 
 		if (LifeSteal && !(linetarget->flags5 & MF5_DONTDRAIN))
-			P_GiveBody (self, (actualdamage * LifeSteal) >> FRACBITS, lifestealmax);
+		{
+			// [Vita] ZDoom 2.8: CPF_STEALARMOR turns the stolen life into armor.
+			if (flags & CPF_STEALARMOR_V)
+			{
+				if (armorbonustype == NULL)
+					armorbonustype = PClass::FindClass("ArmorBonus");
+				if (armorbonustype != NULL && armorbonustype->IsDescendantOf(RUNTIME_CLASS(ABasicArmorBonus)))
+				{
+					ABasicArmorBonus *armorbonus = static_cast<ABasicArmorBonus *>(Spawn(armorbonustype, 0,0,0, NO_REPLACE));
+					armorbonus->SaveAmount *= (actualdamage * LifeSteal) >> FRACBITS;
+					armorbonus->MaxSaveAmount = lifestealmax <= 0 ? armorbonus->MaxSaveAmount : lifestealmax;
+					armorbonus->flags |= MF_DROPPED;
+					armorbonus->ClearCounters();
+
+					if (!armorbonus->CallTryPickup(self))
+						armorbonus->Destroy ();
+					else if ( NETWORK_GetState( ) == NETSTATE_SERVER )
+						SERVERCOMMANDS_SetPlayerArmor( player - players );
+				}
+			}
+			else
+			{
+				P_GiveBody (self, (actualdamage * LifeSteal) >> FRACBITS, lifestealmax);
+			}
+		}
 
 		if (weapon != NULL)
 		{
@@ -3079,10 +3113,19 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetTranslucent)
 // Fades the actor in
 //
 //===========================================================================
+// [Vita] ZDoom 2.8: the fade functions take flags (FTF_REMOVE, FTF_CLAMP);
+// FTF_REMOVE is 1, so the old 'bool remove' calls still work.
+enum FadeToFlags
+{
+	FTF_REMOVE =	1 << 0,
+	FTF_CLAMP =		1 << 1,
+};
+
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeIn)
 {
-	ACTION_PARAM_START(1);
+	ACTION_PARAM_START(2);
 	ACTION_PARAM_FIXED(reduce, 0);
+	ACTION_PARAM_INT(flags, 1);	// [Vita] ZDoom 2.8
 
 	// [BB] This is handled server-side.
 	if ( NETWORK_InClientModeAndActorNotClientHandled( self ) )
@@ -3098,7 +3141,8 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeIn)
 
 	self->RenderStyle.Flags &= ~STYLEF_Alpha1;
 	self->alpha += reduce;
-	// Should this clamp alpha to 1.0?
+	if (self->alpha >= FRACUNIT && (flags & FTF_CLAMP))	// [Vita] ZDoom 2.8
+		self->alpha = FRACUNIT;
 
 	// [BB] Inform the clients about the alpha change and possibly about RenderStyle.
 	if (( NETWORK_GetState() == NETSTATE_SERVER ) && ( NETWORK_IsActorClientHandled( self ) == false ))
@@ -3108,6 +3152,15 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeIn)
 		SERVERCOMMANDS_SetThingProperty( self, APROP_Alpha );
 	}
 
+	// [Vita] ZDoom 2.8: FTF_REMOVE removes the actor once it's fully faded in.
+	if (self->alpha >= FRACUNIT && (flags & FTF_REMOVE))
+	{
+		if ( self->player && ( self->player->mo == self ) )
+			return;
+		if (( NETWORK_GetState() == NETSTATE_SERVER ) && ( NETWORK_IsActorClientHandled( self ) == false ))
+			SERVERCOMMANDS_DestroyThing( self );
+		self->HideOrDestroyIfSafe ();
+	}
 }
 
 //===========================================================================
@@ -3121,7 +3174,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeOut)
 {
 	ACTION_PARAM_START(2);
 	ACTION_PARAM_FIXED(reduce, 0);
-	ACTION_PARAM_BOOL(remove, 1);
+	ACTION_PARAM_INT(flags, 1);	// [Vita] ZDoom 2.8: was bool remove
 
 	// [BB] This is handled server-side.
 	if ( NETWORK_InClientModeAndActorNotClientHandled( self ) )
@@ -3136,6 +3189,8 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeOut)
 
 	self->RenderStyle.Flags &= ~STYLEF_Alpha1;
 	self->alpha -= reduce;
+	if (self->alpha <= 0 && (flags & FTF_CLAMP))	// [Vita] ZDoom 2.8
+		self->alpha = 0;
 
 	// [BB] Inform the clients about the alpha change and possibly about RenderStyle.
 	if (( NETWORK_GetState() == NETSTATE_SERVER ) && ( NETWORK_IsActorClientHandled( self ) == false ))
@@ -3146,7 +3201,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeOut)
 	}
 
 	// [BB] Only destroy the actor if it's not needed for a map reset. Otherwise just hide it.
-	if (self->alpha <= 0 && remove)
+	if (self->alpha <= 0 && (flags & FTF_REMOVE))
 	{
 		// [BB] Deleting player bodies is a very bad idea.
 		if ( self->player && ( self->player->mo == self ) )
@@ -3176,7 +3231,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeTo)
 	ACTION_PARAM_START(3);
 	ACTION_PARAM_FIXED(target, 0);
 	ACTION_PARAM_FIXED(amount, 1);
-	ACTION_PARAM_BOOL(remove, 2);
+	ACTION_PARAM_INT(flags, 2);	// [Vita] ZDoom 2.8: was bool remove
 
 	// [EP] This is handled server-side.
 	if ( NETWORK_InClientModeAndActorNotClientHandled( self ) )
@@ -3206,6 +3261,10 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeTo)
 			self->alpha = target;
 		}
 	}
+	if (flags & FTF_CLAMP)	// [Vita] ZDoom 2.8
+	{
+		self->alpha = clamp(self->alpha, 0, FRACUNIT);
+	}
 
 	// [EP] Inform the clients about possible alpha and renderstyle changes.
 	if (( NETWORK_GetState() == NETSTATE_SERVER ) && ( NETWORK_IsActorClientHandled( self ) == false ))
@@ -3217,7 +3276,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FadeTo)
 	}
 
 	// [EP] Only destroy the actor if it's not needed for a map reset. Otherwise just hide it.
-	if (self->alpha == target && remove)
+	if (self->alpha == target && (flags & FTF_REMOVE))
 	{
 		// [EP] Deleting player bodies is a very bad idea.
 		if ( self->player && ( self->player->mo == self ) )
@@ -3614,75 +3673,8 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_JumpIf)
 	if (expression) ACTION_JUMP(jump, CLIENTUPDATE_FRAME);	// [BC] It's probably not good to do this client-side.
 }
 
-//===========================================================================
-//
-// A_KillMaster
-//
-//===========================================================================
-DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_KillMaster)
-{
-	ACTION_PARAM_START(1);
-	ACTION_PARAM_NAME(damagetype, 0);
 
-	if (self->master != NULL)
-	{
-		P_DamageMobj(self->master, self, self, self->master->health, damagetype, DMG_NO_ARMOR | DMG_NO_FACTOR);
-	}
-}
 
-//===========================================================================
-//
-// A_KillChildren
-//
-//===========================================================================
-DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_KillChildren)
-{
-	ACTION_PARAM_START(1);
-	ACTION_PARAM_NAME(damagetype, 0);
-
-	TThinkerIterator<AActor> it;
-	AActor *mo;
-
-	while ( (mo = it.Next()) )
-	{
-		if (mo->master == self)
-		{
-			P_DamageMobj(mo, self, self, mo->health, damagetype, DMG_NO_ARMOR | DMG_NO_FACTOR);
-		}
-	}
-}
-
-//===========================================================================
-//
-// A_KillSiblings
-//
-//===========================================================================
-DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_KillSiblings)
-{
-	ACTION_PARAM_START(1);
-	ACTION_PARAM_NAME(damagetype, 0);
-
-	TThinkerIterator<AActor> it;
-	AActor *mo;
-
-	// [BB] This is handled server-side.
-	if ( NETWORK_InClientMode() )
-	{
-		if (( self->NetworkFlags & NETFL_CLIENTSIDEONLY ) == false )
-			return;
-	}
-
-	if (self->master != NULL)
-	{
-		while ( (mo = it.Next()) )
-		{
-			if (mo->master == self->master && mo != self)
-			{
-				P_DamageMobj(mo, self, self, mo->health, damagetype, DMG_NO_ARMOR | DMG_NO_FACTOR);
-			}
-		}
-	}
-}
 
 //===========================================================================
 //
@@ -4038,6 +4030,10 @@ enum CLOF_flags
 
 	CLOFF_JUMP_ON_MISS =		0x200000,
 	CLOFF_AIM_VERT_NOOFFSET =	0x400000,
+
+	CLOFF_SETTARGET =			0x00800000,	// [Vita] ZDoom 2.8
+	CLOFF_SETMASTER =			0x01000000,
+	CLOFF_SETTRACER =			0x02000000,
 };
 
 struct LOFData
@@ -4281,6 +4277,13 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CheckLOF)
 		{
 			return;
 		}
+		// [Vita] ZDoom 2.8: CLOFF_SET* store the actor that was hit.
+		if ((trace.HitType == TRACE_HitActor) && (trace.Actor != NULL) && !(lof_data.BadActor))
+		{
+			if (flags & CLOFF_SETTARGET)	self->target = trace.Actor;
+			if (flags & CLOFF_SETMASTER)	self->master = trace.Actor;
+			if (flags & CLOFF_SETTRACER)	self->tracer = trace.Actor;
+		}
 		ACTION_JUMP(jump, CLIENTUPDATE_FRAME );	// [EP] Since the actor's target is unknown on the client end, we need to send an update.
 	}
 }
@@ -4314,6 +4317,7 @@ enum JLOS_flags
 	JLOSF_ALLYNOJUMP=512,
 	JLOSF_COMBATANTONLY=1024,
 	JLOSF_NOAUTOAIM=2048,
+	JLOSF_CHECKTRACER=4096,	// [Vita] ZDoom 2.8
 };
 
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_JumpIfTargetInLOS)
@@ -4338,9 +4342,9 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_JumpIfTargetInLOS)
 		{
 			target = self->master;
 		}
-		else if (self->flags & MF_MISSILE && (flags & JLOSF_PROJECTILE))
+		else if ((self->flags & MF_MISSILE && (flags & JLOSF_PROJECTILE)) || (flags & JLOSF_CHECKTRACER))	// [Vita] CHECKTRACER
 		{
-			if (self->flags2 & MF2_SEEKERMISSILE)
+			if ((self->flags2 & MF2_SEEKERMISSILE) || (flags & JLOSF_CHECKTRACER))
 				target = self->tracer;
 			else
 				target = NULL;
@@ -4846,83 +4850,9 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CheckFlag)
 }
 
 
-//===========================================================================
-//
-// A_RemoveMaster
-//
-//===========================================================================
-DEFINE_ACTION_FUNCTION(AActor, A_RemoveMaster)
-{
-	if (self->master != NULL)
-	{
-		P_RemoveThing(self->master);
-	}
-}
 
-// [Vita] ZDoom 2.8's flags for the A_Remove* functions
-enum { RMVF_MISSILES = 1, RMVF_NOMONSTERS = 2, RMVF_MISC = 4, RMVF_EVERYTHING = 8, RMVF_EXFILTER = 16, RMVF_EXSPECIES = 32, RMVF_EITHER = 64 };
-static void Vita_DoRemove(AActor *removetarget, int flags, const PClass *filter, FName species)
-{
-	const PClass *actorClass = removetarget->GetClass();
-	bool filterpass = filter == NULL || ((flags & RMVF_EXFILTER) ? actorClass != filter : actorClass == filter);
-	FName sp = removetarget->GetSpecies();
-	bool speciespass = species == NAME_None || ((flags & RMVF_EXSPECIES) ? sp != species : sp == species);
-	if (!((flags & RMVF_EITHER) ? (filterpass || speciespass) : (filterpass && speciespass))) return;
-	if ((flags & RMVF_EVERYTHING)
-		|| ((flags & RMVF_MISC) && !((removetarget->flags3 & MF3_ISMONSTER) && (removetarget->flags & MF_MISSILE)))
-		|| ((removetarget->flags3 & MF3_ISMONSTER) && !(flags & RMVF_NOMONSTERS))
-		|| ((removetarget->flags & MF_MISSILE) && (flags & RMVF_MISSILES)))
-		P_RemoveThing(removetarget);
-}
 
-//===========================================================================
-//
-// A_RemoveChildren
-//
-//===========================================================================
-DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RemoveChildren)
-{
-	TThinkerIterator<AActor> it;
-	AActor *mo;
-	ACTION_PARAM_START(4);
-	ACTION_PARAM_BOOL(removeall,0);
-	ACTION_PARAM_INT(flags, 1);		// [Vita] ZDoom 2.8: flags, filter, species
-	ACTION_PARAM_CLASS(filter, 2);
-	ACTION_PARAM_NAME(species, 3);
 
-	while ((mo = it.Next()) != NULL)
-	{
-		if (mo->master == self && (mo->health <= 0 || removeall))
-		{
-			if (flags == 0 && filter == NULL && species == NAME_None) P_RemoveThing(mo);
-			else Vita_DoRemove(mo, flags, filter, species);
-		}
-	}
-}
-
-//===========================================================================
-// 
-// A_RemoveSiblings
-//
-//===========================================================================
-DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RemoveSiblings)
-{
-	TThinkerIterator<AActor> it;
-	AActor *mo;
-	ACTION_PARAM_START(1);
-	ACTION_PARAM_BOOL(removeall,0);
-
-	if (self->master != NULL)
-	{
-		while ((mo = it.Next()) != NULL)
-		{
-			if (mo->master == self->master && mo != self && (mo->health <= 0 || removeall))
-			{
-				P_RemoveThing(mo);
-			}
-		}
-	}
-}
 
 //===========================================================================
 //
@@ -5311,33 +5241,59 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetUserArray)
 //===========================================================================
 enum T_Flags
 {
-	TF_TELEFRAG = 1, // Allow telefrag in order to teleport.
-	TF_RANDOMDECIDE = 2, // Randomly fail based on health. (A_Srcr2Decide)
+	TF_TELEFRAG =		0x00000001, // Allow telefrag in order to teleport.
+	TF_RANDOMDECIDE =	0x00000002, // Randomly fail based on health. (A_Srcr2Decide)
+	// [Vita] ZDoom 2.8 flags:
+	TF_FORCED =			0x00000004, // Forget what's in the way. TF_TELEFRAG takes precedence though.
+	TF_KEEPVELOCITY =	0x00000008, // Preserve velocity.
+	TF_KEEPANGLE =		0x00000010, // Keep angle.
+	TF_USESPOTZ =		0x00000020, // Set the z to the spot's z, instead of the floor.
+	TF_NOSRCFOG =		0x00000040, // Don't leave any fog behind when teleporting.
+	TF_NODESTFOG =		0x00000080, // Don't spawn any fog at the arrival position.
+	TF_USEACTORFOG =	0x00000100, // Use the actor's TeleFogSourceType and TeleFogDestType fogs.
+	TF_NOJUMP =			0x00000200, // Don't jump after teleporting.
+	TF_OVERRIDE =		0x00000400, // Ignore NOTELEPORT.
+	TF_SENSITIVEZ =		0x00000800, // Fail if the actor wouldn't fit in the position (for Z).
 };
 
+// [Vita] ZDoom 2.8.1 version: flags above, a pointer argument, and destination fog.
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Teleport)
 {
-	ACTION_PARAM_START(6);
-	ACTION_PARAM_STATE(TeleportState, 0);
-	ACTION_PARAM_CLASS(TargetType, 1);
-	ACTION_PARAM_CLASS(FogType, 2);
-	ACTION_PARAM_INT(Flags, 3);
-	ACTION_PARAM_FIXED(MinDist, 4);
-	ACTION_PARAM_FIXED(MaxDist, 5);
+	ACTION_PARAM_START(7);
+	ACTION_PARAM_STATE(teleport_state, 0);
+	ACTION_PARAM_CLASS(target_type, 1);
+	ACTION_PARAM_CLASS(fog_type, 2);
+	ACTION_PARAM_INT(flags, 3);
+	ACTION_PARAM_FIXED(mindist, 4);
+	ACTION_PARAM_FIXED(maxdist, 5);
+	ACTION_PARAM_INT(ptr, 6);
 
 	// [BB] This is handled by the server.
 	if ( NETWORK_InClientMode() && ( ( self->NetworkFlags & NETFL_CLIENTSIDEONLY ) == false ) )
 		return;
 
+	AActor *ref = COPY_AAPTR(self, ptr);
+	if (!ref)
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+
+	if ((ref->flags2 & MF2_NOTELEPORT) && !(flags & TF_OVERRIDE))
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+
 	// Randomly choose not to teleport like A_Srcr2Decide.
-	if (Flags & TF_RANDOMDECIDE)
+	if (flags & TF_RANDOMDECIDE)
 	{
 		static const int chance[] =
 		{
 			192, 120, 120, 120, 64, 64, 32, 16, 0
 		};
 
-		unsigned int chanceindex = self->health / ((self->SpawnHealth()/8 == 0) ? 1 : self->SpawnHealth()/8);
+		unsigned int chanceindex = ref->health / ((ref->SpawnHealth()/8 == 0) ? 1 : ref->SpawnHealth()/8);
 
 		if (chanceindex >= countof(chance))
 		{
@@ -5347,40 +5303,103 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Teleport)
 		if (pr_teleport() >= chance[chanceindex]) return;
 	}
 
-	if (TeleportState == NULL)
+	DSpotState *state = DSpotState::GetSpotState();
+	if (state == NULL)
 	{
-		// Default to Teleport.
-		TeleportState = self->FindState("Teleport");
-		// If still nothing, then return.
-		if (!TeleportState) return;
+		ACTION_SET_RESULT(false);
+		return;
 	}
 
-	DSpotState *state = DSpotState::GetSpotState();
-	if (state == NULL) return;
-
-	if (!TargetType) TargetType = PClass::FindClass("BossSpot");
-
-	AActor * spot = state->GetSpotWithMinMaxDistance(TargetType, self->x, self->y, MinDist, MaxDist);
-	if (spot == NULL) return;
-
-	fixed_t prevX = self->x;
-	fixed_t prevY = self->y;
-	fixed_t prevZ = self->z;
-	if (P_TeleportMove (self, spot->x, spot->y, spot->z, Flags & TF_TELEFRAG))
+	if (target_type == NULL)
 	{
-		ACTION_SET_RESULT(false);	// Jumps should never set the result for inventory state chains!
+		target_type = PClass::FindClass("BossSpot");
+	}
 
-		if (FogType)
+	AActor * spot = state->GetSpotWithMinMaxDistance(target_type, ref->x, ref->y, mindist, maxdist);
+	if (spot == NULL)
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+
+	if (flags & TF_SENSITIVEZ)
+	{
+		fixed_t posz = (flags & TF_USESPOTZ) ? spot->z : spot->floorz;
+		if ((posz + ref->height > spot->ceilingz) || (posz < spot->floorz))
 		{
-			Spawn(FogType, prevX, prevY, prevZ, ALLOW_REPLACE);
+			ACTION_SET_RESULT(false);
+			return;
+		}
+	}
+	fixed_t prevX = ref->x, prevY = ref->y, prevZ = ref->z;
+	fixed_t finalz = spot->z;
+
+	if (spot->z + ref->height > spot->ceilingz)
+		finalz = spot->ceilingz - ref->height;
+	else if (spot->z < spot->floorz)
+		finalz = spot->floorz;
+
+	// Take precedence and cooperate with telefragging first.
+	bool tele_result = P_TeleportMove(ref, spot->x, spot->y, finalz, !!(flags & TF_TELEFRAG));
+
+	if (!tele_result && (flags & TF_FORCED))
+	{
+		// If the move didn't work, regardless of telefrag, force it.
+		ref->SetOrigin(spot->x, spot->y, finalz);
+		tele_result = true;
+	}
+
+	if (tele_result)
+	{
+		// Spawn fog if a fog type was given or the actor's own fogs are wanted.
+		if (fog_type || (flags & TF_USEACTORFOG))
+		{
+			if (!(flags & TF_NOSRCFOG))
+			{
+				AActor *fog1 = (flags & TF_USEACTORFOG) ? P_SpawnActorTeleportFog(ref, prevX, prevY, prevZ, true)
+					: Spawn(fog_type, prevX, prevY, prevZ, ALLOW_REPLACE);
+				if (fog1 != NULL)
+					fog1->target = ref;
+			}
+			if (!(flags & TF_NODESTFOG))
+			{
+				AActor *fog2 = (flags & TF_USEACTORFOG) ? P_SpawnActorTeleportFog(ref, ref->x, ref->y, ref->z, false)
+					: Spawn(fog_type, ref->x, ref->y, ref->z, ALLOW_REPLACE);
+				if (fog2 != NULL)
+					fog2->target = ref;
+			}
 		}
 
-		ACTION_JUMP(TeleportState, CLIENTUPDATE_FRAME);	// [BB] This may involve randomness.
+		ref->z = (flags & TF_USESPOTZ) ? spot->z : ref->floorz;
 
-		self->z = self->floorz;
-		self->angle = spot->angle;
-		self->velx = self->vely = self->velz = 0;
+		if (!(flags & TF_KEEPANGLE))
+			ref->angle = spot->angle;
+
+		if (!(flags & TF_KEEPVELOCITY))
+			ref->velx = ref->vely = ref->velz = 0;
+
+		// [Vita] Tell clients where the actor went.
+		if ( NETWORK_GetState( ) == NETSTATE_SERVER )
+		{
+			SERVERCOMMANDS_MoveThingExact( ref, CM_X|CM_Y|CM_Z|CM_ANGLE|CM_VELX|CM_VELY|CM_VELZ );
+		}
+
+		if (!(flags & TF_NOJUMP)) // The state jump only happens with the calling actor.
+		{
+			ACTION_SET_RESULT(false); // Jumps should never set the result for inventory state chains!
+			if (teleport_state == NULL)
+			{
+				// Default to Teleport.
+				teleport_state = self->FindState("Teleport");
+				// If still nothing, then return.
+				if (teleport_state == NULL)
+					return;
+			}
+			ACTION_JUMP(teleport_state, CLIENTUPDATE_FRAME);	// [BB] This may involve randomness.
+			return;
+		}
 	}
+	ACTION_SET_RESULT(tele_result);
 }
 
 //===========================================================================
@@ -5664,7 +5683,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 	ACTION_PARAM_FIXED(heightoffset, 7);	// [Vita] ZDoom 2.8
 	ACTION_PARAM_FIXED(radiusoffset, 8);
 	ACTION_PARAM_ANGLE(pitch, 9);
-	enum { VWARPF_ABSOLUTEPOSITION = 0x400, VWARPF_COPYVELOCITY = 0x4000, VWARPF_COPYPITCH = 0x8000 };
+	enum { VWARPF_ABSOLUTEPOSITION = 0x400, VWARPF_BOB = 0x800, VWARPF_MOVEPTR = 0x1000, VWARPF_USETID = 0x2000, VWARPF_COPYVELOCITY = 0x4000, VWARPF_COPYPITCH = 0x8000 };
 
 	fixed_t
 
@@ -5676,8 +5695,17 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 	if ( NETWORK_InClientModeAndActorNotClientHandled( self ) )
 		return;
 
-	AActor *reference = COPY_AAPTR(self, destination_selector);
-	const MoveThingData oldPositionData(self); // [TP]
+	// [Vita] ZDoom 2.8: WARPF_USETID takes a TID instead of a pointer.
+	AActor *reference;
+	if (flags & VWARPF_USETID)
+	{
+		FActorIterator iterator (destination_selector);
+		reference = destination_selector == 0 ? self : iterator.Next();
+	}
+	else
+	{
+		reference = COPY_AAPTR(self, destination_selector);
+	}
 
 	if (!reference)
 	{
@@ -5685,9 +5713,19 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 		return;
 	}
 
+	// [Vita] ZDoom 2.8: WARPF_MOVEPTR moves the pointed-to actor to the caller instead.
+	AActor *caller = self;
+	if (flags & VWARPF_MOVEPTR)
+	{
+		AActor *temp = reference;
+		reference = caller;
+		caller = temp;
+	}
+	const MoveThingData oldPositionData(caller); // [TP]
+
 	if (!(flags & WARPF_ABSOLUTEANGLE))
 	{
-		angle += (flags & WARPF_USECALLERANGLE) ? self->angle : reference->angle;
+		angle += (flags & WARPF_USECALLERANGLE) ? caller->angle : reference->angle;
 	}
 	zofs += FixedMul(reference->height, heightoffset);
 	const fixed_t vrad = FixedMul(radiusoffset, reference->radius);
@@ -5713,15 +5751,15 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 		yofs += FixedMul(vrad, finesine[angle >> ANGLETOFINESHIFT]);
 	}
 
-	oldx = self->x;
-	oldy = self->y;
-	oldz = self->z;
+	oldx = caller->x;
+	oldy = caller->y;
+	oldz = caller->z;
 
 	if (flags & WARPF_TOFLOOR)
 	{
 		// set correct xy
 
-		self->SetOrigin(
+		caller->SetOrigin(
 			bx + xofs,
 			by + yofs,
 			bz);
@@ -5732,10 +5770,10 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 		if (zofs)
 		{
 			// extra unlink, link and environment calculation
-			self->SetOrigin(
-				self->x,
-				self->y,
-				self->floorz + zofs);
+			caller->SetOrigin(
+				caller->x,
+				caller->y,
+				caller->floorz + zofs);
 		}
 		else
 		{
@@ -5743,60 +5781,65 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 			// already identified floor
 
 			// A_Teleport does the same thing anyway
-			self->z = self->floorz;
+			caller->z = caller->floorz;
 		}
 	}
 	else
 	{
-		self->SetOrigin(
+		caller->SetOrigin(
 			bx + xofs,
 			by + yofs,
 			bz + zofs);
 	}
 	
-	if ((flags & WARPF_NOCHECKPOSITION) || P_TestMobjLocation(self))
+	if ((flags & WARPF_NOCHECKPOSITION) || P_TestMobjLocation(caller))
 	{
 		if (flags & WARPF_TESTONLY)
 		{
-			self->SetOrigin(oldx, oldy, oldz);
+			caller->SetOrigin(oldx, oldy, oldz);
 		}
 		else
 		{
-			self->angle = angle;
-			if (flags & VWARPF_COPYPITCH) self->pitch = reference->pitch;
-			if (pitch) self->pitch += pitch;
-			if (flags & VWARPF_COPYVELOCITY) { self->velx = reference->velx; self->vely = reference->vely; self->velz = reference->velz; }
+			caller->angle = angle;
+			if (flags & VWARPF_COPYPITCH) caller->pitch = reference->pitch;
+			if (pitch) caller->pitch += pitch;
+			if (flags & VWARPF_COPYVELOCITY) { caller->velx = reference->velx; caller->vely = reference->vely; caller->velz = reference->velz; }
 
 			if (flags & WARPF_STOP)
 			{
-				self->velx = 0;
-				self->vely = 0;
-				self->velz = 0;
+				caller->velx = 0;
+				caller->vely = 0;
+				caller->velz = 0;
 			}
 
 			if (flags & WARPF_WARPINTERPOLATION)
 			{
-				self->PrevX += self->x - oldx;
-				self->PrevY += self->y - oldy;
-				self->PrevZ += self->z - oldz;
+				caller->PrevX += caller->x - oldx;
+				caller->PrevY += caller->y - oldy;
+				caller->PrevZ += caller->z - oldz;
 			}
 			else if (flags & WARPF_COPYINTERPOLATION)
 			{
-				self->PrevX = self->x + reference->PrevX - reference->x;
-				self->PrevY = self->y + reference->PrevY - reference->y;
-				self->PrevZ = self->z + reference->PrevZ - reference->z;
+				caller->PrevX = caller->x + reference->PrevX - reference->x;
+				caller->PrevY = caller->y + reference->PrevY - reference->y;
+				caller->PrevZ = caller->z + reference->PrevZ - reference->z;
 			}
 			else if (! (flags & WARPF_INTERPOLATE))
 			{
-				self->PrevX = self->x;
-				self->PrevY = self->y;
-				self->PrevZ = self->z;
+				caller->PrevX = caller->x;
+				caller->PrevY = caller->y;
+				caller->PrevZ = caller->z;
+			}
+			// [Vita] ZDoom 2.8: WARPF_BOB adds the reference's float bob.
+			if ((flags & VWARPF_BOB) && (reference->flags2 & MF2_FLOATBOB))
+			{
+				caller->z += reference->GetBobOffset();
 			}
 		}
 
 		// [BB] Inform the clients.
-		if (( NETWORK_GetState() == NETSTATE_SERVER ) && ( NETWORK_IsActorClientHandled( self ) == false ))
-			SERVERCOMMANDS_MoveThingIfChanged( self, oldPositionData );
+		if (( NETWORK_GetState() == NETSTATE_SERVER ) && ( NETWORK_IsActorClientHandled( caller ) == false ))
+			SERVERCOMMANDS_MoveThingIfChanged( caller, oldPositionData );
 
 		if (success_state)
 		{
@@ -5810,7 +5853,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Warp)
 	}
 	else
 	{
-		self->SetOrigin(oldx, oldy, oldz);
+		caller->SetOrigin(oldx, oldy, oldz);
 		ACTION_SET_RESULT(false);
 	}
 
@@ -6432,5 +6475,582 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_QuakeEx)
 	ACTION_PARAM_INT(tremrad, 5);
 	ACTION_PARAM_SOUND(sound, 6);
 	ACTION_PARAM_INT(flags, 7);
-	P_StartQuakeXYZ(self, 0, intensityX, intensityY, intensityZ, duration, damrad, tremrad, sound, flags);
+	ACTION_PARAM_DOUBLE(mulWaveX, 8);	// [Vita] QF_WAVE speeds
+	ACTION_PARAM_DOUBLE(mulWaveY, 9);
+	ACTION_PARAM_DOUBLE(mulWaveZ, 10);
+	P_StartQuakeXYZ(self, 0, intensityX, intensityY, intensityZ, duration, damrad, tremrad, sound, flags, mulWaveX, mulWaveY, mulWaveZ);
+}
+
+//===========================================================================
+//
+// [Vita] ZDoom 2.8.1 action functions missing from Zandronum 3.x:
+// A_Kill*/A_Remove* with flags, filter and species; A_KillTarget/Tracer,
+// A_RemoveTarget/Tracer, A_Remove; A_SetTeleFog, A_SwapTeleFog;
+// A_SetFloatBobPhase, A_ResetHealth, A_JumpIfHigherOrLower, A_SetSpecies,
+// A_CheckSpecies, A_SetRipperLevel/RipMin/RipMax, A_CheckBlock,
+// A_FaceMovementDirection, A_SetRoll, A_SetFloatSpeed, A_SetPainThreshold.
+//
+//===========================================================================
+
+// Kills and removals are server-side; clients only run them for
+// client-side-only actors.
+#define VITA_SERVER_ONLY() \
+	if ( NETWORK_InClientMode() && (( self->NetworkFlags & NETFL_CLIENTSIDEONLY ) == false )) return;
+
+enum KILS
+{
+	KILS_FOILINVUL		= 1 << 0,
+	KILS_KILLMISSILES	= 1 << 1,
+	KILS_NOMONSTERS		= 1 << 2,
+	KILS_FOILBUDDHA		= 1 << 3,
+	KILS_EXFILTER		= 1 << 4,
+	KILS_EXSPECIES		= 1 << 5,
+	KILS_EITHER			= 1 << 6,
+};
+
+static void DoKill(AActor *killtarget, AActor *self, FName damagetype, int flags, const PClass *filter, FName species)
+{
+	bool filterpass = Vita_CheckClass(killtarget, filter, !!(flags & KILS_EXFILTER)),
+		speciespass = Vita_CheckSpecies(killtarget, species, !!(flags & KILS_EXSPECIES));
+	if ((flags & KILS_EITHER) ? (filterpass || speciespass) : (filterpass && speciespass))
+	{
+		int dmgFlags = DMG_NO_ARMOR | DMG_NO_FACTOR;
+
+		// ZDoom 2.8.1 tested the constants here (always true); later engines
+		// test the caller's flags, which is what the flags are documented to do.
+		if (flags & KILS_FOILINVUL)
+			dmgFlags |= DMG_FOILINVUL;
+		if (flags & KILS_FOILBUDDHA)
+			dmgFlags |= DMG_FOILBUDDHA;
+
+		if ((killtarget->flags & MF_MISSILE) && (flags & KILS_KILLMISSILES))
+		{
+			if ((!(killtarget->flags2 & MF2_INVULNERABLE) || (flags & KILS_FOILINVUL)) &&
+				(!(killtarget->flags7 & MF7_BUDDHA) || (flags & KILS_FOILBUDDHA)) &&
+				!(killtarget->flags5 & MF5_NODAMAGE))
+			{
+				P_ExplodeMissile(killtarget, NULL, NULL);
+			}
+		}
+		if (!(flags & KILS_NOMONSTERS))
+		{
+			P_DamageMobj(killtarget, self, self, killtarget->health, damagetype, dmgFlags);
+		}
+	}
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_KillTarget)
+{
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_NAME(damagetype, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
+
+	VITA_SERVER_ONLY();
+	if (self->target != NULL)
+		DoKill(self->target, self, damagetype, flags, filter, species);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_KillTracer)
+{
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_NAME(damagetype, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
+
+	VITA_SERVER_ONLY();
+	if (self->tracer != NULL)
+		DoKill(self->tracer, self, damagetype, flags, filter, species);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_KillMaster)
+{
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_NAME(damagetype, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
+
+	VITA_SERVER_ONLY();
+	if (self->master != NULL)
+		DoKill(self->master, self, damagetype, flags, filter, species);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_KillChildren)
+{
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_NAME(damagetype, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
+
+	VITA_SERVER_ONLY();
+	TThinkerIterator<AActor> it;
+	AActor *mo;
+	while ( (mo = it.Next()) )
+	{
+		if (mo->master == self)
+			DoKill(mo, self, damagetype, flags, filter, species);
+	}
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_KillSiblings)
+{
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_NAME(damagetype, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
+
+	VITA_SERVER_ONLY();
+	TThinkerIterator<AActor> it;
+	AActor *mo;
+	if (self->master != NULL)
+	{
+		while ( (mo = it.Next()) )
+		{
+			if (mo->master == self->master && mo != self)
+				DoKill(mo, self, damagetype, flags, filter, species);
+		}
+	}
+}
+
+enum RMVF_flags
+{
+	RMVF_MISSILES		= 1 << 0,
+	RMVF_NOMONSTERS		= 1 << 1,
+	RMVF_MISC			= 1 << 2,
+	RMVF_EVERYTHING		= 1 << 3,
+	RMVF_EXFILTER		= 1 << 4,
+	RMVF_EXSPECIES		= 1 << 5,
+	RMVF_EITHER			= 1 << 6,
+};
+
+static void DoRemove(AActor *removetarget, int flags, const PClass *filter, FName species)
+{
+	bool filterpass = Vita_CheckClass(removetarget, filter, !!(flags & RMVF_EXFILTER)),
+		speciespass = Vita_CheckSpecies(removetarget, species, !!(flags & RMVF_EXSPECIES));
+	if ((flags & RMVF_EITHER) ? (filterpass || speciespass) : (filterpass && speciespass))
+	{
+		// One removal only (2.8.1 could call P_RemoveThing several times on the same actor).
+		if ((flags & RMVF_EVERYTHING)
+			|| ((flags & RMVF_MISC) && !((removetarget->flags3 & MF3_ISMONSTER) && (removetarget->flags & MF_MISSILE)))
+			|| ((removetarget->flags3 & MF3_ISMONSTER) && !(flags & RMVF_NOMONSTERS))
+			|| ((removetarget->flags & MF_MISSILE) && (flags & RMVF_MISSILES)))
+		{
+			P_RemoveThing(removetarget);
+		}
+	}
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RemoveTarget)
+{
+	ACTION_PARAM_START(3);
+	ACTION_PARAM_INT(flags, 0);
+	ACTION_PARAM_CLASS(filter, 1);
+	ACTION_PARAM_NAME(species, 2);
+
+	VITA_SERVER_ONLY();
+	if (self->target != NULL)
+		DoRemove(self->target, flags, filter, species);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RemoveTracer)
+{
+	ACTION_PARAM_START(3);
+	ACTION_PARAM_INT(flags, 0);
+	ACTION_PARAM_CLASS(filter, 1);
+	ACTION_PARAM_NAME(species, 2);
+
+	VITA_SERVER_ONLY();
+	if (self->tracer != NULL)
+		DoRemove(self->tracer, flags, filter, species);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RemoveMaster)
+{
+	ACTION_PARAM_START(3);
+	ACTION_PARAM_INT(flags, 0);
+	ACTION_PARAM_CLASS(filter, 1);
+	ACTION_PARAM_NAME(species, 2);
+
+	VITA_SERVER_ONLY();
+	if (self->master != NULL)
+		DoRemove(self->master, flags, filter, species);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RemoveChildren)
+{
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_BOOL(removeall, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
+
+	VITA_SERVER_ONLY();
+	TThinkerIterator<AActor> it;
+	AActor *mo;
+	while ((mo = it.Next()) != NULL)
+	{
+		if (mo->master == self && (mo->health <= 0 || removeall))
+			DoRemove(mo, flags, filter, species);
+	}
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_RemoveSiblings)
+{
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_BOOL(removeall, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
+
+	VITA_SERVER_ONLY();
+	TThinkerIterator<AActor> it;
+	AActor *mo;
+	if (self->master != NULL)
+	{
+		while ((mo = it.Next()) != NULL)
+		{
+			if (mo->master == self->master && mo != self && (mo->health <= 0 || removeall))
+				DoRemove(mo, flags, filter, species);
+		}
+	}
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Remove)
+{
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_INT(removee, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_CLASS(filter, 2);
+	ACTION_PARAM_NAME(species, 3);
+
+	VITA_SERVER_ONLY();
+	AActor *reference = COPY_AAPTR(self, removee);
+	if (reference != NULL)
+		DoRemove(reference, flags, filter, species);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetTeleFog)
+{
+	ACTION_PARAM_START(2);
+	ACTION_PARAM_CLASS(oldpos, 0);
+	ACTION_PARAM_CLASS(newpos, 1);
+
+	self->TeleFogSourceType = oldpos;
+	self->TeleFogDestType = newpos;
+}
+
+DEFINE_ACTION_FUNCTION(AActor, A_SwapTeleFog)
+{
+	if (self->TeleFogSourceType != self->TeleFogDestType)
+	{
+		const PClass *temp = self->TeleFogSourceType;
+		self->TeleFogSourceType = self->TeleFogDestType;
+		self->TeleFogDestType = temp;
+	}
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetFloatBobPhase)
+{
+	ACTION_PARAM_START(1);
+	ACTION_PARAM_INT(bob, 0);
+
+	// Respect float bob phase limits.
+	if (bob >= 0 && bob <= 63)
+		self->FloatBobPhase = bob;
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_ResetHealth)
+{
+	ACTION_PARAM_START(1);
+	ACTION_PARAM_INT(ptr, 0);
+
+	AActor *mobj = COPY_AAPTR(self, ptr);
+	if (!mobj)
+		return;
+	if ( NETWORK_InClientMode() && (( mobj->NetworkFlags & NETFL_CLIENTSIDEONLY ) == false ))
+		return;
+
+	player_t *player = mobj->player;
+	if (player && (player->mo->health > 0))
+	{
+		player->health = player->mo->health = player->mo->GetDefault()->health;
+		if ( NETWORK_GetState( ) == NETSTATE_SERVER )
+			SERVERCOMMANDS_SetPlayerHealth( static_cast<ULONG>( player - players ));
+	}
+	else if (mobj->health > 0)
+	{
+		mobj->health = mobj->SpawnHealth();
+	}
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_JumpIfHigherOrLower)
+{
+	ACTION_PARAM_START(6);
+	ACTION_PARAM_STATE(high, 0);
+	ACTION_PARAM_STATE(low, 1);
+	ACTION_PARAM_FIXED(offsethigh, 2);
+	ACTION_PARAM_FIXED(offsetlow, 3);
+	ACTION_PARAM_BOOL(includeHeight, 4);
+	ACTION_PARAM_INT(ptr, 5);
+
+	AActor *mobj = COPY_AAPTR(self, ptr);
+
+	if (!mobj || (mobj == self))	// AAPTR_DEFAULT is useless here.
+		return;
+	ACTION_SET_RESULT(false);	// No inventory jump chains please.
+
+	if ( NETWORK_InClientMode() && (( self->NetworkFlags & NETFL_CLIENTSIDEONLY ) == false ))
+		return;
+
+	if ((high) && (mobj->z > ((includeHeight ? self->height : 0) + self->z + offsethigh)))
+		ACTION_JUMP(high, CLIENTUPDATE_FRAME);
+	else if ((low) && (mobj->z + (includeHeight ? mobj->height : 0)) < (self->z + offsetlow))
+		ACTION_JUMP(low, CLIENTUPDATE_FRAME);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetSpecies)
+{
+	ACTION_PARAM_START(2);
+	ACTION_PARAM_NAME(species, 0);
+	ACTION_PARAM_INT(ptr, 1);
+
+	AActor *mobj = COPY_AAPTR(self, ptr);
+	if (!mobj)
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+	mobj->Species = species;
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CheckSpecies)
+{
+	ACTION_PARAM_START(3);
+	ACTION_PARAM_STATE(jump, 0);
+	ACTION_PARAM_NAME(species, 1);
+	ACTION_PARAM_INT(ptr, 2);
+
+	AActor *mobj = COPY_AAPTR(self, ptr);
+
+	ACTION_SET_RESULT(false);
+	if (!mobj)
+		return;
+	if ( NETWORK_InClientMode() && (( self->NetworkFlags & NETFL_CLIENTSIDEONLY ) == false ))
+		return;
+
+	if (jump && mobj->GetSpecies() == species)
+		ACTION_JUMP(jump, CLIENTUPDATE_FRAME);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetRipperLevel)
+{
+	ACTION_PARAM_START(1);
+	ACTION_PARAM_INT(level, 0);
+	self->RipperLevel = level;
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetRipMin)
+{
+	ACTION_PARAM_START(1);
+	ACTION_PARAM_INT(min, 0);
+	self->RipLevelMin = min;
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetRipMax)
+{
+	ACTION_PARAM_START(1);
+	ACTION_PARAM_INT(max, 0);
+	self->RipLevelMax = max;
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetFloatSpeed)
+{
+	ACTION_PARAM_START(2);
+	ACTION_PARAM_FIXED(speed, 0);
+	ACTION_PARAM_INT(ptr, 1);
+
+	AActor *ref = COPY_AAPTR(self, ptr);
+	if (!ref)
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+	ref->FloatSpeed = speed;
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetPainThreshold)
+{
+	ACTION_PARAM_START(2);
+	ACTION_PARAM_INT(threshold, 0);
+	ACTION_PARAM_INT(ptr, 1);
+
+	AActor *ref = COPY_AAPTR(self, ptr);
+	if (!ref)
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+	ref->PainThreshold = threshold;
+}
+
+// A_SetRoll: the roll is stored (ACS GetActorRoll reads it), but this
+// renderer doesn't draw rolled sprites or a rolled view.
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SetRoll)
+{
+	ACTION_PARAM_START(3);
+	ACTION_PARAM_ANGLE(roll, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_INT(ptr, 2);
+
+	AActor *ref = COPY_AAPTR(self, ptr);
+	if (!ref)
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+	ref->roll = roll;
+}
+
+enum CBF
+{
+	CBF_NOLINES			= 1 << 0,	// Don't check lines.
+	CBF_SETTARGET		= 1 << 1,	// Sets the caller/pointer's target to the actor blocking it.
+	CBF_SETMASTER		= 1 << 2,
+	CBF_SETTRACER		= 1 << 3,
+	CBF_SETONPTR		= 1 << 4,	// Sets the pointer on the actor being checked instead of self.
+	CBF_DROPOFF			= 1 << 5,	// Check for dropoffs.
+};
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_CheckBlock)
+{
+	ACTION_PARAM_START(3);
+	ACTION_PARAM_STATE(block, 0);
+	ACTION_PARAM_INT(flags, 1);
+	ACTION_PARAM_INT(ptr, 2);
+
+	AActor *mobj = COPY_AAPTR(self, ptr);
+
+	ACTION_SET_RESULT(false);
+	if (!mobj)
+		return;
+	if ( NETWORK_InClientMode() && (( self->NetworkFlags & NETFL_CLIENTSIDEONLY ) == false ))
+		return;
+
+	// Nothing to block it so skip the rest.
+	bool checker = (flags & CBF_DROPOFF) ? P_CheckMove(mobj, mobj->x, mobj->y) : P_TestMobjLocation(mobj);
+	if (checker) return;
+
+	if (mobj->BlockingMobj)
+	{
+		AActor *setter = (flags & CBF_SETONPTR) ? mobj : self;
+		if (setter)
+		{
+			if (flags & CBF_SETTARGET)	setter->target = mobj->BlockingMobj;
+			if (flags & CBF_SETMASTER)	setter->master = mobj->BlockingMobj;
+			if (flags & CBF_SETTRACER)	setter->tracer = mobj->BlockingMobj;
+		}
+	}
+
+	// A_CheckBlock("", CBF_SETTRACER) only gets the blocking actor.
+	if (!block)
+		return;
+
+	if (mobj->BlockingMobj || (!(flags & CBF_NOLINES) && mobj->BlockingLine != NULL))
+		ACTION_JUMP(block, CLIENTUPDATE_FRAME);
+}
+
+enum FMDFlags
+{
+	FMDF_NOPITCH =			1 << 0,
+	FMDF_INTERPOLATE =		1 << 1,
+	FMDF_NOANGLE =			1 << 2,
+};
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_FaceMovementDirection)
+{
+	ACTION_PARAM_START(5);
+	ACTION_PARAM_ANGLE(offset, 0);
+	ACTION_PARAM_ANGLE(anglelimit, 1);
+	ACTION_PARAM_ANGLE(pitchlimit, 2);
+	ACTION_PARAM_INT(flags, 3);
+	ACTION_PARAM_INT(ptr, 4);
+
+	AActor *mobj = COPY_AAPTR(self, ptr);
+
+	if (!mobj || ((flags & FMDF_NOPITCH) && (flags & FMDF_NOANGLE)))
+	{
+		ACTION_SET_RESULT(false);
+		return;
+	}
+
+	// Don't bother calculating this without horizontal movement.
+	if (!(flags & FMDF_NOANGLE) && (mobj->velx != 0 || mobj->vely != 0))
+	{
+		angle_t current = mobj->angle;
+		const angle_t angle = R_PointToAngle2(0, 0, mobj->velx, mobj->vely);
+		const angle_t limit = anglelimit;
+
+		if (limit > 0 && (absangle(current - angle) > limit))
+		{
+			if (current < angle)
+			{
+				if (current - angle > ANGLE_180)
+					current += limit + offset;
+				else
+					current -= limit + offset;
+				mobj->SetAngle(current, !!(flags & FMDF_INTERPOLATE));
+			}
+			else if (current > angle)
+			{
+				if (angle - current > ANGLE_180)
+					current -= limit + offset;
+				else
+					current += limit + offset;
+				mobj->SetAngle(current, !!(flags & FMDF_INTERPOLATE));
+			}
+			else
+				mobj->SetAngle(angle + ANGLE_180 + offset, !!(flags & FMDF_INTERPOLATE));
+		}
+		else
+			mobj->SetAngle(angle + offset, !!(flags & FMDF_INTERPOLATE));
+	}
+
+	if (!(flags & FMDF_NOPITCH))
+	{
+		fixed_t current = mobj->pitch;
+		const FVector2 velocity(mobj->velx, mobj->vely);
+		const fixed_t pitch = R_PointToAngle2(0, 0, (fixed_t)velocity.Length(), -mobj->velz);
+		if (pitchlimit > 0)
+		{
+			fixed_t plimit = fixed_t(pitchlimit);
+			if (abs(current - pitch) > plimit)
+			{
+				fixed_t max = 0;
+				if (current > pitch)
+				{
+					max = MIN(plimit, (current - pitch));
+					current -= max;
+				}
+				else
+				{
+					max = MIN(plimit, (pitch - current));
+					current += max;
+				}
+				mobj->SetPitch(current, !!(flags & FMDF_INTERPOLATE));
+			}
+			else
+			{
+				mobj->SetPitch(pitch, !!(flags & FMDF_INTERPOLATE));
+			}
+		}
+		else
+		{
+			mobj->SetPitch(pitch, !!(flags & FMDF_INTERPOLATE));
+		}
+	}
 }

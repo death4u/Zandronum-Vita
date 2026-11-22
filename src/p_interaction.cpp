@@ -1147,6 +1147,12 @@ static inline bool MustForcePain(AActor *target, AActor *inflictor)
 		(inflictor->flags6 & MF6_FORCEPAIN) && !(inflictor->flags5 & MF5_PAINLESS));
 }
 
+// [Vita] ZDoom 2.8: ALLOWPAIN/CAUSEPAIN let undamaged actors still react with pain.
+static inline bool isFakePain(AActor *target, AActor *inflictor, int damage)
+{
+	return ((target->flags7 & MF7_ALLOWPAIN && damage > 0) || ((inflictor != NULL) && (inflictor->flags7 & MF7_CAUSEPAIN)));
+}
+
 // Returns the amount of damage actually inflicted upon the target, or -1 if
 // the damage was cancelled.
 int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage, FName mod, int flags)
@@ -1161,6 +1167,10 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 	bool justhit = false;
 	// [BC]
 	LONG	lOldTargetHealth;
+	// [Vita] ZDoom 2.8
+	bool fakedPain = false;
+	bool invulpain = false;
+	const int rawdamage = damage;
 
 	// [BC] Game is currently in a suspended state; don't hurt anyone.
 	if ( GAME_GetEndLevelDelay( ))
@@ -1179,6 +1189,8 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 		else
 			return -1;
 
+	fakedPain = isFakePain(target, inflictor, damage);	// [Vita]
+
 	// Spectral targets only take damage from spectral projectiles.
 	if (target->flags4 & MF4_SPECTRAL && damage < TELEFRAG_DAMAGE)
 	{
@@ -1189,7 +1201,7 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 	}
 	if (target->health <= 0)
 	{
-		if (inflictor && mod == NAME_Ice)
+		if (inflictor && mod == NAME_Ice && !(inflictor->flags7 & MF7_ICESHATTER))	// [Vita] ICESHATTER
 		{
 			return -1;
 		}
@@ -1215,6 +1227,12 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 		{
 			if (inflictor == NULL || (!(inflictor->flags3 & MF3_FOILINVUL) && !(flags & DMG_FOILINVUL)))
 			{
+				if (fakedPain)	// [Vita] ZDoom 2.8
+				{
+					damage = 0;
+					invulpain = true;
+					goto fakepain;
+				}
 				return -1;
 			}
 		}
@@ -1292,6 +1310,11 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 				return -1;
 			}
 		}
+		// [Vita] ZDoom 2.8: ACS APROP_DamageMultiplier
+		if (damage > 0 && source != NULL && source->DamageMultiply != FRACUNIT)
+		{
+			damage = FixedMul(damage, source->DamageMultiply);
+		}
 		// Handle active damage modifiers (e.g. PowerDamage)
 		if (source != NULL && source->Inventory != NULL)
 		{
@@ -1302,6 +1325,10 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 				if (MustForcePain(target, inflictor))
 				{
 					goto dopain;
+				}
+				else if (fakedPain)	// [Vita] ZDoom 2.8
+				{
+					goto fakepain;
 				}
 				return -1;
 			}
@@ -1316,6 +1343,10 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 				if (MustForcePain(target, inflictor))
 				{
 					goto dopain;
+				}
+				else if (fakedPain)	// [Vita] ZDoom 2.8
+				{
+					goto fakepain;
 				}
 				return -1;
 			}
@@ -1334,7 +1365,8 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 			return -1;
 		}
 
-		if (!(flags & DMG_NO_FACTOR))
+		// [Vita] ZDoom 2.8: telefrag damage is only reduced by damage factors with LAXTELEFRAGDMG.
+		if (!(flags & DMG_NO_FACTOR) && (rawdamage < TELEFRAG_DAMAGE || (target->flags7 & MF7_LAXTELEFRAGDMG)))
 		{
 			damage = FixedMul(damage, target->DamageFactor);
 			if (damage >= 0)
@@ -1347,11 +1379,26 @@ int P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage,
 				{
 					goto dopain;
 				}
+				else if (fakedPain)	// [Vita] ZDoom 2.8
+				{
+					goto fakepain;
+				}
 				return -1;
 			}
 		}
 
-		damage = target->TakeSpecialDamage (inflictor, source, damage, mod);
+		{
+			const int olddam = damage;	// [Vita]
+			damage = target->TakeSpecialDamage (inflictor, source, damage, mod);
+			// [Vita] ZDoom 2.8: NODAMAGE actors can still be forced or faked into pain.
+			if (damage == 0 && olddam > 0)
+			{
+				if (MustForcePain(target, inflictor))
+					goto dopain;
+				else if (fakedPain)
+					goto fakepain;
+			}
+		}
 	}
 	if (damage == -1)
 	{
@@ -1520,6 +1567,13 @@ thrust:
 			if (damage < TELEFRAG_DAMAGE && ((player->mo->flags2 & MF2_INVULNERABLE) ||
 				(player->cheats & CF_GODMODE)))
 			{ // player is invulnerable, so don't hurt him
+				// [Vita] ZDoom 2.8: ALLOWPAIN players or CAUSEPAIN inflictors still cause pain.
+				if (!(player->cheats & CF_GODMODE) && !(player->mo->flags5 & MF5_NOPAIN) &&
+					((player->mo->flags7 & MF7_ALLOWPAIN) || (inflictor != NULL && (inflictor->flags7 & MF7_CAUSEPAIN))))
+				{
+					invulpain = true;
+					goto fakepain;
+				}
 				return -1;
 			}
 
@@ -1532,7 +1586,9 @@ thrust:
 			{
 				int newdam = damage;
 				player->mo->Inventory->AbsorbDamage (damage, mod, newdam);
-				damage = newdam;
+				// [Vita] ZDoom 2.8: armor only reduces telefrag damage with LAXTELEFRAGDMG.
+				if (rawdamage < TELEFRAG_DAMAGE || (player->mo->flags7 & MF7_LAXTELEFRAGDMG))
+					damage = newdam;
 				if (damage <= 0)
 				{
 					// [BB] The player didn't lose health but armor. The server needs
@@ -1545,6 +1601,10 @@ thrust:
 						(inflictor->flags6 & MF6_FORCEPAIN) && !(inflictor->flags5 & MF5_PAINLESS))
 					{
 						goto dopain;
+					}
+					else if (fakedPain)	// [Vita] ZDoom 2.8
+					{
+						goto fakepain;
 					}
 					return damage;
 				}
@@ -1584,7 +1644,7 @@ thrust:
 			// This does not save the player if damage >= TELEFRAG_DAMAGE, still need to
 			// telefrag him right? ;) (Unfortunately the damage is "absorbed" by armor,
 			// but telefragging should still do enough damage to kill the player)
-			if ((player->cheats & CF_BUDDHA) && damage < TELEFRAG_DAMAGE)
+			if (((player->cheats & CF_BUDDHA) || (player->mo->flags7 & MF7_BUDDHA)) && rawdamage < TELEFRAG_DAMAGE)	// [Vita] BUDDHA flag
 			{
 				// If this is a voodoo doll we need to handle the real player as well.
 				player->mo->health = target->health = player->health = 1;
@@ -1644,6 +1704,8 @@ thrust:
 			damage = newdam;
 			if (damage <= 0)
 			{
+				if (fakedPain)	// [Vita] ZDoom 2.8
+					goto fakepain;
 				return damage;
 			}
 		}
@@ -1698,6 +1760,13 @@ thrust:
 	{
 		if ( player )
 			SERVERCOMMANDS_DamagePlayer( ULONG( player - players ));
+	}
+
+	// [Vita] ZDoom 2.8: BUDDHA monsters keep 1 health unless the damage foils it.
+	if (target->health <= 0 && target->player == NULL && !(flags & DMG_FORCED) && (target->flags7 & MF7_BUDDHA) &&
+		rawdamage < TELEFRAG_DAMAGE && (inflictor == NULL || !(inflictor->flags7 & MF7_FOILBUDDHA)) && !(flags & DMG_FOILBUDDHA))
+	{
+		target->health = 1;
 	}
 
 	if (target->health <= 0)
@@ -1768,7 +1837,8 @@ thrust:
 		}
 	}
 
-	
+
+fakepain:	// [Vita] ZDoom 2.8: ALLOWPAIN/CAUSEPAIN jump here, skipping the damage itself.
 	if (!(target->flags5 & MF5_NOPAIN) && (inflictor == NULL || !(inflictor->flags5 & MF5_PAINLESS)) &&
 		(target->player != NULL || !G_SkillProperty(SKILLP_NoPain)) && !(target->flags & MF_SKULLFLY))
 	{
@@ -1885,6 +1955,8 @@ dopain:
 	if (justhit && (target->target == source || !target->target || !target->IsFriend(target->target)))
 		target->flags |= MF_JUSTHIT;    // fight back!
 
+	if (invulpain)	// [Vita] ZDoom 2.8: the pain was faked; no damage was done.
+		return -1;
 	return damage;
 }
 
@@ -2125,7 +2197,7 @@ void P_PoisonDamage (player_t *player, AActor *source, int damage,
 	target->health -= damage;
 	if (target->health <= 0)
 	{ // Death
-		if (player->cheats & CF_BUDDHA && damage < TELEFRAG_DAMAGE)
+		if (((player->cheats & CF_BUDDHA) || (player->mo->flags7 & MF7_BUDDHA)) && damage < TELEFRAG_DAMAGE)	// [Vita] BUDDHA flag
 		{ // [SP] Save the player... 
 			player->health = target->health = 1;
 		}

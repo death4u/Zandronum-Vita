@@ -1307,6 +1307,51 @@ DEFINE_PROPERTY(gravity, F, Actor)
 }
 
 //==========================================================================
+// [Vita] ZDoom 2.8 properties: Friction, TeleFogSourceType/DestType,
+// RipperLevel, RipLevelMin, RipLevelMax
+//==========================================================================
+DEFINE_PROPERTY(friction, F, Actor)
+{
+	PROP_FIXED_PARM(i, 0);
+
+	if (i < 0) I_Error ("Friction must not be negative.");
+	defaults->Friction = i;
+}
+
+DEFINE_PROPERTY(telefogsourcetype, S, Actor)
+{
+	PROP_STRING_PARM(str, 0);
+	defaults->TeleFogSourceType = (str == NULL || *str == 0 || !stricmp(str, "None")) ? NULL : FindClassTentative(str, "Actor");
+}
+
+DEFINE_PROPERTY(telefogdesttype, S, Actor)
+{
+	PROP_STRING_PARM(str, 0);
+	defaults->TeleFogDestType = (str == NULL || *str == 0 || !stricmp(str, "None")) ? NULL : FindClassTentative(str, "Actor");
+}
+
+DEFINE_PROPERTY(ripperlevel, I, Actor)
+{
+	PROP_INT_PARM(id, 0);
+	if (id < 0) I_Error ("RipperLevel must not be negative");
+	defaults->RipperLevel = id;
+}
+
+DEFINE_PROPERTY(riplevelmin, I, Actor)
+{
+	PROP_INT_PARM(id, 0);
+	if (id < 0) I_Error ("RipLevelMin must not be negative");
+	defaults->RipLevelMin = id;
+}
+
+DEFINE_PROPERTY(riplevelmax, I, Actor)
+{
+	PROP_INT_PARM(id, 0);
+	if (id < 0) I_Error ("RipLevelMax must not be negative");
+	defaults->RipLevelMax = id;
+}
+
+//==========================================================================
 //
 //==========================================================================
 DEFINE_PROPERTY(species, S, Actor)

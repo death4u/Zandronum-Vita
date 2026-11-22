@@ -191,6 +191,9 @@ enum SAW_Flags
 	SF_RANDOMLIGHTHIT = 4,
 	SF_NOUSEAMMOMISS = 8,
 	SF_NOUSEAMMO = 16,
+	SF_NOPULLIN = 32,		// [Vita] ZDoom 2.8
+	SF_NOTURN = 64,			// [Vita] ZDoom 2.8
+	SF_STEALARMOR = 128,	// [Vita] ZDoom 2.8
 };
 
 DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Saw)
@@ -207,7 +210,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Saw)
 		return;
 	}
 	
-	ACTION_PARAM_START(9);
+	ACTION_PARAM_START(11);
 	ACTION_PARAM_SOUND(fullsound, 0);
 	ACTION_PARAM_SOUND(hitsound, 1);
 	ACTION_PARAM_INT(damage, 2);
@@ -217,6 +220,8 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Saw)
 	ACTION_PARAM_ANGLE(Spread_XY, 6);
 	ACTION_PARAM_ANGLE(Spread_Z, 7);
 	ACTION_PARAM_FIXED(LifeSteal, 8);
+	ACTION_PARAM_INT(lifestealmax, 9);			// [Vita] ZDoom 2.8
+	ACTION_PARAM_CLASS(armorbonustype, 10);		// [Vita] ZDoom 2.8
 
 
 
@@ -310,7 +315,35 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Saw)
 	const int prevhealth = self->health;
 
 	if (LifeSteal && !(linetarget->flags5 & MF5_DONTDRAIN))
-		P_GiveBody (self, (actualdamage * LifeSteal) >> FRACBITS);
+	{
+		// [Vita] ZDoom 2.8: SF_STEALARMOR turns the stolen life into armor; lifestealmax caps it.
+		if (Flags & SF_STEALARMOR)
+		{
+			if (!armorbonustype) armorbonustype = PClass::FindClass("ArmorBonus");
+
+			if (armorbonustype != NULL && armorbonustype->IsDescendantOf (RUNTIME_CLASS(ABasicArmorBonus)))
+			{
+				ABasicArmorBonus *armorbonus = static_cast<ABasicArmorBonus *>(Spawn (armorbonustype, 0,0,0, NO_REPLACE));
+				armorbonus->SaveAmount *= (actualdamage * LifeSteal) >> FRACBITS;
+				armorbonus->MaxSaveAmount = lifestealmax <= 0 ? armorbonus->MaxSaveAmount : lifestealmax;
+				armorbonus->flags |= MF_DROPPED;
+				armorbonus->ClearCounters();
+
+				if (!armorbonus->CallTryPickup (self))
+				{
+					armorbonus->Destroy ();
+				}
+				else if ( NETWORK_GetState( ) == NETSTATE_SERVER && self->player )
+				{
+					SERVERCOMMANDS_SetPlayerArmor( self->player - players );
+				}
+			}
+		}
+		else
+		{
+			P_GiveBody (self, (actualdamage * LifeSteal) >> FRACBITS, lifestealmax);
+		}
+	}
 
 	// [EP] Inform the clients about the player health change if needed.
 	if ( ( NETWORK_GetState() == NETSTATE_SERVER ) && self->player && prevhealth != self->health )
@@ -322,23 +355,27 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_Saw)
 		SERVERCOMMANDS_SoundActor( self, CHAN_WEAPON, S_GetName( hitsound ), 1, ATTN_NORM );
 		
 	// turn to face target
-	angle = R_PointToAngle2 (self->x, self->y,
-							 linetarget->x, linetarget->y);
-	if (angle - self->angle > ANG180)
+	if (!(Flags & SF_NOTURN))	// [Vita] ZDoom 2.8
 	{
-		if (angle - self->angle < (angle_t)(-ANG90/20))
-			self->angle = angle + ANG90/21;
+		angle = R_PointToAngle2 (self->x, self->y,
+								 linetarget->x, linetarget->y);
+		if (angle - self->angle > ANG180)
+		{
+			if (angle - self->angle < (angle_t)(-ANG90/20))
+				self->angle = angle + ANG90/21;
+			else
+				self->angle -= ANG90/20;
+		}
 		else
-			self->angle -= ANG90/20;
+		{
+			if (angle - self->angle > ANG90/20)
+				self->angle = angle - ANG90/21;
+			else
+				self->angle += ANG90/20;
+		}
 	}
-	else
-	{
-		if (angle - self->angle > ANG90/20)
-			self->angle = angle - ANG90/21;
-		else
-			self->angle += ANG90/20;
-	}
-	self->flags |= MF_JUSTATTACKED;
+	if (!(Flags & SF_NOPULLIN))	// [Vita] ZDoom 2.8
+		self->flags |= MF_JUSTATTACKED;
 
 	// [BC] If we're the server, tell clients to adjust the player's angle.
 	if ( NETWORK_GetState( ) == NETSTATE_SERVER )
@@ -1041,7 +1078,7 @@ DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_BFGSpray)
 
 		thingToHit = linetarget;
 		int newdam = P_DamageMobj (thingToHit, self->target, self->target, damage, spray != NULL? FName(spray->DamageType) : FName(NAME_BFGSplash), 
-			spray != NULL && (spray->flags3 & MF3_FOILINVUL)? DMG_FOILINVUL : 0);
+			(spray != NULL && (spray->flags3 & MF3_FOILINVUL)? DMG_FOILINVUL : 0) | (spray != NULL && (spray->flags7 & MF7_FOILBUDDHA)? DMG_FOILBUDDHA : 0));	// [Vita] FOILBUDDHA
 		P_TraceBleed (newdam > 0 ? newdam : damage, thingToHit, self->target);
 	}
 }

@@ -85,7 +85,7 @@ bool APowerupGiver::Use (bool pickup)
 	// [TP]
 	ModifyPowerup( power );
 
-	power->ItemFlags |= ItemFlags & (IF_ALWAYSPICKUP|IF_ADDITIVETIME);
+	power->ItemFlags |= ItemFlags & (IF_ALWAYSPICKUP|IF_ADDITIVETIME|IF_NOTELEPORTFREEZE);	// [Vita] NOTELEPORTFREEZE
 	if (power->CallTryPickup (Owner))
 	{
 		PowerupGranted( power ); // [TP]
@@ -239,6 +239,12 @@ void APowerup::Destroy ()
 // APowerup :: DrawPowerup
 //
 //===========================================================================
+
+bool APowerup::GetNoTeleportFreeze ()	// [Vita] ZDoom 2.8
+{
+	if (ItemFlags & IF_NOTELEPORTFREEZE) return true;
+	return Super::GetNoTeleportFreeze();
+}
 
 bool APowerup::DrawPowerup (int x, int y)
 {
@@ -1957,7 +1963,7 @@ void APowerMorph::EndEffect( )
 	if (!bNoCallUndoMorph)
 	{
 		int savedMorphTics = Player->morphTics;
-		P_UndoPlayerMorph (Player, Player);
+		P_UndoPlayerMorph (Player, Player, 0, !!(Player->MorphStyle & MORPH_UNDOALWAYS));	// [Vita] MRF_UNDOALWAYS
 
 		// Abort if unmorph failed; in that case,
 		// set the usual retry timer and return.

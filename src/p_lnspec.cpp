@@ -2468,6 +2468,7 @@ FUNC(LS_Sector_SetDamage)
 	while ((secnum = P_FindSectorFromTag (arg0, secnum)) >= 0) {
 		sectors[secnum].damage = arg1;
 		sectors[secnum].mod = arg2;
+		sectors[secnum].damageinterval = 0;	// [Vita] back to the old rules
 	}
 	return true;
 }

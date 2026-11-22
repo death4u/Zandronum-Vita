@@ -3588,7 +3588,7 @@ void P_RemoveThings( void )
 			( teamgame == false ) &&
 			( dmflags & DF_NO_COOP_WEAPON_SPAWN ))
 		{
-			if ( pActor->GetClass( )->IsDescendantOf( RUNTIME_CLASS( AWeapon )))
+			if ( pActor->flags7 & MF7_WEAPONSPAWN )	// [Vita] ZDoom 2.8: WEAPONSPAWN flag (set on Weapon by default)
 			{
 				if (( pActor->SpawnFlags & ( MTF_DEATHMATCH|MTF_SINGLE )) == MTF_DEATHMATCH )
 				{

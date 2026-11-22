@@ -1138,6 +1138,8 @@ bool EV_DoChange (line_t *line, EChange changetype, int tag);
 //
 // P_TELEPT
 //
+// [Vita] ZDoom 2.8: spawns the actor's TeleFogSourceType (beforeTele) or TeleFogDestType fog.
+AActor *P_SpawnActorTeleportFog(AActor *mobj, fixed_t x, fixed_t y, fixed_t z, bool beforeTele);
 bool P_Teleport (AActor *thing, fixed_t x, fixed_t y, fixed_t z, angle_t angle, bool useFog, bool sourceFog, bool keepOrientation, bool haltVelocity = true, bool keepHeight = false);
 bool EV_Teleport (int tid, int tag, line_t *line, int side, AActor *thing, bool fog, bool sourceFog, bool keepOrientation, bool haltVelocity = true, bool keepHeight = false);
 bool EV_SilentLineTeleport (line_t *line, int side, AActor *thing, int id, INTBOOL reverse);
@@ -1164,7 +1166,8 @@ void P_DoDeferedScripts (void);
 // [RH] p_quake.c
 //
 bool P_StartQuake (AActor *activator, int tid, int intensity, int duration, int damrad, int tremrad, FSoundID quakesfx);
-bool P_StartQuakeXYZ (AActor *activator, int tid, int intensityX, int intensityY, int intensityZ, int duration, int damrad, int tremrad, FSoundID quakesfx, int flags);
+bool P_StartQuakeXYZ (AActor *activator, int tid, int intensityX, int intensityY, int intensityZ, int duration, int damrad, int tremrad, FSoundID quakesfx, int flags,
+	double waveSpeedX = 0, double waveSpeedY = 0, double waveSpeedZ = 0);
 
 // [BC] Prototypes dealing with network IDs for movers.
 DDoor		*P_GetDoorByID( LONG lID );

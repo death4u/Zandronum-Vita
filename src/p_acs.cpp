@@ -61,6 +61,8 @@
 #include "sbar.h"
 #include "m_swap.h"
 #include "a_sharedglobal.h"
+#include "p_effect.h"	// [Vita]
+#include "p_terrain.h"	// [Vita]
 #include "a_doomglobal.h"
 #include "a_strifeglobal.h"
 #include "v_video.h"
@@ -4989,6 +4991,14 @@ void DLevelScript::DoSetActorProperty (AActor *actor, int property, int value)
 			static_cast<APlayerPawn *>(actor)->AttackZOffset = value;
 		break;
 
+	case APROP_Friction:	// [Vita] ZDoom 2.8
+		actor->Friction = value;
+		break;
+
+	case APROP_DamageMultiplier:	// [Vita] ZDoom 2.8
+		actor->DamageMultiply = value;
+		break;
+
 	case APROP_StencilColor:
 		// [AK] Save the original value.
 		oldValue = actor->fillcolor;
@@ -5099,6 +5109,8 @@ int DLevelScript::GetActorProperty (int tid, int property)
 	case APROP_Species:		return GlobalACSStrings.AddString(actor->GetSpecies());
 	case APROP_NameTag:		return GlobalACSStrings.AddString(actor->GetTag());
 	case APROP_StencilColor:return actor->fillcolor;
+	case APROP_Friction:	return actor->Friction;	// [Vita] ZDoom 2.8
+	case APROP_DamageMultiplier: return actor->DamageMultiply;	// [Vita] ZDoom 2.8
 
 	default:				return 0;
 	}
@@ -5146,6 +5158,8 @@ int DLevelScript::CheckActorProperty (int tid, int property, int value)
 		case APROP_ViewHeight:
 		case APROP_AttackZOffset:
 		case APROP_StencilColor:
+		case APROP_Friction:			// [Vita]
+		case APROP_DamageMultiplier:	// [Vita]
 			return (GetActorProperty(tid, property) == value);
 
 		// Boolean values need to compare to a binary version of value
@@ -5534,8 +5548,22 @@ enum EACSFunctions
 	ACSF_IsPointerEqual,
 	ACSF_CanRaiseActor,
 
+	// [Vita] ZDoom 2.8.1 functions, at their ZDoom numbers.
+	ACSF_SetActorTeleFog = 86,
+	ACSF_SwapActorTeleFog,
+	ACSF_SetActorRoll,
+	ACSF_ChangeActorRoll,
+	ACSF_GetActorRoll,
+	ACSF_QuakeEx,				// 91
+
 	// [BB] Out of order ZDoom backport.
 	ACSF_Warp = 92,
+
+	// [Vita] ZDoom 2.8.1 functions, continued.
+	ACSF_GetMaxInventory = 93,
+	ACSF_SetSectorDamage,
+	ACSF_SetSectorTerrain,
+	ACSF_SpawnParticle,			// 96
 
 	/* Zandronum's - these must be skipped when we reach 99!
 	-100:ResetMap(0),
@@ -7064,6 +7092,175 @@ doplaysound:			if (funcIndex == ACSF_PlayActorSound)
 			}
 			break;
 		
+		// [Vita] ZDoom 2.8.1 ACS functions -------------------------------
+		case ACSF_SetActorTeleFog:
+			if (argCount >= 3)
+			{
+				// "" means don't change; "None" (no such class) disables the fog.
+				FString src = FBehavior::StaticLookupString(args[1]);
+				FString dest = FBehavior::StaticLookupString(args[2]);
+				const PClass *srccls = PClass::FindClass(src);
+				const PClass *destcls = PClass::FindClass(dest);
+				if (args[0] == 0)
+				{
+					if (activator != NULL)
+					{
+						if (src.IsNotEmpty()) activator->TeleFogSourceType = srccls;
+						if (dest.IsNotEmpty()) activator->TeleFogDestType = destcls;
+					}
+				}
+				else
+				{
+					FActorIterator iterator(args[0]);
+					while ((actor = iterator.Next()))
+					{
+						if (src.IsNotEmpty()) actor->TeleFogSourceType = srccls;
+						if (dest.IsNotEmpty()) actor->TeleFogDestType = destcls;
+					}
+				}
+			}
+			break;
+
+		case ACSF_SwapActorTeleFog:
+			if (argCount >= 1)
+			{
+				int count = 0;
+				if (args[0] == 0)
+				{
+					if (activator == NULL || activator->TeleFogSourceType == activator->TeleFogDestType)
+						return 0;
+					swapvalues(activator->TeleFogSourceType, activator->TeleFogDestType);
+					return 1;
+				}
+				FActorIterator iterator(args[0]);
+				while ((actor = iterator.Next()))
+				{
+					if (actor->TeleFogSourceType == actor->TeleFogDestType)
+						continue;
+					swapvalues(actor->TeleFogSourceType, actor->TeleFogDestType);
+					count++;
+				}
+				return count;
+			}
+			break;
+
+		// Roll is stored for scripts and DECORATE; this renderer doesn't draw it.
+		case ACSF_SetActorRoll:
+			actor = SingleActorFromTID(args[0], activator);
+			if (actor != NULL)
+				actor->roll = args[1] << 16;
+			return 0;
+
+		case ACSF_ChangeActorRoll:
+			if (argCount >= 2)
+			{
+				if (args[0] == 0)
+				{
+					if (activator != NULL)
+						activator->roll = args[1] << 16;
+				}
+				else
+				{
+					FActorIterator iterator(args[0]);
+					while ((actor = iterator.Next()))
+						actor->roll = args[1] << 16;
+				}
+			}
+			break;
+
+		case ACSF_GetActorRoll:
+			actor = SingleActorFromTID(args[0], activator);
+			return actor != NULL ? actor->roll >> 16 : 0;
+
+		case ACSF_QuakeEx:
+			if (argCount >= 8)
+			{
+				return P_StartQuakeXYZ(activator, args[0], args[1], args[2], args[3], args[4], args[5], args[6],
+					FBehavior::StaticLookupString(args[7]),
+					argCount > 8 ? args[8] : 0,
+					argCount > 9 ? FIXED2DBL(args[9]) : 1.0,
+					argCount > 10 ? FIXED2DBL(args[10]) : 1.0,
+					argCount > 11 ? FIXED2DBL(args[11]) : 1.0);
+			}
+			break;
+
+		case ACSF_GetMaxInventory:
+			actor = SingleActorFromTID(args[0], activator);
+			if (actor != NULL)
+			{
+				const char *type = FBehavior::StaticLookupString(args[1]);
+				if (type == NULL) return 0;
+				if (stricmp(type, "Health") == 0)
+				{
+					if (actor->IsKindOf(RUNTIME_CLASS(APlayerPawn)))
+						return static_cast<APlayerPawn *>(actor)->MaxHealth;
+					return actor->SpawnHealth();
+				}
+				if (stricmp(type, "Armor") == 0) type = "BasicArmor";
+				const PClass *info = PClass::FindClass(type);
+				if (info == NULL || !info->IsDescendantOf(RUNTIME_CLASS(AInventory)))
+					return 0;
+				AInventory *item = actor->FindInventory(info);
+				return item ? item->MaxAmount : ((AInventory *)GetDefaultByType(info))->MaxAmount;
+			}
+			break;
+
+		case ACSF_SetSectorDamage:
+			if (argCount >= 2)
+			{
+				int s = -1;
+				while ((s = P_FindSectorFromTag(args[0], s)) >= 0)
+				{
+					sector_t *sec = &sectors[s];
+					sec->damage = args[1];
+					sec->VitaDamageType = argCount >= 3 ? FName(FBehavior::StaticLookupString(args[2])) : FName(NAME_None);
+					sec->damageinterval = argCount >= 4 ? clamp(args[3], 1, INT_MAX) : 32;
+					sec->leakydamage = argCount >= 5 ? args[4] : 0;
+				}
+			}
+			break;
+
+		case ACSF_SetSectorTerrain:
+			if (argCount >= 3)
+			{
+				if (args[1] == sector_t::floor || args[1] == sector_t::ceiling)
+				{
+					int terrain = P_FindTerrain(FBehavior::StaticLookupString(args[2]));
+					int s = -1;
+					while ((s = P_FindSectorFromTag(args[0], s)) >= 0)
+						sectors[s].TerrainOverride[args[1]] = terrain >= 0 ? terrain + 1 : 0;
+				}
+			}
+			break;
+
+		case ACSF_SpawnParticle:
+		{
+			PalEntry color = args[0];
+			bool fullbright = argCount > 1 ? !!args[1] : false;
+			int lifetime = argCount > 2 ? args[2] : 35;
+			int size = argCount > 3 ? args[3] : 1;
+			fixed_t x = argCount > 4 ? args[4] : 0;
+			fixed_t y = argCount > 5 ? args[5] : 0;
+			fixed_t z = argCount > 6 ? args[6] : 0;
+			fixed_t xvel = argCount > 7 ? args[7] : 0;
+			fixed_t yvel = argCount > 8 ? args[8] : 0;
+			fixed_t zvel = argCount > 9 ? args[9] : 0;
+			fixed_t accelx = argCount > 10 ? args[10] : 0;
+			fixed_t accely = argCount > 11 ? args[11] : 0;
+			fixed_t accelz = argCount > 12 ? args[12] : 0;
+			int startalpha = argCount > 13 ? args[13] : 0xFF;
+			int fadestep = argCount > 14 ? args[14] : -1;
+
+			startalpha = clamp<int>(startalpha, 0, 255);
+			lifetime = clamp<int>(lifetime, 0, 255);
+			fadestep = clamp<int>(fadestep, -1, 255);
+			size = clamp<int>(size, 0, 65535);
+
+			if (lifetime != 0)
+				P_SpawnParticle(x, y, z, xvel, yvel, zvel, color, fullbright, startalpha, lifetime, size, fadestep, accelx, accely, accelz);
+		}
+		break;
+
 		// [ZK] A_Warp in ACS
 		case ACSF_Warp:
 		{

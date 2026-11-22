@@ -711,6 +711,13 @@ struct sector_t
 
 	int			sky;
 	FNameNoInit	SeqName;		// Sound sequence name. Setting seqType non-negative will override this.
+	// [Vita] ZDoom 2.8 ACS SetSectorDamage/SetSectorTerrain. Sectors start zeroed:
+	// damageinterval 0 means the old Sector_SetDamage rules; TerrainOverride 0 means
+	// use the flat's terrain, otherwise terrain number + 1.
+	FNameNoInit	VitaDamageType;
+	int			damageinterval;
+	int			leakydamage;
+	int			TerrainOverride[2];
 
 	fixed_t		soundorg[2];	// origin for any sounds played by the sector
 	int 		validcount;		// if == validcount, already checked

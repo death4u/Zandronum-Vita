@@ -695,6 +695,11 @@ int FindSplash (FName name)
 //
 //==========================================================================
 
+int P_FindTerrain (FName name)	// [Vita] exported for ACS SetSectorTerrain
+{
+	return FindTerrain(name);
+}
+
 int FindTerrain (FName name)
 {
 	unsigned int i;

@@ -140,6 +140,15 @@ protected:
 	DFlashFader ();
 };
 
+// [Vita] ZDoom 2.8: how a quake moves the view (absolute or camera-relative, random or wave).
+struct FQuakeJiggers
+{
+	fixed_t IntensityX, IntensityY, IntensityZ;
+	fixed_t RelIntensityX, RelIntensityY, RelIntensityZ;
+	fixed_t OffsetX, OffsetY, OffsetZ;
+	fixed_t RelOffsetX, RelOffsetY, RelOffsetZ;
+};
+
 class DEarthquake : public DThinker
 {
 	DECLARE_CLASS (DEarthquake, DThinker)
@@ -147,7 +156,8 @@ class DEarthquake : public DThinker
 public:
 	DEarthquake (AActor *center, int intensity, int duration, int damrad, int tremrad, FSoundID quakesfx);
 	// [Vita] ZDoom 2.8's A_QuakeEx (separate X/Y/Z intensities, QF_ flags)
-	DEarthquake (AActor *center, int intensityX, int intensityY, int intensityZ, int duration, int damrad, int tremrad, FSoundID quakesfx, int flags);
+	DEarthquake (AActor *center, int intensityX, int intensityY, int intensityZ, int duration, int damrad, int tremrad, FSoundID quakesfx, int flags,
+		double waveSpeedX = 0, double waveSpeedY = 0, double waveSpeedZ = 0);
 
 	void Serialize (FArchive &arc);
 	void Tick ();
@@ -158,11 +168,13 @@ public:
 	int m_Countdown;
 	int m_IntensityY, m_IntensityZ, m_Flags, m_CountdownStart;	// [Vita]
 	fixed_t GetModIntensity(int intensity) const;
+	double m_WaveSpeedX, m_WaveSpeedY, m_WaveSpeedZ;	// [Vita] QF_WAVE waves per second
+	fixed_t GetModWave(double waveMultiplier) const;
 	FSoundID m_QuakeSFX;
 
 	static int StaticGetQuakeIntensity (AActor *viewer);
-	// [Vita] per axis, in map units (fixed point); false if no quake reaches the viewer
-	static bool StaticGetQuakeIntensities (AActor *viewer, fixed_t &x, fixed_t &y, fixed_t &z);
+	// [Vita] ZDoom 2.8: fills jiggers (pre-zeroed); returns the number of quakes reaching the viewer
+	static int StaticGetQuakeIntensities (AActor *viewer, FQuakeJiggers &jiggers);
 
 private:
 	DEarthquake ();

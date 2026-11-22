@@ -604,6 +604,8 @@ enum EDmgFlags
 	DMG_NO_FACTOR = 16,
 	DMG_PLAYERATTACK = 32,
 	DMG_FOILINVUL = 64,
+	DMG_FOILBUDDHA = 128,	// [Vita] ZDoom 2.8
+	DMG_NO_PROTECT = 256,	// [Vita] ZDoom 2.8
 };
 
 

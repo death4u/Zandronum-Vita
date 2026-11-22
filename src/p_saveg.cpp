@@ -423,6 +423,11 @@ void P_SerializeWorld (FArchive &arc)
 			<< sec->interpolations[2]
 			<< sec->interpolations[3]
 			<< sec->SeqName;
+		if (SaveVersion >= 4507)	// [Vita] ZDoom 2.8 sector damage and terrain
+		{
+			arc << sec->VitaDamageType << sec->damageinterval << sec->leakydamage
+				<< sec->TerrainOverride[0] << sec->TerrainOverride[1];
+		}
 
 		sec->e->Serialize(arc);
 		if (arc.IsStoring ())
