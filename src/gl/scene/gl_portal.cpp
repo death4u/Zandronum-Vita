@@ -61,6 +61,30 @@
 #include "gl/utility/gl_clock.h"
 #include "gl/utility/gl_templates.h"
 #include "gl/utility/gl_geometric.h"
+#ifdef __vita__
+CVAR(Bool, vita_batchportals, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// vita_portaltrace N: log the cost of every portal for N frames to boot.log
+CVAR(Int, vita_portaltrace, 0, 0)
+#include <psp2/kernel/processmgr.h>
+#include "vita/vita_system.h"
+static int Vita_PortalTraceFrame = -1;
+bool GLPortal::Vita_PortalTraceOn() { return vita_portaltrace > 0; }
+void GLPortal::Vita_TracedRenderPortal(bool usestencil, bool doquery)
+{
+	const unsigned long long t0 = sceKernelGetProcessTimeWide();
+	unsigned long long t1 = t0, t2 = t0;
+	if (Start(usestencil, doquery))
+	{
+		t1 = sceKernelGetProcessTimeWide();
+		DrawContents();
+		t2 = sceKernelGetProcessTimeWide();
+		End(usestencil);
+	}
+	const unsigned long long t3 = sceKernelGetProcessTimeWide();
+	Vita_BootLog("portal %s: %u lines, stencil %d, recursion %d: start %llu us, contents %llu us, end %llu us", GetName(), lines.Size(), (int)usestencil, recursion, t1 - t0, t2 - t1, t3 - t2);
+	if (Vita_PortalTraceFrame != gl_frameCount) { Vita_PortalTraceFrame = gl_frameCount; vita_portaltrace = vita_portaltrace - 1; }
+}
+#endif
 // [AK] New #includes.
 #include "c_console.h"
 
@@ -139,6 +163,51 @@ void GLPortal::ClearScreen()
 //-----------------------------------------------------------------------------
 void GLPortal::DrawPortalStencil()
 {
+#ifdef __vita__
+	// [Vita] 0057: all of the portal's walls (and its caps) in one draw call.
+	// This is drawn untextured into the depth/stencil buffer up to three
+	// times per portal per frame; one immediate-mode draw per wall made the
+	// sky cost up to 15 ms a frame in big maps (Boltgun MAP02, 24000 lines).
+	if (vita_batchportals)
+	{
+		static TArray<float> xyz;
+		static const int tri[6] = { 0, 1, 2, 0, 2, 3 };
+		xyz.Clear();
+		for (unsigned int i = 0; i < lines.Size(); i++)
+		{
+			const GLWall &w = lines[i];
+			const float q[4][3] = {
+				{ w.glseg.x1, w.zbottom[0], w.glseg.y1 }, { w.glseg.x1, w.ztop[0], w.glseg.y1 },
+				{ w.glseg.x2, w.ztop[1], w.glseg.y2 }, { w.glseg.x2, w.zbottom[1], w.glseg.y2 } };
+			float *o = &xyz[xyz.Reserve(18)];
+			for (int k = 0; k < 6; k++) { o[0] = q[tri[k]][0]; o[1] = q[tri[k]][1]; o[2] = q[tri[k]][2]; o += 3; }
+		}
+		if (NeedCap() && lines.Size() > 1)
+		{
+			for (int c = 0; c < 2; c++)
+			{
+				const float y = c == 0 ? 32767.0f : -32767.0f;
+				const float q[4][3] = { { -32767.0f, y, -32767.0f }, { -32767.0f, y, 32767.0f }, { 32767.0f, y, 32767.0f }, { 32767.0f, y, -32767.0f } };
+				float *o = &xyz[xyz.Reserve(18)];
+				for (int k = 0; k < 6; k++) { o[0] = q[tri[k]][0]; o[1] = q[tri[k]][1]; o[2] = q[tri[k]][2]; o += 3; }
+			}
+		}
+		const unsigned total = xyz.Size() / 3;
+		if (total == 0) return;
+		gl_RenderState.Apply();
+		glEnableClientState(GL_VERTEX_ARRAY);
+		const unsigned piece = 0xC000 / 6 * 6;
+		for (unsigned start = 0; start < total; start += piece)
+		{
+			const unsigned n = total - start < piece ? total - start : piece;
+			glVertexPointer(3, GL_FLOAT, 0, &xyz[start * 3]);
+			glDrawArrays(GL_TRIANGLES, 0, n);
+		}
+		glDisableClientState(GL_VERTEX_ARRAY);
+		vertexcount += total;
+		return;
+	}
+#endif
 	for(unsigned int i=0;i<lines.Size();i++)
 	{
 		lines[i].RenderWall(0, NULL);

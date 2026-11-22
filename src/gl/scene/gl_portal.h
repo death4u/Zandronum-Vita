@@ -143,6 +143,9 @@ public:
 		// Start may perform an occlusion query. If that returns 0 there
 		// is no need to draw the stencil's contents and there's also no
 		// need to restore the affected area becasue there is none!
+#ifdef __vita__
+		if (Vita_PortalTraceOn()) { Vita_TracedRenderPortal(usestencil, doquery); return; }
+#endif
 		if (Start(usestencil, doquery))
 		{
 			DrawContents();
@@ -150,6 +153,10 @@ public:
 		}
 	}
 
+#ifdef __vita__
+	static bool Vita_PortalTraceOn();
+	void Vita_TracedRenderPortal(bool usestencil, bool doquery);
+#endif
 	void AddLine(GLWall * l)
 	{
 		lines.Push(*l);

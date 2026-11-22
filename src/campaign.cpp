@@ -57,6 +57,7 @@
 #include "sc_man.h"
 #include "team.h"
 #include "w_wad.h"
+#include "v_text.h"
 
 //*****************************************************************************
 //	VARIABLES
@@ -324,6 +325,7 @@ static void campaign_ParseCampaignInfoLump( FScanner &sc )
 		pInfo->lPossessionHoldTime	= 0;
 		pInfo->bInstagib			= false;
 		pInfo->bBuckshot			= false;
+		pInfo->lBotSkillOffset		= 0;
 		for ( ulIdx = 0; ulIdx < MAXPLAYERS; ulIdx++ )
 		{
 			pInfo->BotSpawn[ulIdx].szBotName[0] = 0;
@@ -343,6 +345,14 @@ static void campaign_ParseCampaignInfoLump( FScanner &sc )
 			if ( sc.String[0] == '}' )
 				break;
 
+			// [Vita] Q-Zandronum (used by QCDE): "cvar <name> = <value>".
+			FString CVarName;
+			if ( stricmp( szKey, "cvar" ) == 0 )
+			{
+				sc.GetString( );
+				CVarName = sc.String;
+			}
+
 			// The following key must be an = sign. If not, the user made an error!
 			sc.GetString( );
 			if ( stricmp( sc.String, "=" ) != 0 )
@@ -354,7 +364,16 @@ static void campaign_ParseCampaignInfoLump( FScanner &sc )
 			szValue[31] = 0;
 
 			// Now try to match our key with a valid bot info field.
-			if ( stricmp( szKey, "mapname" ) == 0 )
+			if ( CVarName.IsNotEmpty( ))
+			{
+				pInfo->CVarNames.Push( CVarName );
+				pInfo->CVarValues.Push( sc.String );
+			}
+			else if ( stricmp( szKey, "botsskilloffset" ) == 0 )
+			{
+				pInfo->lBotSkillOffset = atoi( szValue );
+			}
+			else if ( stricmp( szKey, "mapname" ) == 0 )
 			{
 				strncpy( pInfo->szMapName, szValue, 8 );
 				pInfo->szMapName[8] = 0;
@@ -496,8 +515,8 @@ static void campaign_ParseCampaignInfoLump( FScanner &sc )
 
 				snprintf( pInfo->BotSpawn[lBotIndex].szBotName, sizeof( pInfo->BotSpawn[lBotIndex].szBotName ), "%s", szValue );
 			}
-			else
-				I_Error( "CAMPAIGN_ParseCampaignInfo: Unknown CMPGNINF property, \"%s\"!", szKey );
+			else	// [Vita] newer ports add properties: warn instead of quitting.
+				Printf( TEXTCOLOR_ORANGE "CMPGNINF: unknown property \"%s\" ignored\n", szKey );
 		}
 	}
 }

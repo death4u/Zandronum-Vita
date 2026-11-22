@@ -1289,6 +1289,20 @@ void G_DoLoadLevel (int position, bool autosave)
 			Val.Bool = pInfo->bBuckshot;
 			buckshot.ForceSet( Val, CVAR_Bool );
 
+			// [Vita] Q-Zandronum "cvar <name> = <value>" lines.
+			for ( unsigned int c = 0; c < pInfo->CVarNames.Size( ); c++ )
+			{
+				FBaseCVar *var = FindCVar( pInfo->CVarNames[c].GetChars( ), NULL );
+				if ( var == NULL )
+					Printf( "CMPGNINF: unknown CVar \"%s\" ignored\n", pInfo->CVarNames[c].GetChars( ));
+				else
+				{
+					UCVarValue cv;
+					cv.String = pInfo->CVarValues[c].GetChars( );
+					var->ForceSet( cv, CVAR_String ); DPrintf( "CMPGNINF: %s = %s\n", pInfo->CVarNames[c].GetChars( ), pInfo->CVarValues[c].GetChars( ));
+				}
+			}
+
 			for ( i = 0; i < MAXPLAYERS; i++ )
 			{
 				// [BB] If this is not a team game, there is no need to check or pass BotTeamName.

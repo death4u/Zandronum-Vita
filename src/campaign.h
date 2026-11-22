@@ -53,6 +53,7 @@
 
 #include "doomdef.h"
 #include "doomtype.h"
+#include "tarray.h"
 #include "gamemode.h"
 
 //*****************************************************************************
@@ -128,6 +129,11 @@ typedef struct CAMPAIGNINFO_s
 
 	// Table of bots and their teams that spawn in this round.
 	BOTSPAWNINFO_t	BotSpawn[MAXPLAYERS];
+
+	// [Vita] Q-Zandronum: "cvar <name> = <value>" lines and botsSkillOffset.
+	TArray<FString>	CVarNames;
+	TArray<FString>	CVarValues;
+	LONG			lBotSkillOffset;
 
 	struct CAMPAIGNINFO_s	*pNextInfo;
 
